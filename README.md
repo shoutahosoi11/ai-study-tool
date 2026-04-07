@@ -19,6 +19,16 @@ AI Study Tool is an AI-powered learning platform for study workflows, question g
 - AWS S3
 - Gemini API
 
+## Architecture
+The project follows Clean Architecture
+- backend/cmd: application entrypoint  
+- backend/internal/domain: core business entities and rules  
+- backend/internal/usecase: application logic  
+- backend/internal/repository: sqlc-based persistence layer  
+- backend/internal/handler: HTTP handlers  
+- backend/internal/middleware: middleware  
+- frontend/src: client application 
+
 ## Getting Started
 
 ### Prerequisites
@@ -35,3 +45,10 @@ AI Study Tool is an AI-powered learning platform for study workflows, question g
 
 ```bash
 docker compose up --build
+```
+
+### Access
+- Frontend: http://localhost:3000  
+- Backend: http://localhost:8080/health  
+
+
