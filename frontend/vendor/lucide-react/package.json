@@ -1,0 +1,11 @@
+{
+  "name": "lucide-react",
+  "version": "0.0.0-local",
+  "type": "module",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "peerDependencies": {
+    "react": "^18.0.0"
+  }
+}

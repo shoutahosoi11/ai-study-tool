@@ -10,6 +10,7 @@ import (
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	_ "github.com/lib/pq"
 	apphandler "github.com/shout/ai-study-tool/backend/internal/handler"
+	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
 	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
 	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
@@ -38,12 +39,15 @@ func main() {
 
 	userRepo := postgresrepo.NewUserRepository(db)
 	postRepo := postgresrepo.NewPostRepository(db)
+	highlightRepo := persistence.NewHighlightRepository(db)
 
 	userUsecase := usecase.NewUserUsecase(userRepo)
 	postUsecase := usecase.NewPostUsecase(postRepo)
+	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
 
 	userHandler := apphandler.NewUserHandler(userUsecase)
 	postHandler := apphandler.NewPostHandler(postUsecase, userUsecase)
+	highlightHandler := apphandler.NewHighlightHandler(highlightUsecase, userUsecase)
 
 	e := echo.New()
 	e.Use(echomiddleware.Logger())
@@ -81,6 +85,12 @@ func main() {
 	posts.POST("", postHandler.CreatePost)
 	posts.POST("/:id/like", postHandler.LikePost)
 	posts.DELETE("/:id/like", postHandler.UnlikePost)
+
+	highlights := api.Group("/highlights", authMiddleware)
+	highlights.POST("", highlightHandler.Create)
+	highlights.GET("", highlightHandler.List)
+	highlights.GET("/:id", highlightHandler.GetByID)
+	highlights.DELETE("/:id", highlightHandler.Delete)
 
 	port := os.Getenv("PORT")
 	if port == "" {
