@@ -1,0 +1,39 @@
+package handler
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"net/http"
+)
+
+type apiResponse struct {
+	Data  interface{} `json:"data"`
+	Error *apiError   `json:"error"`
+}
+
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(apiResponse{Data: data, Error: nil})
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(apiResponse{Data: nil, Error: &apiError{Code: code, Message: message}})
+}
+
+func getUserPlan(ctx context.Context, db *sql.DB, userID string) string {
+	var plan string
+	row := db.QueryRowContext(ctx, "SELECT plan FROM users WHERE id = $1", userID)
+	if err := row.Scan(&plan); err != nil {
+		return "free"
+	}
+	return plan
+}
