@@ -1,0 +1,16 @@
+backend/vendor/
+backend/tmp/
+backend/*.exe
+backend/main
+backend/.env
+backend/serviceAccountKey.json
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.env
+!*.env.example
