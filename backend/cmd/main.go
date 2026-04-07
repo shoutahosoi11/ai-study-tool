@@ -1,32 +1,78 @@
 package main
 
 import (
-    "net/http"
-    "os"
+	"database/sql"
+	"log"
+	"os"
 
-    "github.com/joho/godotenv"
-    "github.com/labstack/echo/v4"
-    "github.com/labstack/echo/v4/middleware"
+	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v4"
+	echomiddleware "github.com/labstack/echo/v4/middleware"
+	_ "github.com/lib/pq"
+	apphandler "github.com/shout/ai-study-tool/backend/internal/handler"
+	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
+	"github.com/shout/ai-study-tool/backend/internal/repository/postgres"
+	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 func main() {
-    _ = godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using environment variables")
+	}
 
-    e := echo.New()
-    e.Use(middleware.Logger())
-    e.Use(middleware.Recover())
-    e.Use(middleware.CORS())
+	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
 
-    e.GET("/health", func(c echo.Context) error {
-        return c.JSON(http.StatusOK, map[string]string{
-            "status": "ok",
-        })
-    })
+	if err := db.Ping(); err != nil {
+		log.Printf("warning: database not reachable: %v", err)
+	}
 
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "8080"
-    }
+	credPath := os.Getenv("FIREBASE_CREDENTIALS_PATH")
+	firebaseMiddleware, err := appmiddleware.NewFirebaseMiddleware(credPath)
+	if err != nil {
+		log.Printf("warning: firebase init failed (set FIREBASE_CREDENTIALS_PATH): %v", err)
+	}
 
-    e.Logger.Fatal(e.Start(":" + port))
+	userRepo := postgres.NewUserRepository(db)
+	userUsecase := usecase.NewUserUsecase(userRepo)
+	userHandler := apphandler.NewUserHandler(userUsecase)
+
+	e := echo.New()
+	e.Use(echomiddleware.Logger())
+	e.Use(echomiddleware.Recover())
+	e.Use(echomiddleware.CORSWithConfig(echomiddleware.CORSConfig{
+		AllowOrigins: []string{"http://localhost:3000"},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{"Authorization", "Content-Type"},
+	}))
+
+	e.GET("/health", func(c echo.Context) error {
+		return c.JSON(200, map[string]string{"status": "ok"})
+	})
+
+	api := e.Group("/api")
+
+	var authMiddleware echo.MiddlewareFunc
+	if firebaseMiddleware != nil {
+		authMiddleware = firebaseMiddleware.Authenticate
+	} else {
+		authMiddleware = func(next echo.HandlerFunc) echo.HandlerFunc {
+			return next
+		}
+	}
+
+	users := api.Group("/users")
+	users.POST("/signup", userHandler.SignUp, authMiddleware)
+	users.GET("/me", userHandler.GetMe, authMiddleware)
+	users.GET("/:id", userHandler.GetUser, authMiddleware)
+	users.PUT("/me", userHandler.UpdateProfile, authMiddleware)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	e.Logger.Fatal(e.Start(":" + port))
 }
