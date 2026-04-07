@@ -16,6 +16,7 @@ type Container struct {
 	QuestionHandler *handler.QuestionHandler
 	NoteHandler     *handler.NoteHandler
 	AnswerHandler   *handler.AnswerHandler
+	SocialHandler   *handler.SocialHandler
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
@@ -41,14 +42,17 @@ func NewContainer(db *sql.DB) (*Container, error) {
 
 	questionRepo := persistence.NewQuestionRepository(db)
 	answerRepo := persistence.NewAnswerRepository(db)
+	socialRepo := persistence.NewSocialRepository(db)
 
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
 	noteUsecase := usecase.NewNoteUsecase(db, s3Client, ocrClient, questionUsecase)
+	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 
 	questionHandler := handler.NewQuestionHandler(questionUsecase, db)
 	answerHandler := handler.NewAnswerHandler(answerUsecase, db)
 	noteHandler := handler.NewNoteHandler(noteUsecase)
+	socialHandler := handler.NewSocialHandler(socialUsecase)
 
 	_ = domain.StorageClient(s3Client)
 	_ = domain.OCRClient(ocrClient)
@@ -57,5 +61,6 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		QuestionHandler: questionHandler,
 		NoteHandler:     noteHandler,
 		AnswerHandler:   answerHandler,
+		SocialHandler:   socialHandler,
 	}, nil
 }
