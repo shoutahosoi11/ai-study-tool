@@ -65,7 +65,7 @@ FROM questions WHERE id = $1 LIMIT 1`
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	var (
-		qID, userID                       uuid.UUID
+		qID, userID                      uuid.UUID
 		sourceType, questionType         string
 		body, correctAnswer, explanation string
 		optionsJSON                      []byte
@@ -118,7 +118,55 @@ FROM questions WHERE id = $1 LIMIT 1`
 	return q, meta, stats, nil
 }
 
+func (r *questionRepository) GetByID(ctx context.Context, id string) (*domain.Question, error) {
+	query := `
+SELECT id, question_type, body, options, correct_answer, explanation
+FROM questions WHERE id = $1 LIMIT 1`
+
+	row := r.db.QueryRowContext(ctx, query, id)
+
+	var (
+		qID           uuid.UUID
+		questionType  string
+		body          string
+		optionsJSON   []byte
+		correctAnswer string
+		explanation   string
+	)
+
+	err := row.Scan(&qID, &questionType, &body, &optionsJSON, &correctAnswer, &explanation)
+	if err != nil {
+		return nil, err
+	}
+
+	var options []string
+	if err := json.Unmarshal(optionsJSON, &options); err != nil {
+		options = []string{}
+	}
+
+	return &domain.Question{
+		ID:            qID.String(),
+		QuestionType:  domain.QuestionType(questionType),
+		Content:       body,
+		Options:       options,
+		CorrectAnswer: correctAnswer,
+		Explanation:   explanation,
+	}, nil
+}
+
 func (r *questionRepository) UpdateStats(ctx context.Context, questionID string, isCorrect bool) error {
+	query := `
+UPDATE questions
+SET
+    answer_count  = answer_count + 1,
+    correct_count = correct_count + CASE WHEN $2 THEN 1 ELSE 0 END,
+    updated_at    = NOW()
+WHERE id = $1`
+	_, err := r.db.ExecContext(ctx, query, questionID, isCorrect)
+	return err
+}
+
+func (r *questionRepository) IncrementStats(ctx context.Context, questionID string, isCorrect bool) error {
 	query := `
 UPDATE questions
 SET

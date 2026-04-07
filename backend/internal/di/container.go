@@ -15,6 +15,7 @@ import (
 type Container struct {
 	QuestionHandler *handler.QuestionHandler
 	NoteHandler     *handler.NoteHandler
+	AnswerHandler   *handler.AnswerHandler
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
@@ -39,11 +40,14 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	}
 
 	questionRepo := persistence.NewQuestionRepository(db)
+	answerRepo := persistence.NewAnswerRepository(db)
 
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient)
+	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
 	noteUsecase := usecase.NewNoteUsecase(db, s3Client, ocrClient, questionUsecase)
 
 	questionHandler := handler.NewQuestionHandler(questionUsecase, db)
+	answerHandler := handler.NewAnswerHandler(answerUsecase, db)
 	noteHandler := handler.NewNoteHandler(noteUsecase)
 
 	_ = domain.StorageClient(s3Client)
@@ -52,5 +56,6 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	return &Container{
 		QuestionHandler: questionHandler,
 		NoteHandler:     noteHandler,
+		AnswerHandler:   answerHandler,
 	}, nil
 }

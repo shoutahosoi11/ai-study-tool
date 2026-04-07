@@ -26,6 +26,8 @@ type GradeResult struct {
 type QuestionRepository interface {
 	Save(ctx context.Context, q *Question, meta *QuestionMeta) error
 	FindByID(ctx context.Context, id string) (*Question, *QuestionMeta, *QuestionStats, error)
+	GetByID(ctx context.Context, id string) (*Question, error)
 	UpdateStats(ctx context.Context, questionID string, isCorrect bool) error
+	IncrementStats(ctx context.Context, questionID string, isCorrect bool) error
 	SaveGeneration(ctx context.Context, userID, sourceType, sourceID, promptUsed, modelUsed string) (string, error)
 }

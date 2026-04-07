@@ -41,7 +41,16 @@ func (m *mockQuestionRepository) FindByID(ctx context.Context, id string) (*doma
 	return m.findByID(ctx, id)
 }
 
+func (m *mockQuestionRepository) GetByID(ctx context.Context, id string) (*domain.Question, error) {
+	q, _, _, err := m.findByID(ctx, id)
+	return q, err
+}
+
 func (m *mockQuestionRepository) UpdateStats(ctx context.Context, questionID string, isCorrect bool) error {
+	return m.updateStats(ctx, questionID, isCorrect)
+}
+
+func (m *mockQuestionRepository) IncrementStats(ctx context.Context, questionID string, isCorrect bool) error {
 	return m.updateStats(ctx, questionID, isCorrect)
 }
 

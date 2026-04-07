@@ -22,7 +22,21 @@ FROM questions q
 WHERE q.id = $1
 LIMIT 1;
 
+-- name: GetQuestionByIDSimple :one
+SELECT id, question_type, body, options, correct_answer, explanation
+FROM questions
+WHERE id = $1
+LIMIT 1;
+
 -- name: UpdateQuestionStats :exec
+UPDATE questions
+SET
+    answer_count  = answer_count + 1,
+    correct_count = correct_count + CASE WHEN $2::boolean THEN 1 ELSE 0 END,
+    updated_at    = NOW()
+WHERE id = $1;
+
+-- name: IncrementQuestionStats :exec
 UPDATE questions
 SET
     answer_count  = answer_count + 1,
