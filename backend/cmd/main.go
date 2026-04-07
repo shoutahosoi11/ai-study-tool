@@ -11,7 +11,7 @@ import (
 	_ "github.com/lib/pq"
 	apphandler "github.com/shout/ai-study-tool/backend/internal/handler"
 	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
-	"github.com/shout/ai-study-tool/backend/internal/repository/postgres"
+	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
@@ -36,9 +36,14 @@ func main() {
 		log.Printf("warning: firebase init failed (set FIREBASE_CREDENTIALS_PATH): %v", err)
 	}
 
-	userRepo := postgres.NewUserRepository(db)
+	userRepo := postgresrepo.NewUserRepository(db)
+	postRepo := postgresrepo.NewPostRepository(db)
+
 	userUsecase := usecase.NewUserUsecase(userRepo)
+	postUsecase := usecase.NewPostUsecase(postRepo)
+
 	userHandler := apphandler.NewUserHandler(userUsecase)
+	postHandler := apphandler.NewPostHandler(postUsecase, userUsecase)
 
 	e := echo.New()
 	e.Use(echomiddleware.Logger())
@@ -69,6 +74,13 @@ func main() {
 	users.GET("/me", userHandler.GetMe, authMiddleware)
 	users.GET("/:id", userHandler.GetUser, authMiddleware)
 	users.PUT("/me", userHandler.UpdateProfile, authMiddleware)
+
+	posts := api.Group("/posts", authMiddleware)
+	posts.GET("/timeline", postHandler.GetTimeline)
+	posts.GET("/:id", postHandler.GetPost)
+	posts.POST("", postHandler.CreatePost)
+	posts.POST("/:id/like", postHandler.LikePost)
+	posts.DELETE("/:id/like", postHandler.UnlikePost)
 
 	port := os.Getenv("PORT")
 	if port == "" {
