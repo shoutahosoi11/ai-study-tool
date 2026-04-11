@@ -1,30 +1,19 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
-	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
 	"github.com/labstack/echo/v4"
-	"google.golang.org/api/option"
 )
 
 type FirebaseMiddleware struct {
 	client *auth.Client
 }
 
-func NewFirebaseMiddleware(credentialsPath string) (*FirebaseMiddleware, error) {
-	app, err := firebase.NewApp(context.Background(), nil, option.WithAuthCredentialsFile(option.ServiceAccount, credentialsPath))
-	if err != nil {
-		return nil, err
-	}
-	client, err := app.Auth(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return &FirebaseMiddleware{client: client}, nil
+func NewFirebaseMiddleware(client *auth.Client) *FirebaseMiddleware {
+	return &FirebaseMiddleware{client: client}
 }
 
 func (m *FirebaseMiddleware) Authenticate(next echo.HandlerFunc) echo.HandlerFunc {

@@ -82,6 +82,9 @@ FROM questions WHERE id = $1 LIMIT 1`
 		&answerCount, &correctCount,
 	)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, nil, domain.ErrNotFound
+		}
 		return nil, nil, nil, err
 	}
 
@@ -159,18 +162,6 @@ FROM questions WHERE id = $1 LIMIT 1`
 }
 
 func (r *questionRepository) UpdateStats(ctx context.Context, questionID string, isCorrect bool) error {
-	query := `
-UPDATE questions
-SET
-    answer_count  = answer_count + 1,
-    correct_count = correct_count + CASE WHEN $2 THEN 1 ELSE 0 END,
-    updated_at    = NOW()
-WHERE id = $1`
-	_, err := r.db.ExecContext(ctx, query, questionID, isCorrect)
-	return err
-}
-
-func (r *questionRepository) IncrementStats(ctx context.Context, questionID string, isCorrect bool) error {
 	query := `
 UPDATE questions
 SET

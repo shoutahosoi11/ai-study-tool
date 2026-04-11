@@ -50,10 +50,6 @@ func (m *mockQuestionRepository) UpdateStats(ctx context.Context, questionID str
 	return m.updateStats(ctx, questionID, isCorrect)
 }
 
-func (m *mockQuestionRepository) IncrementStats(ctx context.Context, questionID string, isCorrect bool) error {
-	return m.updateStats(ctx, questionID, isCorrect)
-}
-
 func (m *mockQuestionRepository) SaveGeneration(ctx context.Context, userID, sourceType, sourceID, promptUsed, modelUsed string) (string, error) {
 	return m.saveGeneration(ctx, userID, sourceType, sourceID, promptUsed, modelUsed)
 }

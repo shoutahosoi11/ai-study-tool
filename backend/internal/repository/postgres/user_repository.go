@@ -3,17 +3,17 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
-	"github.com/shout/ai-study-tool/backend/internal/repository"
 )
 
 type userRepository struct {
 	db *sql.DB
 }
 
-func NewUserRepository(db *sql.DB) repository.UserRepository {
+func NewUserRepository(db *sql.DB) domain.UserRepository {
 	return &userRepository{db: db}
 }
 
@@ -91,6 +91,9 @@ func scanUser(row *sql.Row) (*domain.User, error) {
 		&u.UpdatedAt,
 	)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, err
 	}
 	return u, nil

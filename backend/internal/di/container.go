@@ -10,21 +10,39 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
+	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type Container struct {
-	UserHandler      *handler.UserHandler
-	PostHandler      *handler.PostHandler
-	QuestionHandler  *handler.QuestionHandler
-	NoteHandler      *handler.NoteHandler
-	AnswerHandler    *handler.AnswerHandler
-	SocialHandler    *handler.SocialHandler
-	HighlightHandler *handler.HighlightHandler
+	UserHandler        *handler.UserHandler
+	PostHandler        *handler.PostHandler
+	QuestionHandler    *handler.QuestionHandler
+	NoteHandler        *handler.NoteHandler
+	AnswerHandler      *handler.AnswerHandler
+	SocialHandler      *handler.SocialHandler
+	HighlightHandler   *handler.HighlightHandler
+	FirebaseMiddleware *middleware.FirebaseMiddleware
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
+	ctx := context.Background()
+	credPath := os.Getenv("FIREBASE_CREDENTIALS_PATH")
+	storageBucket := os.Getenv("FIREBASE_STORAGE_BUCKET")
+
+	firebaseApp, err := infrafb.NewApp(ctx, credPath, storageBucket)
+	if err != nil {
+		return nil, err
+	}
+
+	authClient, err := firebaseApp.Auth(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	firebaseMiddleware := middleware.NewFirebaseMiddleware(authClient)
+
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 
 	geminiClient, err := gemini.NewClient(geminiAPIKey)
@@ -37,11 +55,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
-	storageClient, err := infrafb.NewStorageClient(
-		context.Background(),
-		os.Getenv("FIREBASE_CREDENTIALS_PATH"),
-		os.Getenv("FIREBASE_STORAGE_BUCKET"),
-	)
+	storageClient, err := infrafb.NewStorageClient(ctx, firebaseApp, storageBucket)
 	if err != nil {
 		return nil, err
 	}
@@ -74,12 +88,13 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	_ = domain.OCRClient(ocrClient)
 
 	return &Container{
-		UserHandler:      userHandler,
-		PostHandler:      postHandler,
-		QuestionHandler:  questionHandler,
-		NoteHandler:      noteHandler,
-		AnswerHandler:    answerHandler,
-		SocialHandler:    socialHandler,
-		HighlightHandler: highlightHandler,
+		UserHandler:        userHandler,
+		PostHandler:        postHandler,
+		QuestionHandler:    questionHandler,
+		NoteHandler:        noteHandler,
+		AnswerHandler:      answerHandler,
+		SocialHandler:      socialHandler,
+		HighlightHandler:   highlightHandler,
+		FirebaseMiddleware: firebaseMiddleware,
 	}, nil
 }

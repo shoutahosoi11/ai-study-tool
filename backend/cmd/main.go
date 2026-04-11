@@ -10,7 +10,6 @@ import (
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	_ "github.com/lib/pq"
 	"github.com/shout/ai-study-tool/backend/internal/di"
-	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
 )
 
 func main() {
@@ -26,15 +25,6 @@ func main() {
 
 	if err := db.Ping(); err != nil {
 		log.Printf("warning: database not reachable: %v", err)
-	}
-
-	credPath := os.Getenv("FIREBASE_CREDENTIALS_PATH")
-	firebaseMiddleware, err := appmiddleware.NewFirebaseMiddleware(credPath)
-	if err != nil {
-		log.Fatalf("firebase init failed: %v", err)
-	}
-	if firebaseMiddleware == nil {
-		log.Fatal("firebase init failed: middleware is nil")
 	}
 
 	container, err := di.NewContainer(db)
@@ -56,7 +46,7 @@ func main() {
 	})
 
 	api := e.Group("/api")
-	authMiddleware := firebaseMiddleware.Authenticate
+	authMiddleware := container.FirebaseMiddleware.Authenticate
 
 	users := api.Group("/users")
 	users.POST("/signup", container.UserHandler.SignUp, authMiddleware)
@@ -68,8 +58,6 @@ func main() {
 	posts.GET("/timeline", container.PostHandler.GetTimeline)
 	posts.GET("/:id", container.PostHandler.GetPost)
 	posts.POST("", container.PostHandler.CreatePost)
-	posts.POST("/:id/like", container.PostHandler.LikePost)
-	posts.DELETE("/:id/like", container.PostHandler.UnlikePost)
 
 	highlights := api.Group("/highlights", authMiddleware)
 	highlights.POST("", container.HighlightHandler.Create)

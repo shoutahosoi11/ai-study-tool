@@ -172,16 +172,6 @@ func (h *SocialHandler) ListComments(c echo.Context) error {
 		responses = append(responses, toCommentResponse(comment))
 	}
 
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 50 {
-		limit = 50
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"comments": responses,
 		"limit":    limit,
@@ -190,6 +180,9 @@ func (h *SocialHandler) ListComments(c echo.Context) error {
 }
 
 func (h *SocialHandler) socialError(err error) error {
+	if errors.Is(err, domain.ErrNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "not found")
+	}
 	if strings.HasPrefix(err.Error(), "validation:") {
 		return echo.NewHTTPError(http.StatusBadRequest, strings.TrimPrefix(err.Error(), "validation: "))
 	}

@@ -2,25 +2,23 @@ package usecase
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
-	"github.com/shout/ai-study-tool/backend/internal/repository"
 )
 
 type UserUsecase struct {
-	userRepo repository.UserRepository
+	userRepo domain.UserRepository
 }
 
-func NewUserUsecase(userRepo repository.UserRepository) *UserUsecase {
+func NewUserUsecase(userRepo domain.UserRepository) *UserUsecase {
 	return &UserUsecase{userRepo: userRepo}
 }
 
 func (u *UserUsecase) SignUp(ctx context.Context, input domain.CreateUserInput) (*domain.User, error) {
 	existing, err := u.userRepo.GetByFirebaseUID(ctx, input.FirebaseUID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return nil, err
 	}
 	if existing != nil {

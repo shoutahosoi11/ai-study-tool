@@ -5,14 +5,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
-	"github.com/shout/ai-study-tool/backend/internal/repository"
 )
 
 type PostUsecase struct {
-	postRepo repository.PostRepository
+	postRepo domain.PostRepository
 }
 
-func NewPostUsecase(postRepo repository.PostRepository) *PostUsecase {
+func NewPostUsecase(postRepo domain.PostRepository) *PostUsecase {
 	return &PostUsecase{postRepo: postRepo}
 }
 
@@ -35,10 +34,3 @@ func (u *PostUsecase) CreatePost(ctx context.Context, input domain.CreatePostInp
 	return u.postRepo.Create(ctx, input)
 }
 
-func (u *PostUsecase) LikePost(ctx context.Context, postID uuid.UUID) error {
-	return u.postRepo.IncrementLike(ctx, postID)
-}
-
-func (u *PostUsecase) UnlikePost(ctx context.Context, postID uuid.UUID) error {
-	return u.postRepo.DecrementLike(ctx, postID)
-}

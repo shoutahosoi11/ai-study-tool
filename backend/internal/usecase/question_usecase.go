@@ -2,7 +2,9 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/google/uuid"
@@ -61,6 +63,7 @@ func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.Ge
 	questions := make([]*domain.Question, 0, len(results))
 	for _, r := range results {
 		if r.err != nil {
+			log.Printf("question usecase: generate question error: %v", r.err)
 			continue
 		}
 
@@ -82,9 +85,14 @@ func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.Ge
 		}
 
 		if err := u.repo.Save(ctx, q, meta); err != nil {
+			log.Printf("question usecase: save question error: %v", err)
 			continue
 		}
 		questions = append(questions, q)
+	}
+
+	if len(questions) == 0 {
+		return nil, fmt.Errorf("question usecase: all question generation failed")
 	}
 
 	return questions, nil
@@ -95,6 +103,9 @@ func (u *QuestionUsecase) GradeAnswer(ctx context.Context, input domain.GradeInp
 
 	q, _, _, err := u.repo.FindByID(ctx, input.QuestionID)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("question usecase: question not found: %w", domain.ErrNotFound)
+		}
 		return nil, fmt.Errorf("question usecase: find question: %w", err)
 	}
 

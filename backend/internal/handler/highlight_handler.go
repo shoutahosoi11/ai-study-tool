@@ -82,16 +82,6 @@ func (h *HighlightHandler) List(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
-	if page <= 0 {
-		page = 1
-	}
-	if limit <= 0 {
-		limit = 20
-	}
-	if limit > 50 {
-		limit = 50
-	}
-
 	responses := make([]*dto.HighlightResponse, 0, len(highlights))
 	for _, highlight := range highlights {
 		responses = append(responses, toHighlightResponse(highlight))

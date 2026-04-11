@@ -96,6 +96,9 @@ func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
 
 	result, err := h.questionUsecase.GradeAnswer(c.Request().Context(), gradeInput, user.Plan)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "question not found")
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 

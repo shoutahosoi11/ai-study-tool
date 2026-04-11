@@ -8,7 +8,6 @@ import (
 
 	firebase "firebase.google.com/go/v4"
 	gstorage "cloud.google.com/go/storage"
-	"google.golang.org/api/option"
 )
 
 type StorageClient struct {
@@ -16,19 +15,7 @@ type StorageClient struct {
 	bucketName string
 }
 
-func NewStorageClient(ctx context.Context, credPath, bucketName string) (*StorageClient, error) {
-	if credPath == "" {
-		return nil, fmt.Errorf("firebase storage: FIREBASE_CREDENTIALS_PATH is required")
-	}
-	if bucketName == "" {
-		return nil, fmt.Errorf("firebase storage: FIREBASE_STORAGE_BUCKET is required")
-	}
-
-	app, err := firebase.NewApp(ctx, &firebase.Config{StorageBucket: bucketName}, option.WithCredentialsFile(credPath))
-	if err != nil {
-		return nil, fmt.Errorf("firebase storage: init app: %w", err)
-	}
-
+func NewStorageClient(ctx context.Context, app *firebase.App, bucketName string) (*StorageClient, error) {
 	client, err := app.Storage(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("firebase storage: init client: %w", err)

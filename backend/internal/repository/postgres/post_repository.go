@@ -6,14 +6,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
-	"github.com/shout/ai-study-tool/backend/internal/repository"
 )
 
 type postRepository struct {
 	db *sql.DB
 }
 
-func NewPostRepository(db *sql.DB) repository.PostRepository {
+func NewPostRepository(db *sql.DB) domain.PostRepository {
 	return &postRepository{db: db}
 }
 
@@ -131,24 +130,4 @@ RETURNING id, user_id, question_id, note_id, book_id, field_id, type, repost_cou
 		return nil, err
 	}
 	return p, nil
-}
-
-func (r *postRepository) IncrementLike(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE posts SET like_count = like_count + 1 WHERE id = $1`, id)
-	return err
-}
-
-func (r *postRepository) DecrementLike(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE posts SET like_count = GREATEST(like_count - 1, 0) WHERE id = $1`, id)
-	return err
-}
-
-func (r *postRepository) IncrementRepost(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE posts SET repost_count = repost_count + 1 WHERE id = $1`, id)
-	return err
-}
-
-func (r *postRepository) IncrementComment(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1`, id)
-	return err
 }

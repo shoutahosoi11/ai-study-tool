@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 
@@ -65,7 +64,7 @@ func (h *UserHandler) GetMe(c echo.Context) error {
 
 	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -83,7 +82,7 @@ func (h *UserHandler) GetUser(c echo.Context) error {
 
 	user, err := h.userUsecase.GetByID(c.Request().Context(), id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -100,7 +99,10 @@ func (h *UserHandler) UpdateProfile(c echo.Context) error {
 
 	me, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
 	req := new(domain.UpdateUserInput)
