@@ -1,48 +1,56 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/labstack/echo/v4"
+	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type NoteHandler struct {
 	noteUsecase *usecase.NoteUsecase
+	userUsecase *usecase.UserUsecase
 }
 
-func NewNoteHandler(nu *usecase.NoteUsecase) *NoteHandler {
-	return &NoteHandler{noteUsecase: nu}
+func NewNoteHandler(nu *usecase.NoteUsecase, userUsecase *usecase.UserUsecase) *NoteHandler {
+	return &NoteHandler{noteUsecase: nu, userUsecase: userUsecase}
 }
 
-func (h *NoteHandler) UploadNote(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *NoteHandler) UploadNote(c echo.Context) error {
+	firebaseUID, ok := c.Get("firebase_uid").(string)
+	if !ok || firebaseUID == "" {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "failed to parse form")
-		return
-	}
-
-	file, header, err := r.FormFile("file")
+	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "file is required")
-		return
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	if err := c.Request().ParseMultipartForm(32 << 20); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "failed to parse form")
+	}
+
+	file, header, err := c.Request().FormFile("file")
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "file is required")
 	}
 	defer file.Close()
 
-	title := r.FormValue("title")
+	title := c.FormValue("title")
 	if title == "" {
 		title = header.Filename
 	}
 
-	note, err := h.noteUsecase.UploadNote(r.Context(), userID, title, file, header.Header.Get("Content-Type"))
+	note, err := h.noteUsecase.UploadNote(c.Request().Context(), user.ID.String(), title, file, header.Header.Get("Content-Type"))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "S3_ERROR", err.Error())
-		return
+		return echo.NewHTTPError(http.StatusBadGateway, "file upload failed")
 	}
 
-	writeJSON(w, http.StatusCreated, note)
+	return c.JSON(http.StatusCreated, note)
 }

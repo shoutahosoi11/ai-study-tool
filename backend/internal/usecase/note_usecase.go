@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"time"
@@ -12,15 +11,15 @@ import (
 )
 
 type NoteUsecase struct {
-	db              *sql.DB
+	noteRepo        domain.NoteRepository
 	storageClient   domain.StorageClient
 	ocrClient       domain.OCRClient
 	questionUsecase *QuestionUsecase
 }
 
-func NewNoteUsecase(db *sql.DB, storageClient domain.StorageClient, ocrClient domain.OCRClient, questionUsecase *QuestionUsecase) *NoteUsecase {
+func NewNoteUsecase(noteRepo domain.NoteRepository, storageClient domain.StorageClient, ocrClient domain.OCRClient, questionUsecase *QuestionUsecase) *NoteUsecase {
 	return &NoteUsecase{
-		db:              db,
+		noteRepo:        noteRepo,
 		storageClient:   storageClient,
 		ocrClient:       ocrClient,
 		questionUsecase: questionUsecase,
@@ -44,11 +43,14 @@ func (u *NoteUsecase) UploadNote(ctx context.Context, userID, title string, file
 	}
 
 	now := time.Now()
-	_, err = u.db.ExecContext(ctx,
-		`INSERT INTO notes (id, user_id, title, file_url, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)`,
-		noteID, userID, title, fileURL, now,
-	)
-	if err != nil {
+	note := &domain.Note{
+		ID:        noteID,
+		UserID:    userID,
+		Title:     title,
+		FileURL:   fileURL,
+		CreatedAt: now,
+	}
+	if err := u.noteRepo.Save(ctx, note); err != nil {
 		return nil, fmt.Errorf("note usecase: save note: %w", err)
 	}
 

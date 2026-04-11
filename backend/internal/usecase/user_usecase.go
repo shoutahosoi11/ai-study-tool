@@ -40,3 +40,11 @@ func (u *UserUsecase) GetByFirebaseUID(ctx context.Context, firebaseUID string) 
 func (u *UserUsecase) UpdateProfile(ctx context.Context, id uuid.UUID, input domain.UpdateUserInput) (*domain.User, error) {
 	return u.userRepo.Update(ctx, id, input)
 }
+
+func (u *UserUsecase) GetPlanByFirebaseUID(ctx context.Context, firebaseUID string) string {
+	user, err := u.userRepo.GetByFirebaseUID(ctx, firebaseUID)
+	if err != nil {
+		return "free"
+	}
+	return user.Plan
+}

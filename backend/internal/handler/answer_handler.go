@@ -1,73 +1,72 @@
 package handler
 
 import (
-	"database/sql"
-	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/labstack/echo/v4"
+	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type AnswerHandler struct {
 	answerUsecase *usecase.AnswerUsecase
-	db            *sql.DB
+	userUsecase   *usecase.UserUsecase
 }
 
-func NewAnswerHandler(au *usecase.AnswerUsecase, db *sql.DB) *AnswerHandler {
-	return &AnswerHandler{answerUsecase: au, db: db}
+func NewAnswerHandler(au *usecase.AnswerUsecase, userUsecase *usecase.UserUsecase) *AnswerHandler {
+	return &AnswerHandler{answerUsecase: au, userUsecase: userUsecase}
 }
 
-func (h *AnswerHandler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
+	firebaseUID, ok := c.Get("firebase_uid").(string)
+	if !ok || firebaseUID == "" {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 
-	questionID := r.PathValue("id")
+	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	questionID := c.Param("id")
 	if questionID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "question id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
 	}
 
-	var req dto.SubmitAnswerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
-		return
+	req := new(dto.SubmitAnswerRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
 	if req.UserAnswer == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "user_answer is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "user_answer is required")
 	}
-
-	userPlan := getUserPlan(r.Context(), h.db, userID)
 
 	input := usecase.SubmitAnswerInput{
-		UserID:     userID,
+		UserID:     user.ID.String(),
 		QuestionID: questionID,
 		UserAnswer: req.UserAnswer,
-		UserPlan:   userPlan,
+		UserPlan:   user.Plan,
 	}
 
-	result, err := h.answerUsecase.SubmitAnswer(r.Context(), input)
+	result, err := h.answerUsecase.SubmitAnswer(c.Request().Context(), input)
 	if err != nil {
-		errMsg := err.Error()
-		if strings.HasPrefix(errMsg, "not_found:") {
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "question not found")
-			return
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
-		if strings.HasPrefix(errMsg, "llm_error:") {
-			writeError(w, http.StatusBadGateway, "GEMINI_ERROR", errMsg)
-			return
+		if strings.HasPrefix(err.Error(), "llm_error:") {
+			return echo.NewHTTPError(http.StatusBadGateway, "AI grading failed")
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", errMsg)
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
-	writeJSON(w, http.StatusOK, dto.SubmitAnswerResponse{
+	return c.JSON(http.StatusOK, dto.SubmitAnswerResponse{
 		IsCorrect:     result.IsCorrect,
 		CorrectAnswer: result.CorrectAnswer,
 		Explanation:   result.Explanation,

@@ -9,11 +9,8 @@ import (
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	_ "github.com/lib/pq"
-	apphandler "github.com/shout/ai-study-tool/backend/internal/handler"
-	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
+	"github.com/shout/ai-study-tool/backend/internal/di"
 	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
-	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
-	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 func main() {
@@ -40,17 +37,10 @@ func main() {
 		log.Fatal("firebase init failed: middleware is nil")
 	}
 
-	userRepo := postgresrepo.NewUserRepository(db)
-	postRepo := postgresrepo.NewPostRepository(db)
-	highlightRepo := persistence.NewHighlightRepository(db)
-
-	userUsecase := usecase.NewUserUsecase(userRepo)
-	postUsecase := usecase.NewPostUsecase(postRepo)
-	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
-
-	userHandler := apphandler.NewUserHandler(userUsecase)
-	postHandler := apphandler.NewPostHandler(postUsecase, userUsecase)
-	highlightHandler := apphandler.NewHighlightHandler(highlightUsecase, userUsecase)
+	container, err := di.NewContainer(db)
+	if err != nil {
+		log.Fatalf("failed to build DI container: %v", err)
+	}
 
 	e := echo.New()
 	e.Use(echomiddleware.Logger())
@@ -69,23 +59,43 @@ func main() {
 	authMiddleware := firebaseMiddleware.Authenticate
 
 	users := api.Group("/users")
-	users.POST("/signup", userHandler.SignUp, authMiddleware)
-	users.GET("/me", userHandler.GetMe, authMiddleware)
-	users.GET("/:id", userHandler.GetUser, authMiddleware)
-	users.PUT("/me", userHandler.UpdateProfile, authMiddleware)
+	users.POST("/signup", container.UserHandler.SignUp, authMiddleware)
+	users.GET("/me", container.UserHandler.GetMe, authMiddleware)
+	users.GET("/:id", container.UserHandler.GetUser, authMiddleware)
+	users.PUT("/me", container.UserHandler.UpdateProfile, authMiddleware)
 
 	posts := api.Group("/posts", authMiddleware)
-	posts.GET("/timeline", postHandler.GetTimeline)
-	posts.GET("/:id", postHandler.GetPost)
-	posts.POST("", postHandler.CreatePost)
-	posts.POST("/:id/like", postHandler.LikePost)
-	posts.DELETE("/:id/like", postHandler.UnlikePost)
+	posts.GET("/timeline", container.PostHandler.GetTimeline)
+	posts.GET("/:id", container.PostHandler.GetPost)
+	posts.POST("", container.PostHandler.CreatePost)
+	posts.POST("/:id/like", container.PostHandler.LikePost)
+	posts.DELETE("/:id/like", container.PostHandler.UnlikePost)
 
 	highlights := api.Group("/highlights", authMiddleware)
-	highlights.POST("", highlightHandler.Create)
-	highlights.GET("", highlightHandler.List)
-	highlights.GET("/:id", highlightHandler.GetByID)
-	highlights.DELETE("/:id", highlightHandler.Delete)
+	highlights.POST("", container.HighlightHandler.Create)
+	highlights.GET("", container.HighlightHandler.List)
+	highlights.GET("/:id", container.HighlightHandler.GetByID)
+	highlights.DELETE("/:id", container.HighlightHandler.Delete)
+
+	questions := api.Group("/questions", authMiddleware)
+	questions.POST("", container.QuestionHandler.GenerateQuestions)
+	questions.POST("/:id/grade", container.QuestionHandler.GradeAnswer)
+
+	answers := api.Group("/answers", authMiddleware)
+	answers.POST("/:id", container.AnswerHandler.SubmitAnswer)
+
+	notes := api.Group("/notes", authMiddleware)
+	notes.POST("", container.NoteHandler.UploadNote)
+
+	social := api.Group("", authMiddleware)
+	social.POST("/users/:id/follow", container.SocialHandler.Follow)
+	social.DELETE("/users/:id/follow", container.SocialHandler.Unfollow)
+	social.POST("/posts/:id/like", container.SocialHandler.Like)
+	social.DELETE("/posts/:id/like", container.SocialHandler.Unlike)
+	social.POST("/posts/:id/repost", container.SocialHandler.Repost)
+	social.DELETE("/posts/:id/repost", container.SocialHandler.Unrepost)
+	social.POST("/posts/:id/comments", container.SocialHandler.CreateComment)
+	social.GET("/posts/:id/comments", container.SocialHandler.ListComments)
 
 	port := os.Getenv("PORT")
 	if port == "" {

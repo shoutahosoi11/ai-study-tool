@@ -1,10 +1,10 @@
 package handler
 
 import (
-	"database/sql"
-	"encoding/json"
+	"errors"
 	"net/http"
 
+	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
@@ -12,47 +12,49 @@ import (
 
 type QuestionHandler struct {
 	questionUsecase *usecase.QuestionUsecase
-	db              *sql.DB
+	userUsecase     *usecase.UserUsecase
 }
 
-func NewQuestionHandler(qu *usecase.QuestionUsecase, db *sql.DB) *QuestionHandler {
-	return &QuestionHandler{questionUsecase: qu, db: db}
+func NewQuestionHandler(qu *usecase.QuestionUsecase, userUsecase *usecase.UserUsecase) *QuestionHandler {
+	return &QuestionHandler{questionUsecase: qu, userUsecase: userUsecase}
 }
 
-func (h *QuestionHandler) GenerateQuestions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
+	firebaseUID, ok := c.Get("firebase_uid").(string)
+	if !ok || firebaseUID == "" {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 
-	userPlan := getUserPlan(r.Context(), h.db, userID)
+	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
 
-	var req dto.GenerateQuestionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
-		return
+	req := new(dto.GenerateQuestionRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
 	if req.SourceText == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "source_text is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "source_text is required")
 	}
 
 	input := domain.GenerateQuestionsInput{
-		CreatorID:         userID,
+		CreatorID:         user.ID.String(),
 		SourceType:        domain.SourceType(req.SourceType),
 		SourceID:          req.SourceID,
 		SourceText:        req.SourceText,
 		QuestionType:      domain.QuestionType(req.QuestionType),
 		CustomInstruction: req.CustomInstruction,
-		UserPlan:          userPlan,
+		UserPlan:          user.Plan,
 	}
 
-	questions, err := h.questionUsecase.GenerateQuestions(r.Context(), input)
+	questions, err := h.questionUsecase.GenerateQuestions(c.Request().Context(), input)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "GEMINI_ERROR", err.Error())
-		return
+		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 	}
 
 	responses := make([]dto.QuestionResponse, 0, len(questions))
@@ -60,42 +62,44 @@ func (h *QuestionHandler) GenerateQuestions(w http.ResponseWriter, r *http.Reque
 		responses = append(responses, dto.ToQuestionResponse(q))
 	}
 
-	writeJSON(w, http.StatusCreated, responses)
+	return c.JSON(http.StatusCreated, responses)
 }
 
-func (h *QuestionHandler) GradeAnswer(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
+	firebaseUID, ok := c.Get("firebase_uid").(string)
+	if !ok || firebaseUID == "" {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 
-	questionID := r.PathValue("id")
+	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	questionID := c.Param("id")
 	if questionID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "question id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
 	}
 
-	var req dto.GradeAnswerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
-		return
+	req := new(dto.GradeAnswerRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-
-	userPlan := getUserPlan(r.Context(), h.db, userID)
 
 	gradeInput := domain.GradeInput{
 		QuestionID: questionID,
 		UserAnswer: req.UserAnswer,
 	}
 
-	result, err := h.questionUsecase.GradeAnswer(r.Context(), gradeInput, userPlan)
+	result, err := h.questionUsecase.GradeAnswer(c.Request().Context(), gradeInput, user.Plan)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
-		return
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
-	writeJSON(w, http.StatusOK, dto.GradeAnswerResponse{
+	return c.JSON(http.StatusOK, dto.GradeAnswerResponse{
 		IsCorrect: result.IsCorrect,
 		Score:     result.Score,
 		Feedback:  result.Feedback,

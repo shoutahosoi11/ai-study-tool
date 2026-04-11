@@ -15,6 +15,8 @@ import (
 )
 
 type Container struct {
+	UserHandler      *handler.UserHandler
+	PostHandler      *handler.PostHandler
 	QuestionHandler  *handler.QuestionHandler
 	NoteHandler      *handler.NoteHandler
 	AnswerHandler    *handler.AnswerHandler
@@ -44,29 +46,36 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
+	userRepo := postgresrepo.NewUserRepository(db)
+	postRepo := postgresrepo.NewPostRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)
 	answerRepo := persistence.NewAnswerRepository(db)
 	socialRepo := persistence.NewSocialRepository(db)
 	highlightRepo := persistence.NewHighlightRepository(db)
-	userRepo := postgresrepo.NewUserRepository(db)
+	noteRepo := persistence.NewNoteRepository(db)
 
+	userUsecase := usecase.NewUserUsecase(userRepo)
+	postUsecase := usecase.NewPostUsecase(postRepo)
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
-	noteUsecase := usecase.NewNoteUsecase(db, storageClient, ocrClient, questionUsecase)
+	noteUsecase := usecase.NewNoteUsecase(noteRepo, storageClient, ocrClient, questionUsecase)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
-	userUsecase := usecase.NewUserUsecase(userRepo)
 
-	questionHandler := handler.NewQuestionHandler(questionUsecase, db)
-	answerHandler := handler.NewAnswerHandler(answerUsecase, db)
-	noteHandler := handler.NewNoteHandler(noteUsecase)
-	socialHandler := handler.NewSocialHandler(socialUsecase)
+	userHandler := handler.NewUserHandler(userUsecase)
+	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
+	questionHandler := handler.NewQuestionHandler(questionUsecase, userUsecase)
+	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase)
+	noteHandler := handler.NewNoteHandler(noteUsecase, userUsecase)
+	socialHandler := handler.NewSocialHandler(socialUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
 
 	_ = domain.StorageClient(storageClient)
 	_ = domain.OCRClient(ocrClient)
 
 	return &Container{
+		UserHandler:      userHandler,
+		PostHandler:      postHandler,
 		QuestionHandler:  questionHandler,
 		NoteHandler:      noteHandler,
 		AnswerHandler:    answerHandler,

@@ -1,11 +1,12 @@
 package handler
 
 import (
-	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
@@ -13,184 +14,157 @@ import (
 
 type SocialHandler struct {
 	socialUsecase *usecase.SocialUsecase
+	userUsecase   *usecase.UserUsecase
 }
 
-func NewSocialHandler(socialUsecase *usecase.SocialUsecase) *SocialHandler {
-	return &SocialHandler{socialUsecase: socialUsecase}
+func NewSocialHandler(socialUsecase *usecase.SocialUsecase, userUsecase *usecase.UserUsecase) *SocialHandler {
+	return &SocialHandler{socialUsecase: socialUsecase, userUsecase: userUsecase}
 }
 
-func (h *SocialHandler) Follow(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *SocialHandler) currentUserID(c echo.Context) (string, error) {
+	firebaseUID, ok := c.Get("firebase_uid").(string)
+	if !ok || firebaseUID == "" {
+		return "", echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
+	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return "", echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+	return user.ID.String(), nil
+}
 
-	targetID := r.PathValue("id")
+func (h *SocialHandler) Follow(c echo.Context) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
+	}
+	targetID := c.Param("id")
 	if targetID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "user id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "user id is required")
 	}
-
-	if err := h.socialUsecase.Follow(r.Context(), userID, targetID); err != nil {
-		h.writeSocialError(w, err)
-		return
+	if err := h.socialUsecase.Follow(c.Request().Context(), userID, targetID); err != nil {
+		return h.socialError(err)
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "followed"})
+	return c.JSON(http.StatusOK, map[string]string{"status": "followed"})
 }
 
-func (h *SocialHandler) Unfollow(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *SocialHandler) Unfollow(c echo.Context) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
-
-	targetID := r.PathValue("id")
+	targetID := c.Param("id")
 	if targetID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "user id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "user id is required")
 	}
-
-	if err := h.socialUsecase.Unfollow(r.Context(), userID, targetID); err != nil {
-		h.writeSocialError(w, err)
-		return
+	if err := h.socialUsecase.Unfollow(c.Request().Context(), userID, targetID); err != nil {
+		return h.socialError(err)
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "unfollowed"})
+	return c.JSON(http.StatusOK, map[string]string{"status": "unfollowed"})
 }
 
-func (h *SocialHandler) Like(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *SocialHandler) Like(c echo.Context) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
-
-	postID := r.PathValue("id")
+	postID := c.Param("id")
 	if postID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "post id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
-
-	if err := h.socialUsecase.Like(r.Context(), userID, postID); err != nil {
-		h.writeSocialError(w, err)
-		return
+	if err := h.socialUsecase.Like(c.Request().Context(), userID, postID); err != nil {
+		return h.socialError(err)
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "liked"})
+	return c.JSON(http.StatusOK, map[string]string{"status": "liked"})
 }
 
-func (h *SocialHandler) Unlike(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *SocialHandler) Unlike(c echo.Context) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
-
-	postID := r.PathValue("id")
+	postID := c.Param("id")
 	if postID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "post id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
-
-	if err := h.socialUsecase.Unlike(r.Context(), userID, postID); err != nil {
-		h.writeSocialError(w, err)
-		return
+	if err := h.socialUsecase.Unlike(c.Request().Context(), userID, postID); err != nil {
+		return h.socialError(err)
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "unliked"})
+	return c.JSON(http.StatusOK, map[string]string{"status": "unliked"})
 }
 
-func (h *SocialHandler) Repost(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *SocialHandler) Repost(c echo.Context) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
-
-	postID := r.PathValue("id")
+	postID := c.Param("id")
 	if postID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "post id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
-
-	if err := h.socialUsecase.Repost(r.Context(), userID, postID); err != nil {
-		h.writeSocialError(w, err)
-		return
+	if err := h.socialUsecase.Repost(c.Request().Context(), userID, postID); err != nil {
+		return h.socialError(err)
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "reposted"})
+	return c.JSON(http.StatusOK, map[string]string{"status": "reposted"})
 }
 
-func (h *SocialHandler) Unrepost(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *SocialHandler) Unrepost(c echo.Context) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
-
-	postID := r.PathValue("id")
+	postID := c.Param("id")
 	if postID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "post id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
-
-	if err := h.socialUsecase.Unrepost(r.Context(), userID, postID); err != nil {
-		h.writeSocialError(w, err)
-		return
+	if err := h.socialUsecase.Unrepost(c.Request().Context(), userID, postID); err != nil {
+		return h.socialError(err)
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "unreposted"})
+	return c.JSON(http.StatusOK, map[string]string{"status": "unreposted"})
 }
 
-func (h *SocialHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value("user_id").(string)
-	if !ok || userID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "unauthorized")
-		return
+func (h *SocialHandler) CreateComment(c echo.Context) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
-
-	postID := r.PathValue("id")
+	postID := c.Param("id")
 	if postID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "post id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
 
-	var req dto.CreateCommentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid request body")
-		return
+	req := new(dto.CreateCommentRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	comment, err := h.socialUsecase.CreateComment(r.Context(), &domain.Comment{
+	comment, err := h.socialUsecase.CreateComment(c.Request().Context(), &domain.Comment{
 		PostID:  postID,
 		UserID:  userID,
 		Content: req.Content,
 	})
 	if err != nil {
-		h.writeSocialError(w, err)
-		return
+		return h.socialError(err)
 	}
 
-	writeJSON(w, http.StatusCreated, toCommentResponse(comment))
+	return c.JSON(http.StatusCreated, toCommentResponse(comment))
 }
 
-func (h *SocialHandler) ListComments(w http.ResponseWriter, r *http.Request) {
-	postID := r.PathValue("id")
+func (h *SocialHandler) ListComments(c echo.Context) error {
+	postID := c.Param("id")
 	if postID == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "post id is required")
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
 
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	limit, _ := strconv.Atoi(c.QueryParam("limit"))
+	offset, _ := strconv.Atoi(c.QueryParam("offset"))
 
-	comments, err := h.socialUsecase.ListComments(r.Context(), postID, limit, offset)
+	comments, err := h.socialUsecase.ListComments(c.Request().Context(), postID, limit, offset)
 	if err != nil {
-		h.writeSocialError(w, err)
-		return
+		return h.socialError(err)
 	}
 
 	responses := make([]dto.CommentResponse, 0, len(comments))
@@ -208,20 +182,18 @@ func (h *SocialHandler) ListComments(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	return c.JSON(http.StatusOK, map[string]interface{}{
 		"comments": responses,
 		"limit":    limit,
 		"offset":   offset,
 	})
 }
 
-func (h *SocialHandler) writeSocialError(w http.ResponseWriter, err error) {
+func (h *SocialHandler) socialError(err error) error {
 	if strings.HasPrefix(err.Error(), "validation:") {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", strings.TrimPrefix(err.Error(), "validation: "))
-		return
+		return echo.NewHTTPError(http.StatusBadRequest, strings.TrimPrefix(err.Error(), "validation: "))
 	}
-
-	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+	return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 }
 
 func toCommentResponse(comment *domain.Comment) dto.CommentResponse {

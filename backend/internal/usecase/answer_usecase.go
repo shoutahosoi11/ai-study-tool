@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 
@@ -45,8 +44,8 @@ type SubmitAnswerResult struct {
 func (u *AnswerUsecase) SubmitAnswer(ctx context.Context, input SubmitAnswerInput) (*SubmitAnswerResult, error) {
 	q, err := u.questionRepo.GetByID(ctx, input.QuestionID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("not_found: question not found")
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("answer usecase: question not found: %w", domain.ErrNotFound)
 		}
 		return nil, fmt.Errorf("answer usecase: get question: %w", err)
 	}
@@ -84,12 +83,8 @@ func (u *AnswerUsecase) SubmitAnswer(ctx context.Context, input SubmitAnswerInpu
 		Feedback:    feedback,
 		GraderModel: graderModel,
 	}
-	if _, err := u.answerRepo.Upsert(ctx, upsertInput); err != nil {
+	if _, err := u.answerRepo.UpsertAndUpdateStats(ctx, upsertInput, input.QuestionID, isCorrect); err != nil {
 		return nil, fmt.Errorf("answer usecase: upsert answer: %w", err)
-	}
-
-	if err := u.questionRepo.IncrementStats(ctx, input.QuestionID, isCorrect); err != nil {
-		return nil, fmt.Errorf("answer usecase: increment stats: %w", err)
 	}
 
 	return &SubmitAnswerResult{

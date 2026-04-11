@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -136,6 +137,9 @@ FROM questions WHERE id = $1 LIMIT 1`
 
 	err := row.Scan(&qID, &questionType, &body, &optionsJSON, &correctAnswer, &explanation)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, err
 	}
 

@@ -14,4 +14,5 @@ type AnswerUpsertInput struct {
 
 type AnswerRepository interface {
 	Upsert(ctx context.Context, input AnswerUpsertInput) (*Answer, error)
+	UpsertAndUpdateStats(ctx context.Context, input AnswerUpsertInput, questionID string, isCorrect bool) (*Answer, error)
 }
