@@ -16,7 +16,8 @@ AI Study Tool is an AI-powered learning platform for study workflows, question g
 - PostgreSQL + sqlc
 - React + TypeScript + Tailwind CSS + Vite
 - Firebase Auth
-- AWS S3
+- Firebase Auth
+- Firebase Storage
 - Gemini API
 
 ## Architecture
