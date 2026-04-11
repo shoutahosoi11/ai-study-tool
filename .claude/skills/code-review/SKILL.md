@@ -57,6 +57,8 @@ description: Pull Requestやコード差分、ファイル単位のレビュー�
 - errorは握りつぶさず、wrapして返しているか
 - panicを使っていないか
 - nil, nil のような危険な返し方をしていないか
+- S3は使用禁止。Firebase Storageを使うこと
+- AWS SDKを新たにimportしていないか
 
 ### 3. DB / SQL / Repository
 
@@ -93,6 +95,8 @@ description: Pull Requestやコード差分、ファイル単位のレビュー�
 - API通信が api 層に閉じているか
 - loading / error / empty state が考慮されているか
 - 認証を自前実装していないか
+- ストレージはFirebase Storageを使うこと
+- AWS S3への直接アクセスをしていないか
 
 ### 7. テスト
 
@@ -111,6 +115,7 @@ description: Pull Requestやコード差分、ファイル単位のレビュー�
 - secretsやAPIキーのハードコード
 - 個人情報をログ出力していないか
 - 無制限なCORS設定になっていないか
+- Firebase StorageのセキュリティルールがPublic readになっていないか
 
 ## パフォーマンス観点
 
