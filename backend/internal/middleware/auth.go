@@ -16,7 +16,7 @@ type FirebaseMiddleware struct {
 }
 
 func NewFirebaseMiddleware(credentialsPath string) (*FirebaseMiddleware, error) {
-	app, err := firebase.NewApp(context.Background(), nil, option.WithCredentialsFile(credentialsPath))
+	app, err := firebase.NewApp(context.Background(), nil, option.WithAuthCredentialsFile(option.ServiceAccount, credentialsPath))
 	if err != nil {
 		return nil, err
 	}

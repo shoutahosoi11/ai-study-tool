@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,7 +60,8 @@ func (h *HighlightHandler) Create(c echo.Context) error {
 
 	highlight, err := h.highlightUsecase.Create(c.Request().Context(), user.ID, input)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		log.Printf("highlight create error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	return c.JSON(http.StatusCreated, toHighlightResponse(highlight))
@@ -76,7 +78,8 @@ func (h *HighlightHandler) List(c echo.Context) error {
 
 	highlights, total, err := h.highlightUsecase.List(c.Request().Context(), user.ID, page, limit)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		log.Printf("highlight list error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	if page <= 0 {
@@ -118,7 +121,8 @@ func (h *HighlightHandler) GetByID(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "highlight not found")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		log.Printf("highlight get by id error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	return c.JSON(http.StatusOK, toHighlightResponse(highlight))
@@ -139,7 +143,8 @@ func (h *HighlightHandler) Delete(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "highlight not found")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		log.Printf("highlight delete error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
@@ -153,7 +158,11 @@ func (h *HighlightHandler) currentUser(c echo.Context) (*domain.User, error) {
 
 	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
 	if err != nil {
-		return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		log.Printf("currentUser error: %v", err)
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	return user, nil

@@ -34,7 +34,10 @@ func main() {
 	credPath := os.Getenv("FIREBASE_CREDENTIALS_PATH")
 	firebaseMiddleware, err := appmiddleware.NewFirebaseMiddleware(credPath)
 	if err != nil {
-		log.Printf("warning: firebase init failed (set FIREBASE_CREDENTIALS_PATH): %v", err)
+		log.Fatalf("firebase init failed: %v", err)
+	}
+	if firebaseMiddleware == nil {
+		log.Fatal("firebase init failed: middleware is nil")
 	}
 
 	userRepo := postgresrepo.NewUserRepository(db)
@@ -63,15 +66,7 @@ func main() {
 	})
 
 	api := e.Group("/api")
-
-	var authMiddleware echo.MiddlewareFunc
-	if firebaseMiddleware != nil {
-		authMiddleware = firebaseMiddleware.Authenticate
-	} else {
-		authMiddleware = func(next echo.HandlerFunc) echo.HandlerFunc {
-			return next
-		}
-	}
+	authMiddleware := firebaseMiddleware.Authenticate
 
 	users := api.Group("/users")
 	users.POST("/signup", userHandler.SignUp, authMiddleware)

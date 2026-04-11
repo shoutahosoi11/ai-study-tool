@@ -1,6 +1,7 @@
 package di
 
 import (
+	"context"
 	"database/sql"
 	"os"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/handler"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
-	infraS3 "github.com/shout/ai-study-tool/backend/internal/infrastructure/s3"
+	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
 	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
@@ -34,9 +35,10 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
-	s3Client, err := infraS3.NewClient(
-		os.Getenv("S3_BUCKET_NAME"),
-		os.Getenv("AWS_REGION"),
+	storageClient, err := infrafb.NewStorageClient(
+		context.Background(),
+		os.Getenv("FIREBASE_CREDENTIALS_PATH"),
+		os.Getenv("FIREBASE_STORAGE_BUCKET"),
 	)
 	if err != nil {
 		return nil, err
@@ -50,7 +52,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
-	noteUsecase := usecase.NewNoteUsecase(db, s3Client, ocrClient, questionUsecase)
+	noteUsecase := usecase.NewNoteUsecase(db, storageClient, ocrClient, questionUsecase)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
 	userUsecase := usecase.NewUserUsecase(userRepo)
@@ -61,7 +63,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	socialHandler := handler.NewSocialHandler(socialUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
 
-	_ = domain.StorageClient(s3Client)
+	_ = domain.StorageClient(storageClient)
 	_ = domain.OCRClient(ocrClient)
 
 	return &Container{
