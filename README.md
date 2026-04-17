@@ -13,9 +13,10 @@ AI Study Tool is an AI-powered learning platform for study workflows, question g
 ## Tech Stack
 
 - Go + Echo
-- PostgreSQL + sqlc
+- PostgreSQL
+- database/sql + raw SQL
+- sqlc (queries/config prepared, not fully adopted yet)
 - React + TypeScript + Tailwind CSS + Vite
-- Firebase Auth
 - Firebase Auth
 - Firebase Storage
 - Gemini API
@@ -25,9 +26,10 @@ The project follows Clean Architecture
 - backend/cmd: application entrypoint  
 - backend/internal/domain: core business entities and rules  
 - backend/internal/usecase: application logic  
-- backend/internal/repository: sqlc-based persistence layer  
 - backend/internal/handler: HTTP handlers  
-- backend/internal/middleware: middleware  
+- backend/internal/middleware: middleware
+- backend/internal/repository/postgres: PostgreSQL repositories
+- backend/internal/infrastructure/persistence: persistence implementations
 - frontend/src: client application 
 
 ## Getting Started
