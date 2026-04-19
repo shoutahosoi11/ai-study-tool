@@ -14,7 +14,7 @@ AI Study Tool is an AI-powered learning platform for study workflows, question g
 
 - Go + Echo
 - PostgreSQL
-- database/sql + raw SQL
+- database/sql + sqlc
 - sqlc (queries/config prepared, not fully adopted yet)
 - React + TypeScript + Tailwind CSS + Vite
 - Firebase Auth
