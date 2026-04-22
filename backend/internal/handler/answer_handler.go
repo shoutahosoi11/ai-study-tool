@@ -8,21 +8,22 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
+	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type AnswerHandler struct {
 	answerUsecase *usecase.AnswerUsecase
-	userUsecase   *usecase.UserUsecase
+	userUsecase   usecase.UserUsecaseInterface
 }
 
-func NewAnswerHandler(au *usecase.AnswerUsecase, userUsecase *usecase.UserUsecase) *AnswerHandler {
+func NewAnswerHandler(au *usecase.AnswerUsecase, userUsecase usecase.UserUsecaseInterface) *AnswerHandler {
 	return &AnswerHandler{answerUsecase: au, userUsecase: userUsecase}
 }
 
 func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
-	firebaseUID, ok := c.Get("firebase_uid").(string)
-	if !ok || firebaseUID == "" {
+	firebaseUID, ok := middleware.GetFirebaseUID(c)
+	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 

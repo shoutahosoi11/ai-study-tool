@@ -5,6 +5,7 @@ type QuestionMeta struct {
 	CreatorID     string
 	SourceType    SourceType
 	SourceID      string
+	HighlightID   string
 	GenerationID  string
 	IsAIGenerated bool
 }

@@ -6,6 +6,10 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	HighlightSourceKindle = "kindle"
+)
+
 type Highlight struct {
 	ID            uuid.UUID
 	UserID        uuid.UUID
@@ -14,6 +18,8 @@ type Highlight struct {
 	BookAuthor    *string
 	ASIN          *string
 	Content       string
+	Explanation   *string
+	ContentHash   *string
 	Location      *string
 	HighlightedAt *time.Time
 	Source        string

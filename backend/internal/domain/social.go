@@ -21,9 +21,12 @@ type Repost struct {
 }
 
 type Comment struct {
-	ID        string
-	PostID    string
-	UserID    string
-	Content   string
-	CreatedAt time.Time
+	ID          string
+	PostID      string
+	UserID      string
+	Username    string
+	DisplayName string
+	AvatarURL   *string
+	Content     string
+	CreatedAt   time.Time
 }

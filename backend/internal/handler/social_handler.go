@@ -6,24 +6,27 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
+	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type SocialHandler struct {
 	socialUsecase *usecase.SocialUsecase
-	userUsecase   *usecase.UserUsecase
+	postUsecase   *usecase.PostUsecase
+	userUsecase   usecase.UserUsecaseInterface
 }
 
-func NewSocialHandler(socialUsecase *usecase.SocialUsecase, userUsecase *usecase.UserUsecase) *SocialHandler {
-	return &SocialHandler{socialUsecase: socialUsecase, userUsecase: userUsecase}
+func NewSocialHandler(socialUsecase *usecase.SocialUsecase, postUsecase *usecase.PostUsecase, userUsecase usecase.UserUsecaseInterface) *SocialHandler {
+	return &SocialHandler{socialUsecase: socialUsecase, postUsecase: postUsecase, userUsecase: userUsecase}
 }
 
 func (h *SocialHandler) currentUserID(c echo.Context) (string, error) {
-	firebaseUID, ok := c.Get("firebase_uid").(string)
-	if !ok || firebaseUID == "" {
+	firebaseUID, ok := middleware.GetFirebaseUID(c)
+	if !ok {
 		return "", echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
@@ -34,6 +37,29 @@ func (h *SocialHandler) currentUserID(c echo.Context) (string, error) {
 		return "", echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 	return user.ID.String(), nil
+}
+
+func (h *SocialHandler) ensureVisiblePost(c echo.Context, postID string) (string, error) {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return "", err
+	}
+
+	viewerID, err := uuid.Parse(userID)
+	if err != nil {
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	postUUID, err := uuid.Parse(postID)
+	if err != nil {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "post id is required")
+	}
+
+	if err := h.postUsecase.EnsureVisible(c.Request().Context(), viewerID, postUUID); err != nil {
+		return "", echo.NewHTTPError(http.StatusNotFound, "post not found")
+	}
+
+	return userID, nil
 }
 
 func (h *SocialHandler) Follow(c echo.Context) error {
@@ -127,13 +153,13 @@ func (h *SocialHandler) Unrepost(c echo.Context) error {
 }
 
 func (h *SocialHandler) CreateComment(c echo.Context) error {
-	userID, err := h.currentUserID(c)
-	if err != nil {
-		return err
-	}
 	postID := c.Param("id")
 	if postID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
+	}
+	userID, err := h.ensureVisiblePost(c, postID)
+	if err != nil {
+		return err
 	}
 
 	req := new(dto.CreateCommentRequest)
@@ -157,6 +183,9 @@ func (h *SocialHandler) ListComments(c echo.Context) error {
 	postID := c.Param("id")
 	if postID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
+	}
+	if _, err := h.ensureVisiblePost(c, postID); err != nil {
+		return err
 	}
 
 	limit, _ := strconv.Atoi(c.QueryParam("limit"))
@@ -191,10 +220,13 @@ func (h *SocialHandler) socialError(err error) error {
 
 func toCommentResponse(comment *domain.Comment) dto.CommentResponse {
 	return dto.CommentResponse{
-		ID:        comment.ID,
-		PostID:    comment.PostID,
-		UserID:    comment.UserID,
-		Content:   comment.Content,
-		CreatedAt: comment.CreatedAt,
+		ID:          comment.ID,
+		PostID:      comment.PostID,
+		UserID:      comment.UserID,
+		Username:    comment.Username,
+		DisplayName: comment.DisplayName,
+		AvatarURL:   comment.AvatarURL,
+		Content:     comment.Content,
+		CreatedAt:   comment.CreatedAt,
 	}
 }

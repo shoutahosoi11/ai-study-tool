@@ -7,9 +7,9 @@ import (
 )
 
 type HighlightRepository interface {
-	Create(ctx context.Context, h *Highlight) (*Highlight, error)
-	GetByID(ctx context.Context, id, userID uuid.UUID) (*Highlight, error)
-	ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]*Highlight, error)
-	CountByUserID(ctx context.Context, userID uuid.UUID) (int64, error)
-	Delete(ctx context.Context, id, userID uuid.UUID) error
+	BulkUpsert(ctx context.Context, highlights []*Highlight) (saved int, err error)
+	ListByUserIDAndASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*Highlight, error)
+	ListByUserIDAndBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*Highlight, error)
+	ListBooksWithHighlightsByUserID(ctx context.Context, userID uuid.UUID) ([]*KindleBook, error)
+	UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*Highlight, error)
 }

@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 type QuestionType string
 type SourceType string
 
@@ -7,9 +9,7 @@ const (
 	QuestionTypeMultipleChoice QuestionType = "multiple_choice"
 	QuestionTypeDescriptive    QuestionType = "descriptive"
 
-	SourceTypeHighlight SourceType = "highlight"
-	SourceTypeNote      SourceType = "note"
-	SourceTypeManual    SourceType = "manual"
+	SourceTypeKindleBook SourceType = "kindle_book"
 )
 
 type Question struct {
@@ -19,6 +19,18 @@ type Question struct {
 	Options       []string
 	CorrectAnswer string
 	Explanation   string
+}
+
+type SavedQuestion struct {
+	Question
+	Note    string
+	SavedAt time.Time
+}
+
+type IncorrectQuestion struct {
+	Question
+	Note       string
+	AnsweredAt time.Time
 }
 
 func (q *Question) IsCorrect(answer string) bool {

@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"os"
 
-	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler"
+	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
+	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gcs"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
-	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
@@ -19,19 +19,18 @@ type Container struct {
 	UserHandler        *handler.UserHandler
 	PostHandler        *handler.PostHandler
 	QuestionHandler    *handler.QuestionHandler
-	NoteHandler        *handler.NoteHandler
 	AnswerHandler      *handler.AnswerHandler
 	SocialHandler      *handler.SocialHandler
 	HighlightHandler   *handler.HighlightHandler
+	StorageHandler     *handler.StorageHandler
 	FirebaseMiddleware *middleware.FirebaseMiddleware
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
 	ctx := context.Background()
 	credPath := os.Getenv("FIREBASE_CREDENTIALS_PATH")
-	storageBucket := os.Getenv("FIREBASE_STORAGE_BUCKET")
 
-	firebaseApp, err := infrafb.NewApp(ctx, credPath, storageBucket)
+	firebaseApp, err := infrafb.NewApp(ctx, credPath)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +40,10 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
-	firebaseMiddleware := middleware.NewFirebaseMiddleware(authClient)
+	firebaseMiddleware, err := middleware.NewFirebaseMiddleware(authClient)
+	if err != nil {
+		return nil, err
+	}
 
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 
@@ -50,12 +52,11 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
-	ocrClient, err := gemini.NewOCRClient(geminiAPIKey)
-	if err != nil {
-		return nil, err
-	}
-
-	storageClient, err := infrafb.NewStorageClient(ctx, firebaseApp, storageBucket)
+	storageSigner, err := gcs.NewSignedURLService(
+		ctx,
+		os.Getenv("GCS_BUCKET_NAME"),
+		os.Getenv("GCS_SIGNING_SERVICE_ACCOUNT"),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -66,35 +67,32 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	answerRepo := persistence.NewAnswerRepository(db)
 	socialRepo := persistence.NewSocialRepository(db)
 	highlightRepo := persistence.NewHighlightRepository(db)
-	noteRepo := persistence.NewNoteRepository(db)
 
 	userUsecase := usecase.NewUserUsecase(userRepo)
 	postUsecase := usecase.NewPostUsecase(postRepo)
-	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient)
+	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
+	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
-	noteUsecase := usecase.NewNoteUsecase(noteRepo, storageClient, ocrClient, questionUsecase)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
+	storageUsecase := usecase.NewStorageUsecase(storageSigner)
 
 	userHandler := handler.NewUserHandler(userUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
 	questionHandler := handler.NewQuestionHandler(questionUsecase, userUsecase)
 	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase)
-	noteHandler := handler.NewNoteHandler(noteUsecase, userUsecase)
-	socialHandler := handler.NewSocialHandler(socialUsecase, userUsecase)
+	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
-
-	_ = domain.StorageClient(storageClient)
-	_ = domain.OCRClient(ocrClient)
+	storageHandler := handler.NewStorageHandler(storageUsecase, userUsecase)
 
 	return &Container{
 		UserHandler:        userHandler,
 		PostHandler:        postHandler,
 		QuestionHandler:    questionHandler,
-		NoteHandler:        noteHandler,
 		AnswerHandler:      answerHandler,
 		SocialHandler:      socialHandler,
 		HighlightHandler:   highlightHandler,
+		StorageHandler:     storageHandler,
 		FirebaseMiddleware: firebaseMiddleware,
 	}, nil
 }

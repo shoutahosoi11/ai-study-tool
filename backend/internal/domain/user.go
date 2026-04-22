@@ -6,41 +6,59 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	DefaultQuestionCountAll     int16 = 0
+	DefaultQuestionCountDefault int16 = 3
+	DefaultQuestionCountMax     int16 = 10
+)
+
 type User struct {
-	ID          uuid.UUID `json:"id"`
-	FirebaseUID string    `json:"firebase_uid"`
-	Username    string    `json:"username"`
-	DisplayName string    `json:"display_name"`
-	AvatarURL   *string   `json:"avatar_url,omitempty"`
-	Bio         *string   `json:"bio,omitempty"`
-	University  *string   `json:"university,omitempty"`
-	Faculty     *string   `json:"faculty,omitempty"`
-	Grade       *int16    `json:"grade,omitempty"`
-	Country     *string   `json:"country,omitempty"`
-	Plan        string    `json:"plan"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                   uuid.UUID
+	FirebaseUID          string
+	Username             string
+	DisplayName          string
+	AvatarURL            *string
+	Bio                  *string
+	University           *string
+	Faculty              *string
+	Grade                *int16
+	Country              *string
+	Plan                 string
+	DefaultQuestionCount int16
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type CreateUserInput struct {
-	FirebaseUID string  `json:"firebase_uid"`
-	Username    string  `json:"username"`
-	DisplayName string  `json:"display_name"`
-	AvatarURL   *string `json:"avatar_url"`
-	Bio         *string `json:"bio"`
-	University  *string `json:"university"`
-	Faculty     *string `json:"faculty"`
-	Grade       *int16  `json:"grade"`
-	Country     *string `json:"country"`
+	FirebaseUID string
+	Username    string
+	DisplayName string
+	AvatarURL   *string
+	Bio         *string
+	University  *string
+	Faculty     *string
+	Grade       *int16
+	Country     *string
 }
 
 type UpdateUserInput struct {
-	Username    string  `json:"username"`
-	DisplayName string  `json:"display_name"`
-	AvatarURL   *string `json:"avatar_url"`
-	Bio         *string `json:"bio"`
-	University  *string `json:"university"`
-	Faculty     *string `json:"faculty"`
-	Grade       *int16  `json:"grade"`
-	Country     *string `json:"country"`
+	Username    string
+	DisplayName string
+	AvatarURL   *string
+	Bio         *string
+	University  *string
+	Faculty     *string
+	Grade       *int16
+	Country     *string
+}
+
+type UpdateQuestionSettingsInput struct {
+	DefaultQuestionCount int16
+}
+
+func IsValidDefaultQuestionCount(count int16) bool {
+	if count == DefaultQuestionCountAll {
+		return true
+	}
+	return count >= 1 && count <= DefaultQuestionCountMax
 }

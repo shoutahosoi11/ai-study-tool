@@ -5,15 +5,13 @@ export interface Highlight {
   book_author?: string
   asin?: string
   content: string
+  explanation?: string
   location?: string
   highlighted_at?: string
-  source: 'kindle' | 'manual'
+  source: 'kindle'
   created_at: string
 }
 
-export interface ListHighlightsResponse {
+export interface ListBookHighlightsResponse {
   highlights: Highlight[]
-  total: number
-  page: number
-  limit: number
 }

@@ -3,34 +3,85 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
+	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type QuestionHandler struct {
 	questionUsecase *usecase.QuestionUsecase
-	userUsecase     *usecase.UserUsecase
+	userUsecase     usecase.UserUsecaseInterface
 }
 
-func NewQuestionHandler(qu *usecase.QuestionUsecase, userUsecase *usecase.UserUsecase) *QuestionHandler {
+func NewQuestionHandler(qu *usecase.QuestionUsecase, userUsecase usecase.UserUsecaseInterface) *QuestionHandler {
 	return &QuestionHandler{questionUsecase: qu, userUsecase: userUsecase}
 }
 
-func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
-	firebaseUID, ok := c.Get("firebase_uid").(string)
-	if !ok || firebaseUID == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+func (h *QuestionHandler) List(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
 	}
 
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	questions, err := h.questionUsecase.ListQuestions(c.Request().Context(), user.ID.String(), 50)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	responses := make([]dto.QuestionResponse, 0, len(questions))
+	for _, q := range questions {
+		responses = append(responses, dto.ToQuestionResponse(q))
+	}
+
+	return c.JSON(http.StatusOK, responses)
+}
+
+func (h *QuestionHandler) ListSaved(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	savedQuestions, err := h.questionUsecase.ListSavedQuestions(c.Request().Context(), user.ID.String(), 100)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	responses := make([]dto.SavedQuestionResponse, 0, len(savedQuestions))
+	for _, q := range savedQuestions {
+		responses = append(responses, dto.ToSavedQuestionResponse(q))
+	}
+
+	return c.JSON(http.StatusOK, responses)
+}
+
+func (h *QuestionHandler) ListIncorrect(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	incorrectQuestions, err := h.questionUsecase.ListIncorrectQuestions(c.Request().Context(), user.ID.String(), 100)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	responses := make([]dto.IncorrectQuestionResponse, 0, len(incorrectQuestions))
+	for _, q := range incorrectQuestions {
+		responses = append(responses, dto.ToIncorrectQuestionResponse(q))
+	}
+
+	return c.JSON(http.StatusOK, responses)
+}
+
+func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
 	}
 
 	req := new(dto.GenerateQuestionRequest)
@@ -38,22 +89,39 @@ func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	if req.SourceText == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "source_text is required")
+	if strings.TrimSpace(req.SourceID) == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "source_id is required")
+	}
+	if err := validateQuestionSourceID(domain.SourceType(req.SourceType), req.SourceID); err != nil {
+		if errors.Is(err, domain.ErrInvalidSourceType) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
+		}
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid source id")
 	}
 
 	input := domain.GenerateQuestionsInput{
 		CreatorID:         user.ID.String(),
 		SourceType:        domain.SourceType(req.SourceType),
 		SourceID:          req.SourceID,
-		SourceText:        req.SourceText,
-		QuestionType:      domain.QuestionType(req.QuestionType),
+		BookTitle:         req.BookTitle,
+		BookAuthor:        req.BookAuthor,
+		QuestionCount:     req.QuestionCount,
+		QuestionType:      questionTypeOrDefault(req.QuestionType),
 		CustomInstruction: req.CustomInstruction,
 		UserPlan:          user.Plan,
 	}
 
 	questions, err := h.questionUsecase.GenerateQuestions(c.Request().Context(), input)
 	if err != nil {
+		if errors.Is(err, domain.ErrInvalidSourceType) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
+		}
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
+		if errors.Is(err, domain.ErrSourceTextUnavailable) {
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "source text is unavailable")
+		}
 		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 	}
 
@@ -65,18 +133,63 @@ func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
 	return c.JSON(http.StatusCreated, responses)
 }
 
-func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
-	firebaseUID, ok := c.Get("firebase_uid").(string)
-	if !ok || firebaseUID == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+func (h *QuestionHandler) SaveQuestion(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
 	}
 
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
-	if err != nil {
+	questionID := strings.TrimSpace(c.Param("id"))
+	if questionID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
+	}
+
+	req := new(dto.SaveQuestionRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	if err := h.questionUsecase.SaveQuestion(c.Request().Context(), user.ID.String(), questionID, req.Note); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, dto.SaveQuestionResponse{
+		QuestionID: questionID,
+		Note:       strings.TrimSpace(req.Note),
+		Saved:      true,
+	})
+}
+
+func questionTypeOrDefault(questionType string) domain.QuestionType {
+	switch domain.QuestionType(strings.TrimSpace(questionType)) {
+	case domain.QuestionTypeDescriptive:
+		return domain.QuestionTypeDescriptive
+	case domain.QuestionTypeMultipleChoice:
+		return domain.QuestionTypeMultipleChoice
+	default:
+		return domain.QuestionTypeMultipleChoice
+	}
+}
+
+func validateQuestionSourceID(sourceType domain.SourceType, sourceID string) error {
+	switch sourceType {
+	case domain.SourceTypeKindleBook:
+		if strings.TrimSpace(sourceID) == "" {
+			return domain.ErrInvalidSourceType
+		}
+		return nil
+	default:
+		return domain.ErrInvalidSourceType
+	}
+}
+
+func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
 	}
 
 	questionID := c.Param("id")
@@ -107,4 +220,21 @@ func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
 		Score:     result.Score,
 		Feedback:  result.Feedback,
 	})
+}
+
+func (h *QuestionHandler) currentUser(c echo.Context) (*domain.User, error) {
+	firebaseUID, ok := middleware.GetFirebaseUID(c)
+	if !ok {
+		return nil, echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+	}
+
+	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return user, nil
 }

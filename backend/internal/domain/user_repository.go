@@ -12,4 +12,5 @@ type UserRepository interface {
 	GetByUsername(ctx context.Context, username string) (*User, error)
 	Create(ctx context.Context, input CreateUserInput) (*User, error)
 	Update(ctx context.Context, id uuid.UUID, input UpdateUserInput) (*User, error)
+	UpdateQuestionSettings(ctx context.Context, id uuid.UUID, input UpdateQuestionSettingsInput) (*User, error)
 }

@@ -1,23 +1,24 @@
 import { apiClient } from './client'
-import type { Highlight, ListHighlightsResponse } from '../types/highlight'
+import type { Highlight, ListBookHighlightsResponse } from '../types/highlight'
 
-export async function createHighlight(req: Partial<Highlight>): Promise<Highlight> {
-  const res = await apiClient.post<Highlight>('/highlights', req)
+export async function listBookHighlights(asin: string): Promise<ListBookHighlightsResponse> {
+  const res = await apiClient.get<ListBookHighlightsResponse>(`/highlights/books/${encodeURIComponent(asin)}/items`)
   return res.data
 }
 
-export async function listHighlights(page = 1, limit = 20): Promise<ListHighlightsResponse> {
-  const res = await apiClient.get<ListHighlightsResponse>('/highlights', {
-    params: { page, limit },
+export async function listBookHighlightsByMetadata(bookTitle: string, bookAuthor?: string): Promise<ListBookHighlightsResponse> {
+  const res = await apiClient.get<ListBookHighlightsResponse>('/highlights/books/search/items', {
+    params: {
+      title: bookTitle,
+      author: bookAuthor ?? '',
+    },
   })
   return res.data
 }
 
-export async function getHighlight(id: string): Promise<Highlight> {
-  const res = await apiClient.get<Highlight>(`/highlights/${id}`)
+export async function updateHighlightExplanation(id: string, explanation: string): Promise<Highlight> {
+  const res = await apiClient.put<Highlight>(`/highlights/${id}/explanation`, {
+    explanation,
+  })
   return res.data
-}
-
-export async function deleteHighlight(id: string): Promise<void> {
-  await apiClient.delete(`/highlights/${id}`)
 }

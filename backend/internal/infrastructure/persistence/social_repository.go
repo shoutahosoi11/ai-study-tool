@@ -7,51 +7,63 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
+	"github.com/shout/ai-study-tool/backend/internal/repository/sqlcgen"
 )
 
 type socialRepository struct {
-	db *sql.DB
+	db      *sql.DB
+	queries *sqlcgen.Queries
 }
 
 func NewSocialRepository(db *sql.DB) domain.SocialRepository {
-	return &socialRepository{db: db}
+	return &socialRepository{
+		db:      db,
+		queries: sqlcgen.New(db),
+	}
 }
 
 func (r *socialRepository) Follow(ctx context.Context, followerID, followeeID string) error {
-	return r.withTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `
-INSERT INTO follows (follower_id, followee_id)
-VALUES ($1, $2)
-ON CONFLICT (follower_id, followee_id) DO NOTHING
-`, followerID, followeeID)
-		if err != nil {
-			return fmt.Errorf("social repo: follow insert: %w", err)
-		}
+	parsedFollowerID, err := parseSocialUUID(followerID)
+	if err != nil {
+		return fmt.Errorf("social repo: parse follower id: %w", err)
+	}
 
-		if _, err := result.RowsAffected(); err != nil {
-			return fmt.Errorf("social repo: follow rows affected: %w", err)
-		}
+	parsedFolloweeID, err := parseSocialUUID(followeeID)
+	if err != nil {
+		return fmt.Errorf("social repo: parse followee id: %w", err)
+	}
 
-		return nil
+	_, err = r.queries.FollowUser(ctx, sqlcgen.FollowUserParams{
+		FollowerID: parsedFollowerID,
+		FolloweeID: parsedFolloweeID,
 	})
+	if err != nil {
+		return fmt.Errorf("social repo: follow insert: %w", err)
+	}
+
+	return nil
 }
 
 func (r *socialRepository) Unfollow(ctx context.Context, followerID, followeeID string) error {
-	return r.withTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `
-DELETE FROM follows
-WHERE follower_id = $1 AND followee_id = $2
-`, followerID, followeeID)
-		if err != nil {
-			return fmt.Errorf("social repo: unfollow delete: %w", err)
-		}
+	parsedFollowerID, err := parseSocialUUID(followerID)
+	if err != nil {
+		return fmt.Errorf("social repo: parse follower id: %w", err)
+	}
 
-		if _, err := result.RowsAffected(); err != nil {
-			return fmt.Errorf("social repo: unfollow rows affected: %w", err)
-		}
+	parsedFolloweeID, err := parseSocialUUID(followeeID)
+	if err != nil {
+		return fmt.Errorf("social repo: parse followee id: %w", err)
+	}
 
-		return nil
+	_, err = r.queries.UnfollowUser(ctx, sqlcgen.UnfollowUserParams{
+		FollowerID: parsedFollowerID,
+		FolloweeID: parsedFolloweeID,
 	})
+	if err != nil {
+		return fmt.Errorf("social repo: unfollow delete: %w", err)
+	}
+
+	return nil
 }
 
 func (r *socialRepository) Like(ctx context.Context, userID, postID string) error {
@@ -89,20 +101,36 @@ func (r *socialRepository) CreateComment(ctx context.Context, comment *domain.Co
 
 	err := r.withTx(ctx, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
-INSERT INTO comments (post_id, user_id, content)
-VALUES ($1, $2, $3)
-RETURNING id, post_id, user_id, content, created_at
+WITH inserted AS (
+	INSERT INTO comments (post_id, user_id, content)
+	VALUES ($1, $2, $3)
+	RETURNING id, post_id, user_id, content, created_at
+)
+SELECT
+	inserted.id,
+	inserted.post_id,
+	inserted.user_id,
+	u.username,
+	u.display_name,
+	u.avatar_url,
+	inserted.content,
+	inserted.created_at
+FROM inserted
+JOIN users u ON u.id = inserted.user_id
 `, comment.PostID, comment.UserID, comment.Content)
 
 		var (
-			id        uuid.UUID
-			postID    uuid.UUID
-			userID    uuid.UUID
-			content   string
-			createdAt sql.NullTime
+			id          uuid.UUID
+			postID      uuid.UUID
+			userID      uuid.UUID
+			username    string
+			displayName string
+			avatarURL   sql.NullString
+			content     string
+			createdAt   sql.NullTime
 		)
 
-		if err := row.Scan(&id, &postID, &userID, &content, &createdAt); err != nil {
+		if err := row.Scan(&id, &postID, &userID, &username, &displayName, &avatarURL, &content, &createdAt); err != nil {
 			return fmt.Errorf("social repo: insert comment: %w", err)
 		}
 
@@ -115,11 +143,14 @@ WHERE id = $1
 		}
 
 		created = &domain.Comment{
-			ID:        id.String(),
-			PostID:    postID.String(),
-			UserID:    userID.String(),
-			Content:   content,
-			CreatedAt: createdAt.Time,
+			ID:          id.String(),
+			PostID:      postID.String(),
+			UserID:      userID.String(),
+			Username:    username,
+			DisplayName: displayName,
+			AvatarURL:   fromNullString(avatarURL),
+			Content:     content,
+			CreatedAt:   createdAt.Time,
 		}
 
 		return nil
@@ -132,43 +163,32 @@ WHERE id = $1
 }
 
 func (r *socialRepository) ListComments(ctx context.Context, input domain.ListCommentsInput) ([]*domain.Comment, error) {
-	rows, err := r.db.QueryContext(ctx, `
-SELECT id, post_id, user_id, content, created_at
-FROM comments
-WHERE post_id = $1
-ORDER BY created_at DESC
-LIMIT $2 OFFSET $3
-`, input.PostID, input.Limit, input.Offset)
+	postID, err := uuid.Parse(input.PostID)
+	if err != nil {
+		return nil, fmt.Errorf("social repo: parse post id for list comments: %w", err)
+	}
+
+	rows, err := r.queries.ListCommentsByPostID(ctx, sqlcgen.ListCommentsByPostIDParams{
+		PostID: postID,
+		Limit:  int32(input.Limit),
+		Offset: int32(input.Offset),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("social repo: list comments query: %w", err)
 	}
-	defer rows.Close()
 
-	comments := make([]*domain.Comment, 0)
-	for rows.Next() {
-		var (
-			id        uuid.UUID
-			postID    uuid.UUID
-			userID    uuid.UUID
-			content   string
-			createdAt sql.NullTime
-		)
-
-		if err := rows.Scan(&id, &postID, &userID, &content, &createdAt); err != nil {
-			return nil, fmt.Errorf("social repo: list comments scan: %w", err)
-		}
-
+	comments := make([]*domain.Comment, 0, len(rows))
+	for _, row := range rows {
 		comments = append(comments, &domain.Comment{
-			ID:        id.String(),
-			PostID:    postID.String(),
-			UserID:    userID.String(),
-			Content:   content,
-			CreatedAt: createdAt.Time,
+			ID:          row.ID.String(),
+			PostID:      row.PostID.String(),
+			UserID:      row.UserID.String(),
+			Username:    row.Username,
+			DisplayName: row.DisplayName,
+			AvatarURL:   fromNullString(row.AvatarUrl),
+			Content:     row.Content,
+			CreatedAt:   row.CreatedAt,
 		})
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("social repo: list comments rows: %w", err)
 	}
 
 	return comments, nil
@@ -222,4 +242,8 @@ func (r *socialRepository) withTx(ctx context.Context, fn func(tx *sql.Tx) error
 	}
 
 	return nil
+}
+
+func parseSocialUUID(value string) (uuid.UUID, error) {
+	return uuid.Parse(value)
 }

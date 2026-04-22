@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://YOUR_FRONTEND_DOMAIN"],
+    "method": ["GET", "PUT", "OPTIONS"],
+    "responseHeader": ["Content-Type"],
+    "maxAgeSeconds": 3600
+  }
+]

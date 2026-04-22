@@ -4,96 +4,49 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
+	"github.com/shout/ai-study-tool/backend/internal/repository/sqlcgen"
 )
 
 type answerRepository struct {
-	db *sql.DB
+	db      *sql.DB
+	queries *sqlcgen.Queries
 }
 
 func NewAnswerRepository(db *sql.DB) domain.AnswerRepository {
-	return &answerRepository{db: db}
+	return &answerRepository{
+		db:      db,
+		queries: sqlcgen.New(db),
+	}
 }
 
 func (r *answerRepository) Upsert(ctx context.Context, input domain.AnswerUpsertInput) (*domain.Answer, error) {
-	query := `
-INSERT INTO answers (user_id, question_id, user_answer, is_correct, score, feedback, grader_model)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (user_id, question_id) DO UPDATE SET
-    user_answer  = EXCLUDED.user_answer,
-    is_correct   = EXCLUDED.is_correct,
-    score        = EXCLUDED.score,
-    feedback     = EXCLUDED.feedback,
-    grader_model = EXCLUDED.grader_model,
-    updated_at   = NOW()
-RETURNING id, user_id, question_id, user_answer, is_correct, score, feedback, grader_model, created_at, updated_at`
-
-	userID, err := uuid.Parse(input.UserID)
+	userID, err := parseAnswerUUID(input.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("answer repo: parse user id: %w", err)
 	}
 
-	questionID, err := uuid.Parse(input.QuestionID)
+	questionID, err := parseAnswerUUID(input.QuestionID)
 	if err != nil {
 		return nil, fmt.Errorf("answer repo: parse question id: %w", err)
 	}
 
-	row := r.db.QueryRowContext(
-		ctx,
-		query,
-		userID,
-		questionID,
-		input.UserAnswer,
-		input.IsCorrect,
-		input.Score,
-		input.Feedback,
-		input.GraderModel,
-	)
-
-	var (
-		id          uuid.UUID
-		uID         uuid.UUID
-		qID         uuid.UUID
-		userAnswer  string
-		isCorrect   bool
-		score       *int
-		feedback    *string
-		graderModel *string
-		createdAt   time.Time
-		updatedAt   time.Time
-	)
-
-	err = row.Scan(
-		&id,
-		&uID,
-		&qID,
-		&userAnswer,
-		&isCorrect,
-		&score,
-		&feedback,
-		&graderModel,
-		&createdAt,
-		&updatedAt,
-	)
+	answer, err := r.queries.UpsertAnswer(ctx, sqlcgen.UpsertAnswerParams{
+		UserID:      userID,
+		QuestionID:  questionID,
+		UserAnswer:  input.UserAnswer,
+		IsCorrect:   input.IsCorrect,
+		Score:       toNullInt32(input.Score),
+		Feedback:    toNullString(input.Feedback),
+		GraderModel: toNullString(input.GraderModel),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("answer repo: upsert scan: %w", err)
+		return nil, fmt.Errorf("answer repo: upsert: %w", err)
 	}
 
-	return &domain.Answer{
-		ID:          id.String(),
-		UserID:      uID.String(),
-		QuestionID:  qID.String(),
-		UserAnswer:  userAnswer,
-		IsCorrect:   isCorrect,
-		Score:       score,
-		Feedback:    feedback,
-		GraderModel: graderModel,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-	}, nil
+	return toDomainAnswer(answer), nil
 }
 
 func (r *answerRepository) UpsertAndUpdateStats(ctx context.Context, input domain.AnswerUpsertInput, questionID string, isCorrect bool) (*domain.Answer, error) {
@@ -103,56 +56,40 @@ func (r *answerRepository) UpsertAndUpdateStats(ctx context.Context, input domai
 	}
 	defer tx.Rollback()
 
-	upsertQuery := `
-INSERT INTO answers (user_id, question_id, user_answer, is_correct, score, feedback, grader_model)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (user_id, question_id) DO UPDATE SET
-    user_answer  = EXCLUDED.user_answer,
-    is_correct   = EXCLUDED.is_correct,
-    score        = EXCLUDED.score,
-    feedback     = EXCLUDED.feedback,
-    grader_model = EXCLUDED.grader_model,
-    updated_at   = NOW()
-RETURNING id, user_id, question_id, user_answer, is_correct, score, feedback, grader_model, created_at, updated_at`
-
-	userID, err := uuid.Parse(input.UserID)
+	userID, err := parseAnswerUUID(input.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("answer repo: parse user id: %w", err)
 	}
-	qID, err := uuid.Parse(input.QuestionID)
+
+	inputQuestionID, err := parseAnswerUUID(input.QuestionID)
 	if err != nil {
 		return nil, fmt.Errorf("answer repo: parse question id: %w", err)
 	}
 
-	row := tx.QueryRowContext(ctx, upsertQuery,
-		userID, qID, input.UserAnswer, input.IsCorrect,
-		input.Score, input.Feedback, input.GraderModel,
-	)
-
-	var (
-		id          uuid.UUID
-		uID         uuid.UUID
-		rQID        uuid.UUID
-		userAnswer  string
-		rIsCorrect  bool
-		score       *int
-		feedback    *string
-		graderModel *string
-		createdAt   time.Time
-		updatedAt   time.Time
-	)
-	if err := row.Scan(&id, &uID, &rQID, &userAnswer, &rIsCorrect, &score, &feedback, &graderModel, &createdAt, &updatedAt); err != nil {
-		return nil, fmt.Errorf("answer repo: upsert scan: %w", err)
+	statsQuestionID, err := parseAnswerUUID(questionID)
+	if err != nil {
+		return nil, fmt.Errorf("answer repo: parse stats question id: %w", err)
 	}
 
-	statsQuery := `
-UPDATE questions
-SET
-    answer_count  = answer_count + 1,
-    correct_count = correct_count + CASE WHEN $2 THEN 1 ELSE 0 END,
-    updated_at    = NOW()
-WHERE id = $1`
-	if _, err := tx.ExecContext(ctx, statsQuery, questionID, isCorrect); err != nil {
+	txQueries := r.queries.WithTx(tx)
+
+	answer, err := txQueries.UpsertAnswer(ctx, sqlcgen.UpsertAnswerParams{
+		UserID:      userID,
+		QuestionID:  inputQuestionID,
+		UserAnswer:  input.UserAnswer,
+		IsCorrect:   input.IsCorrect,
+		Score:       toNullInt32(input.Score),
+		Feedback:    toNullString(input.Feedback),
+		GraderModel: toNullString(input.GraderModel),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("answer repo: upsert: %w", err)
+	}
+
+	if err := txQueries.UpdateQuestionStats(ctx, sqlcgen.UpdateQuestionStatsParams{
+		ID:        statsQuestionID,
+		IsCorrect: isCorrect,
+	}); err != nil {
 		return nil, fmt.Errorf("answer repo: update stats: %w", err)
 	}
 
@@ -160,16 +97,41 @@ WHERE id = $1`
 		return nil, fmt.Errorf("answer repo: commit: %w", err)
 	}
 
+	return toDomainAnswer(answer), nil
+}
+
+func toDomainAnswer(answer sqlcgen.Answer) *domain.Answer {
 	return &domain.Answer{
-		ID:          id.String(),
-		UserID:      uID.String(),
-		QuestionID:  rQID.String(),
-		UserAnswer:  userAnswer,
-		IsCorrect:   rIsCorrect,
-		Score:       score,
-		Feedback:    feedback,
-		GraderModel: graderModel,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-	}, nil
+		ID:          answer.ID.String(),
+		UserID:      answer.UserID.String(),
+		QuestionID:  answer.QuestionID.String(),
+		UserAnswer:  answer.UserAnswer,
+		IsCorrect:   answer.IsCorrect,
+		Score:       fromNullInt32(answer.Score),
+		Feedback:    fromNullString(answer.Feedback),
+		GraderModel: fromNullString(answer.GraderModel),
+		CreatedAt:   answer.CreatedAt,
+		UpdatedAt:   answer.UpdatedAt,
+	}
+}
+
+func parseAnswerUUID(value string) (uuid.UUID, error) {
+	return uuid.Parse(value)
+}
+
+func toNullInt32(value *int) sql.NullInt32 {
+	if value == nil {
+		return sql.NullInt32{}
+	}
+
+	return sql.NullInt32{Int32: int32(*value), Valid: true}
+}
+
+func fromNullInt32(value sql.NullInt32) *int {
+	if !value.Valid {
+		return nil
+	}
+
+	converted := int(value.Int32)
+	return &converted
 }

@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "AI Study Tool - Kindle Sync",
+  "version": "1.0.0",
+  "description": "Kindle ハイライトを AI Study Tool に同期する",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://read.amazon.co.jp/*",
+    "https://www.amazon.co.jp/*",
+    "https://amazon.co.jp/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://read.amazon.co.jp/*",
+        "https://www.amazon.co.jp/*",
+        "https://amazon.co.jp/*"
+      ],
+      "js": ["content/notebook.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://localhost/*", "http://127.0.0.1/*"],
+      "js": ["content/webapp.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Kindle Sync"
+  }
+}

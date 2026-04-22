@@ -2,15 +2,21 @@ package dto
 
 import "time"
 
-type CreateHighlightRequest struct {
-	BookID        *string    `json:"book_id"`
-	BookTitle     *string    `json:"book_title"`
-	BookAuthor    *string    `json:"book_author"`
-	ASIN          *string    `json:"asin"`
+type ImportHighlightItem struct {
+	ASIN          string     `json:"asin"`
+	BookTitle     string     `json:"book_title"`
+	BookAuthor    string     `json:"book_author"`
 	Content       string     `json:"content"`
-	Location      *string    `json:"location"`
+	Location      string     `json:"location"`
 	HighlightedAt *time.Time `json:"highlighted_at"`
-	Source        string     `json:"source"`
+}
+
+type ImportHighlightsRequest struct {
+	Highlights []ImportHighlightItem `json:"highlights"`
+}
+
+type UpdateHighlightExplanationRequest struct {
+	Explanation string `json:"explanation"`
 }
 
 type HighlightResponse struct {
@@ -20,15 +26,34 @@ type HighlightResponse struct {
 	BookAuthor    *string    `json:"book_author,omitempty"`
 	ASIN          *string    `json:"asin,omitempty"`
 	Content       string     `json:"content"`
+	Explanation   *string    `json:"explanation,omitempty"`
 	Location      *string    `json:"location,omitempty"`
 	HighlightedAt *time.Time `json:"highlighted_at,omitempty"`
 	Source        string     `json:"source"`
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
-type ListHighlightsResponse struct {
+type ImportHighlightsResponse struct {
+	SavedCount         int                  `json:"saved_count"`
+	DuplicateCount     int                  `json:"duplicate_count"`
+	CopyProtectedCount int                  `json:"copy_protected_count"`
+	ResolvedASIN       string               `json:"resolved_asin"`
+	Highlights         []*HighlightResponse `json:"highlights"`
+	Warning            *string              `json:"warning,omitempty"`
+}
+
+type ListBookHighlightsResponse struct {
 	Highlights []*HighlightResponse `json:"highlights"`
-	Total      int64                `json:"total"`
-	Page       int                  `json:"page"`
-	Limit      int                  `json:"limit"`
+}
+
+type KindleBookResponse struct {
+	ASIN           string `json:"asin"`
+	BookTitle      string `json:"book_title"`
+	BookAuthor     string `json:"book_author"`
+	HighlightCount int    `json:"highlight_count"`
+	Source         string `json:"source"`
+}
+
+type ListKindleBooksResponse struct {
+	Books []*KindleBookResponse `json:"books"`
 }
