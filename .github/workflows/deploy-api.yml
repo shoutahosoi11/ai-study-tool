@@ -98,6 +98,7 @@ jobs:
             GEMINI_API_KEY=GEMINI_API_KEY:latest
           flags: >-
             --port=8080
+            --allow-unauthenticated
             --service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
 
       - name: Check deployed health endpoint
