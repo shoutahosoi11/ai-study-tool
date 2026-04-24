@@ -50,15 +50,22 @@ description: Pull Requestやコード差分、ファイル単位のレビュー�
 
 ### 2. Go バックエンド規約
 
-- GORMは禁止。sqlcを優先する
-- sqlcが使えない場合のみ限定的にdatabase/sqlを使う
+- Cloud SQL接続はCloud SQL Auth Proxy経由（Direct IP接続禁止）
+- 接続文字列はSecret Manager経由で取得すること
+- ローカル開発はcloud-sql-proxyバイナリ経由
 - Goはfunction宣言を基本とし、無名関数の乱用を避ける
 - context.Contextが必要な層では第一引数に渡されているか
 - errorは握りつぶさず、wrapして返しているか
 - panicを使っていないか
 - nil, nil のような危険な返し方をしていないか
-- S3は使用禁止。Firebase Storageを使うこと
+- S3は使用禁止。Cloud Storage（GCS）を使うこと
+- GORMは禁止。sqlcを優先する
+- sqlcが使えない場合のみ限定的にdatabase/sqlを使う
 - AWS SDKを新たにimportしていないか
+- 接続文字列はSecret Manager経由で取得すること
+- ローカル開発はcloud-sql-proxyバイナリ経由で接続すること
+
+
 
 ### 3. DB / SQL / Repository
 
@@ -86,17 +93,24 @@ description: Pull Requestやコード差分、ファイル単位のレビュー�
 - request/response DTO と domain が分離されているか
 - バリデーションがhandlerまたはDTO境界で行われているか
 
-### 6. フロントエンド規約
 
-- JavaScript / TypeScript はアロー関数を使わず、function宣言を使っているか
+### 6. フロントエンド規約（React + TypeScript + Vite）
+
+- TypeScriptの型定義が適切か（any禁止、unknown経由で型を絞ること）
+- コンポーネントはアロー関数ではなくfunction宣言を使っているか
 - UIコンポーネントに色・余白・フォントを直書きしていないか
-- デザイン値が theme に集約されているか
+- デザイン値がthemeまたはCSS変数に集約されているか
 - フロントエンドに業務ロジックを持たせすぎていないか
-- API通信が api 層に閉じているか
-- loading / error / empty state が考慮されているか
-- 認証を自前実装していないか
-- ストレージはFirebase Storageを使うこと
-- AWS S3への直接アクセスをしていないか
+- API通信がapi層（例：src/api/）に閉じているか
+- loading / error / empty stateが考慮されているか
+- 認証はFirebase Auth SDKを使い、自前実装していないか
+- Firebase AuthのIDトークンをAPIリクエストヘッダに付与しているか
+- ストレージはCloud Storage（GCS）のSigned URLを使うこと
+- Firebase StorageやAWS S3への直接アクセスをしていないか
+- 環境変数は `VITE_` プレフィックスを使い、シークレットをフロントに持たせていないか
+- Reactのカスタムhooksにビジネスロジックを集約し、コンポーネントを薄く保っているか
+
+
 
 ### 7. テスト
 
@@ -116,6 +130,11 @@ description: Pull Requestやコード差分、ファイル単位のレビュー�
 - 個人情報をログ出力していないか
 - 無制限なCORS設定になっていないか
 - Firebase StorageのセキュリティルールがPublic readになっていないか
+- サービスアカウントキーをコードにハードコードしていないか
+- Secret Managerを経由せず環境変数に直書きしていないか
+- Cloud RunのサービスアカウントがAdmin権限になっていないか（最小権限原則）
+- Cloud StorageバケットがPublic accessになっていないか
+
 
 ## パフォーマンス観点
 
