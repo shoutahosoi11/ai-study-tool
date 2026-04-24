@@ -14,3 +14,10 @@ frontend/.env
 *.swp
 *.env
 !*.env.example
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
