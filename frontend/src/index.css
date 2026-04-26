@@ -10,7 +10,13 @@
 
 body {
   margin: 0;
-  background: #000000;
-  color: #E7E9EA;
+  background: #ffffff;
+  color: #000000;
   font-family: Inter, "Noto Sans JP", system-ui, sans-serif;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

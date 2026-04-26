@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kindle Highlights Scraper</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        width: 320px;
+        margin: 0;
+        padding: 16px;
+        background: #ffffff;
+        color: #111827;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      p {
+        margin: 0;
+        line-height: 1.5;
+      }
+
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .card {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 12px;
+        background: #f9fafb;
+      }
+
+      .meta {
+        color: #6b7280;
+        font-size: 12px;
+      }
+
+      .status {
+        font-size: 13px;
+        white-space: pre-wrap;
+      }
+
+      .buttons {
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .primary {
+        flex: 1;
+        background: #111827;
+        color: #ffffff;
+      }
+
+      .secondary {
+        flex: 1;
+        background: #ffffff;
+        color: #111827;
+        border: 1px solid #d1d5db;
+      }
+
+      .summary-list {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .summary-item {
+        border-radius: 10px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        padding: 10px;
+      }
+
+      .summary-item strong {
+        display: block;
+        font-size: 16px;
+      }
+
+      .summary-item span {
+        color: #6b7280;
+        font-size: 12px;
+      }
+
+      .error {
+        color: #b91c1c;
+      }
+
+      .success {
+        color: #047857;
+      }
+
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stack">
+      <div>
+        <h1>Kindle Highlights Scraper</h1>
+        <p class="meta">Kindle Notebook の全書籍ハイライトを取得して JSON で確認します。</p>
+      </div>
+
+      <div class="card stack">
+        <p id="statusText" class="status">Kindle Notebook タブを開いて「同期開始」を押してください</p>
+        <p id="progressText" class="meta"></p>
+        <div class="buttons">
+          <button id="startButton" class="primary">同期開始</button>
+          <button id="downloadButton" class="secondary" disabled>JSONダウンロード</button>
+        </div>
+      </div>
+
+      <div id="summaryCard" class="card hidden">
+        <p style="font-weight: 700; margin-bottom: 10px;">サマリ</p>
+        <div id="summaryList" class="summary-list"></div>
+        <p id="summaryMeta" class="meta" style="margin-top: 10px;"></p>
+      </div>
+
+      <div class="card">
+        <p class="meta">
+          完了後は Kindle Notebook タブの DevTools Console に、サンプル 1 件・サマリ・書籍別件数・取得フィールド一覧が出ます。
+        </p>
+      </div>
+    </div>
+
+    <script src="../lib/constants.js"></script>
+    <script src="../lib/utils.js"></script>
+    <script src="./popup.js"></script>
+  </body>
+</html>
