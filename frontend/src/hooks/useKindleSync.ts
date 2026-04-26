@@ -5,6 +5,7 @@ import type { ExtensionKindleBook, ImportHighlightsResponse } from '../types/kin
 const REQUEST_EVENT = 'ai-study-tool:kindle-request'
 const RESPONSE_EVENT = 'ai-study-tool:kindle-response'
 const BOOKS_CACHE_KEY = 'ai-study-tool:kindle-books:v3'
+const SYNC_REQUEST_TIMEOUT_MS = 60_000
 
 export type SyncState = 'idle' | 'syncing' | 'done' | 'error'
 
@@ -14,6 +15,12 @@ export interface SyncResult {
   response?: ImportHighlightsResponse
   resolvedAsin?: string
   error?: string
+}
+
+export interface SyncProgressInfo {
+  stage: string
+  count?: number
+  message: string
 }
 
 type SyncableBook = {
@@ -114,6 +121,7 @@ export function useKindleSync() {
   const pendingRef = useRef<Map<string, { type: string; asin?: string }>>(new Map())
   const timeoutRef = useRef<Map<string, number>>(new Map())
   const syncRequestResolversRef = useRef<Map<string, (result: SyncResult) => void>>(new Map())
+  const syncProgressListenersRef = useRef<Map<string, (progress: SyncProgressInfo) => void>>(new Map())
 
   function saveBooksCache(books: ExtensionKindleBook[]) {
     try {
@@ -142,6 +150,7 @@ export function useKindleSync() {
     if (!requestId) return
 
     pendingRef.current.delete(requestId)
+    syncProgressListenersRef.current.delete(requestId)
     var timeoutId = timeoutRef.current.get(requestId)
     if (timeoutId !== undefined) {
       window.clearTimeout(timeoutId)
@@ -153,7 +162,7 @@ export function useKindleSync() {
     const timeoutId = window.setTimeout(function () {
       clearPendingRequest(requestId)
       onTimeout()
-    }, 120000)
+    }, SYNC_REQUEST_TIMEOUT_MS)
 
     timeoutRef.current.set(requestId, timeoutId)
   }
@@ -249,11 +258,15 @@ export function useKindleSync() {
                   ? '対象の本を確認しました。ハイライトを読み取っています...'
                   : msg.stage === 'book_opened'
                     ? '対象の本を開きました。ハイライトを読み取っています...'
-                    : msg.stage === 'highlight_data_found'
-                      ? `ハイライトを読み取りました（${msg.count ?? 0}件）...`
-                      : msg.stage === 'highlight_data_received'
-                        ? '読み取ったハイライトをアプリへ保存しています...'
-                        : '同期を進めています...'
+                    : msg.stage === 'hash_check_failed'
+                      ? '重複チェックに失敗したため、そのまま保存に進めています...'
+                    : msg.stage === 'highlight_data_progress'
+                      ? `ハイライトを確認中です（現在 ${msg.count ?? 0}件）...`
+                      : msg.stage === 'highlight_data_found'
+                        ? `ハイライトを読み取りました（${msg.count ?? 0}件）...`
+                        : msg.stage === 'highlight_data_received'
+                          ? '読み取ったハイライトをアプリへ保存しています...'
+                          : '同期を進めています...'
 
         setSyncProgress(function (prev) {
           return {
@@ -261,6 +274,15 @@ export function useKindleSync() {
             [msg.bookId as string]: syncMessage,
           }
         })
+
+        const progressListener = requestId ? syncProgressListenersRef.current.get(requestId) : null
+        if (progressListener) {
+          progressListener({
+            stage: msg.stage ?? 'unknown',
+            count: typeof msg.count === 'number' ? msg.count : undefined,
+            message: syncMessage,
+          })
+        }
         return
       }
 
@@ -352,6 +374,7 @@ export function useKindleSync() {
       timeoutRef.current.clear()
       pendingRef.current.clear()
       syncRequestResolversRef.current.clear()
+      syncProgressListenersRef.current.clear()
     }
   }, [])
 
@@ -368,7 +391,12 @@ export function useKindleSync() {
     dispatchBridgeRequest({ type: 'LIST_BOOKS_REQUEST', requestId })
   }
 
-  async function syncBook(book: SyncableBook) {
+  async function syncBook(
+    book: SyncableBook,
+    options?: {
+      onProgress?: (progress: SyncProgressInfo) => void
+    }
+  ) {
     const asin = normalizeString(book.asin)
     const bookTitle = normalizeString(book.book_title)
     const bookAuthor = normalizeString(book.book_author)
@@ -422,6 +450,9 @@ export function useKindleSync() {
 
     const requestId = crypto.randomUUID()
     pendingRef.current.set(requestId, { type: 'sync', asin })
+    if (options?.onProgress) {
+      syncProgressListenersRef.current.set(requestId, options.onProgress)
+    }
     const resultPromise = new Promise<SyncResult>(function (resolve) {
       syncRequestResolversRef.current.set(requestId, resolve)
     })

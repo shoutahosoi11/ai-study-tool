@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
+	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
@@ -42,7 +44,7 @@ type SubmitAnswerResult struct {
 }
 
 func (u *AnswerUsecase) SubmitAnswer(ctx context.Context, input SubmitAnswerInput) (*SubmitAnswerResult, error) {
-	q, err := u.questionRepo.GetByID(ctx, input.QuestionID)
+	q, meta, _, err := u.questionRepo.FindByID(ctx, input.QuestionID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, fmt.Errorf("answer usecase: question not found: %w", domain.ErrNotFound)
@@ -85,6 +87,15 @@ func (u *AnswerUsecase) SubmitAnswer(ctx context.Context, input SubmitAnswerInpu
 	}
 	if _, err := u.answerRepo.UpsertAndUpdateStats(ctx, upsertInput, input.QuestionID, isCorrect); err != nil {
 		return nil, fmt.Errorf("answer usecase: upsert answer: %w", err)
+	}
+
+	if meta != nil && meta.HighlightID != "" {
+		highlightID, parseErr := uuid.Parse(meta.HighlightID)
+		if parseErr == nil {
+			if enqueueErr := u.questionRepo.EnqueueRegeneration(ctx, input.UserID, highlightID, input.QuestionID); enqueueErr != nil {
+				log.Printf("answer usecase: enqueue regeneration error: %v", enqueueErr)
+			}
+		}
 	}
 
 	return &SubmitAnswerResult{

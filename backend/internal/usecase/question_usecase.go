@@ -69,6 +69,59 @@ func (u *QuestionUsecase) ListIncorrectQuestions(ctx context.Context, userID str
 	return incorrectQuestions, nil
 }
 
+func (u *QuestionUsecase) ListPreparedQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
+	if !isSupportedQuestionSourceType(input.SourceType) {
+		return nil, domain.ErrInvalidSourceType
+	}
+
+	sourceHighlights, err := u.sourceResolver.ResolveHighlights(
+		ctx,
+		input.CreatorID,
+		input.SourceType,
+		input.SourceID,
+		input.BookTitle,
+		input.BookAuthor,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("question usecase: resolve source highlights: %w", err)
+	}
+
+	candidates := filterNonEmptyHighlights(sourceHighlights)
+	if len(candidates) == 0 {
+		return nil, domain.ErrSourceTextUnavailable
+	}
+
+	highlightIDs := make([]uuid.UUID, 0, len(candidates))
+	hasPending := false
+	hasFailed := false
+	for _, highlight := range candidates {
+		highlightIDs = append(highlightIDs, highlight.ID)
+		if highlight.Status == domain.HighlightStatusPending || highlight.Status == domain.HighlightStatusProcessing {
+			hasPending = true
+		}
+		if highlight.Status == domain.HighlightStatusFailed {
+			hasFailed = true
+		}
+	}
+
+	limit := resolveQuestionSelectionCount(len(candidates), input.QuestionCount)
+	preparedQuestions, err := u.repo.ListPreparedByUserIDAndHighlightIDs(ctx, input.CreatorID, highlightIDs, limit)
+	if err != nil {
+		return nil, fmt.Errorf("question usecase: list prepared questions: %w", err)
+	}
+	if len(preparedQuestions) > 0 {
+		return preparedQuestions, nil
+	}
+	if hasPending {
+		return nil, domain.ErrQuestionsPreparing
+	}
+	if hasFailed {
+		return nil, domain.ErrQuestionGenerationFailed
+	}
+
+	return nil, domain.ErrSourceTextUnavailable
+}
+
 func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
 	model := modelForPlan(input.UserPlan)
 

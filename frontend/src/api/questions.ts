@@ -9,6 +9,21 @@ type GenerateQuestionsOptions = {
   customInstruction?: string;
 }
 
+export type QuestionStockBook = {
+  book_key: string;
+  book_title: string;
+  book_author: string;
+  stock: number;
+  target: number;
+  preparing: number;
+}
+
+export type QuestionStockSyncResponse = {
+  books: QuestionStockBook[];
+  queued_count: number;
+  skipped_due_to_daily_limit: boolean;
+}
+
 export async function listQuestions(): Promise<Question[]> {
   const res = await apiClient.get<Question[] | { data?: Question[] }>("/questions");
   return Array.isArray(res.data) ? res.data : res.data.data ?? [];
@@ -43,15 +58,20 @@ export async function generateQuestions(
   sourceId: string,
   options?: GenerateQuestionsOptions
 ): Promise<Question[]> {
-  const res = await apiClient.post<Question[] | { questions?: Question[] }>("/questions", {
-    source_type: sourceType,
-    source_id: sourceId,
-    question_type: options?.questionType ?? "multiple_choice",
-    question_count: options?.questionCount ?? 0,
-    book_title: options?.bookTitle ?? "",
-    book_author: options?.bookAuthor ?? "",
-    custom_instruction: options?.customInstruction ?? "",
+  const res = await apiClient.get<Question[] | { questions?: Question[] }>("/questions/prepared", {
+    params: {
+      source_type: sourceType,
+      source_id: sourceId,
+      question_count: options?.questionCount ?? 0,
+      book_title: options?.bookTitle ?? "",
+      book_author: options?.bookAuthor ?? "",
+    },
   });
 
   return Array.isArray(res.data) ? res.data : res.data.questions ?? [];
+}
+
+export async function syncQuestionStock(): Promise<QuestionStockSyncResponse> {
+  const res = await apiClient.post<QuestionStockSyncResponse>("/questions/sync", {});
+  return res.data;
 }

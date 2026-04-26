@@ -35,25 +35,45 @@ func (r *questionSourceResolver) ResolveHighlights(ctx context.Context, userID s
 
 func (r *questionSourceResolver) resolveKindleBookHighlights(ctx context.Context, userUUID uuid.UUID, sourceID string, bookTitle string, bookAuthor string) ([]*domain.Highlight, error) {
 	asin := strings.TrimSpace(sourceID)
-	if asin == "" {
+	normalizedTitle := strings.TrimSpace(bookTitle)
+	normalizedAuthor := strings.TrimSpace(bookAuthor)
+
+	if asin == "" && normalizedTitle == "" {
 		return nil, domain.ErrInvalidSourceType
 	}
 
-	highlights, err := r.highlightRepo.ListByUserIDAndASIN(ctx, userUUID, asin)
-	if err != nil {
-		return nil, fmt.Errorf("question source resolver: list highlights by asin: %w", err)
-	}
-	if len(highlights) > 0 {
-		return highlights, nil
+	merged := make([]*domain.Highlight, 0)
+	seen := make(map[uuid.UUID]struct{})
+
+	if asin != "" {
+		highlights, err := r.highlightRepo.ListByUserIDAndASIN(ctx, userUUID, asin)
+		if err != nil {
+			return nil, fmt.Errorf("question source resolver: list highlights by asin: %w", err)
+		}
+		for _, highlight := range highlights {
+			if _, ok := seen[highlight.ID]; ok {
+				continue
+			}
+			seen[highlight.ID] = struct{}{}
+			merged = append(merged, highlight)
+		}
 	}
 
-	if strings.TrimSpace(bookTitle) == "" {
-		return make([]*domain.Highlight, 0), nil
+	if normalizedTitle == "" {
+		return merged, nil
 	}
 
-	metadataHighlights, metadataErr := r.highlightRepo.ListByUserIDAndBookMetadata(ctx, userUUID, bookTitle, bookAuthor)
+	metadataHighlights, metadataErr := r.highlightRepo.ListByUserIDAndBookMetadata(ctx, userUUID, normalizedTitle, normalizedAuthor)
 	if metadataErr != nil {
 		return nil, fmt.Errorf("question source resolver: list highlights by metadata: %w", metadataErr)
 	}
-	return metadataHighlights, nil
+	for _, highlight := range metadataHighlights {
+		if _, ok := seen[highlight.ID]; ok {
+			continue
+		}
+		seen[highlight.ID] = struct{}{}
+		merged = append(merged, highlight)
+	}
+
+	return merged, nil
 }

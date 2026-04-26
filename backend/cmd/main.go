@@ -63,7 +63,9 @@ func main() {
 	posts.POST("", container.PostHandler.CreatePost)
 
 	highlights := api.Group("/highlights", authMiddleware)
+	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes)
 	highlights.POST("/import", container.HighlightHandler.Import)
+	highlights.POST("/share", container.HighlightHandler.ImportShared)
 	highlights.GET("/books", container.HighlightHandler.ListBooks)
 	highlights.GET("/books/search/items", container.HighlightHandler.ListByBookMetadata)
 	highlights.GET("/books/:asin/items", container.HighlightHandler.ListByASIN)
@@ -75,8 +77,10 @@ func main() {
 
 	questions := api.Group("/questions", authMiddleware)
 	questions.GET("", container.QuestionHandler.List)
+	questions.GET("/prepared", container.QuestionHandler.ListPrepared)
 	questions.GET("/saved", container.QuestionHandler.ListSaved)
 	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
+	questions.POST("/sync", container.QuestionHandler.SyncStock)
 	questions.POST("", container.QuestionHandler.GenerateQuestions)
 	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
 	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)

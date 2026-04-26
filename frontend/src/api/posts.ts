@@ -45,3 +45,11 @@ export async function likePost(postId: string): Promise<void> {
 export async function unlikePost(postId: string): Promise<void> {
   await apiClient.delete(`/posts/${postId}/like`)
 }
+
+export async function repostPost(postId: string): Promise<void> {
+  await apiClient.post(`/posts/${postId}/repost`)
+}
+
+export async function unrepostPost(postId: string): Promise<void> {
+  await apiClient.delete(`/posts/${postId}/repost`)
+}

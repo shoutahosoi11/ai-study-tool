@@ -72,6 +72,8 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	postUsecase := usecase.NewPostUsecase(postRepo)
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
+	questionWorkerUsecase := usecase.NewQuestionWorkerUsecase(highlightRepo, questionRepo, geminiClient)
+	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionWorkerUsecase)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
@@ -79,7 +81,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 
 	userHandler := handler.NewUserHandler(userUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
-	questionHandler := handler.NewQuestionHandler(questionUsecase, userUsecase)
+	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase)
 	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase)
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)

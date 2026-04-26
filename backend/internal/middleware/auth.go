@@ -13,6 +13,7 @@ import (
 // TokenVerifier は Firebase のトークン検証を抽象化するための interface。
 // auth.Client の具体的な実装に直接依存しないようにして、テストで差し替えやすくしている。
 type TokenVerifier interface {
+	VerifyIDToken(ctx context.Context, idToken string) (*auth.Token, error)
 	VerifyIDTokenAndCheckRevoked(ctx context.Context, idToken string) (*auth.Token, error)
 }
 
@@ -52,7 +53,17 @@ func (m *FirebaseMiddleware) Authenticate(next echo.HandlerFunc) echo.HandlerFun
 
 		token, err := m.verifier.VerifyIDTokenAndCheckRevoked(c.Request().Context(), parts[1])
 		if err != nil {
-			return firebaseAuthError(err)
+			if isFirebaseIDTokenClientError(err) {
+				return firebaseAuthError(err)
+			}
+
+			// Revocation checks require an extra round trip to Firebase Auth.
+			// Fall back to basic token verification when that backend is temporarily unavailable.
+			c.Logger().Warnf("firebase revoke check failed; falling back to basic token verification: %v", err)
+			token, err = m.verifier.VerifyIDToken(c.Request().Context(), parts[1])
+			if err != nil {
+				return firebaseAuthError(err)
+			}
 		}
 
 		// err が nil でも token が使えない状態なら fail-close で止める。

@@ -54,7 +54,7 @@ export function SavedQuestionsModal({ questions, loading, error, onClose }: Prop
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: theme.spacing.md }}>
           <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.xs }}>
             <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
-              プロフィール
+              問題
             </p>
             <p style={{ margin: 0, fontSize: theme.fontSize.base, fontWeight: 700 }}>
               保存済み問題

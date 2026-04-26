@@ -16,6 +16,23 @@ type GenerateQuestionRequest struct {
 	CustomInstruction string `json:"custom_instruction"`
 }
 
+type SyncQuestionStockRequest struct{}
+
+type SyncQuestionStockBookResponse struct {
+	BookKey    string `json:"book_key"`
+	BookTitle  string `json:"book_title"`
+	BookAuthor string `json:"book_author"`
+	Stock      int    `json:"stock"`
+	Target     int    `json:"target"`
+	Preparing  int    `json:"preparing"`
+}
+
+type SyncQuestionStockResponse struct {
+	Books                  []SyncQuestionStockBookResponse `json:"books"`
+	QueuedCount            int                             `json:"queued_count"`
+	SkippedDueToDailyLimit bool                            `json:"skipped_due_to_daily_limit"`
+}
+
 type SaveQuestionRequest struct {
 	Note string `json:"note"`
 }

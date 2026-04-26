@@ -1,0 +1,9 @@
+{
+  "name": "kindle-highlights-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MVP Chrome extension for scraping Kindle Notebook highlights without server sync",
+  "scripts": {
+    "check": "node --check lib/constants.js && node --check lib/utils.js && node --check content/content.js && node --check popup/popup.js"
+  }
+}

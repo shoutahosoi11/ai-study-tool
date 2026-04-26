@@ -1,0 +1,561 @@
+diff --git a/node_modules/expo-share-intent/ios/ExpoShareIntentModule.swift b/node_modules/expo-share-intent/ios/ExpoShareIntentModule.swift
+index e52b6d0..2d31c95 100644
+--- a/node_modules/expo-share-intent/ios/ExpoShareIntentModule.swift
++++ b/node_modules/expo-share-intent/ios/ExpoShareIntentModule.swift
+@@ -38,6 +38,7 @@ public class ExpoShareIntentModule: Module {
+             let appGroupIdentifier = self.getAppGroupIdentifier()
+             let userDefaults = UserDefaults(suiteName: appGroupIdentifier)
+             userDefaults?.set(nil, forKey: sharedKey)
++            userDefaults?.set(nil, forKey: "\(sharedKey).type")
+             userDefaults?.synchronize()
+         }
+ 
+@@ -56,107 +57,121 @@ public class ExpoShareIntentModule: Module {
+     private func handleUrl(url: URL?) -> String? {
+         let appGroupIdentifier = self.getAppGroupIdentifier()
+         NSLog("HandleUrl \(String(describing: url)) \(String(describing: appGroupIdentifier))")
+-        if let url = url {
+-            let userDefaults = UserDefaults(suiteName: appGroupIdentifier)
+-            if url.fragment == "media" {
+-                if let key = url.host?.components(separatedBy: "=").last {
+-                    if let json = userDefaults?.object(forKey: key) as? Data {
+-                        let sharedArray = decodeMedia(data: json)
+-                        let sharedMediaFiles: [SharedMediaFile] = sharedArray.compactMap {
+-                            if let path = getAbsolutePath(for: $0.path) {
+-                                if $0.type == .video && $0.thumbnail != nil {
+-                                    let thumbnail = getAbsolutePath(for: $0.thumbnail!)
+-                                    return SharedMediaFile.init(
+-                                        path: path, thumbnail: thumbnail, fileName: $0.fileName,
+-                                        fileSize: $0.fileSize, width: $0.width, height: $0.height,
+-                                        duration: $0.duration, mimeType: $0.mimeType, type: $0.type)
+-                                } else if $0.type == .video && $0.thumbnail == nil {
+-                                    return SharedMediaFile.init(
+-                                        path: path, thumbnail: nil, fileName: $0.fileName,
+-                                        fileSize: $0.fileSize, width: $0.width, height: $0.height,
+-                                        duration: $0.duration, mimeType: $0.mimeType, type: $0.type)
+-                                }
+-                                return SharedMediaFile.init(
+-                                    path: path, thumbnail: nil, fileName: $0.fileName,
+-                                    fileSize: $0.fileSize, width: $0.width, height: $0.height,
+-                                    duration: $0.duration, mimeType: $0.mimeType, type: $0.type)
+-                            }
+-                            return nil
+-                        }
+-                        guard let json = toJson(data: sharedMediaFiles) else { return "[]" }
+-                        return "{ \"files\": \(json), \"type\": \"\(url.fragment!)\" }"
+-                    } else {
+-                        return "empty"
+-                    }
+-                }
+-            } else if url.fragment == "file" {
+-                if let key = url.host?.components(separatedBy: "=").last {
+-                    if let json = userDefaults?.object(forKey: key) as? Data {
+-                        let sharedArray = decodeMedia(data: json)
+-                        let sharedMediaFiles: [SharedMediaFile] = sharedArray.compactMap {
+-                            if let path = getAbsolutePath(for: $0.path) {
+-                                return SharedMediaFile.init(
+-                                    path: path, thumbnail: nil, fileName: $0.fileName,
+-                                    fileSize: $0.fileSize, width: nil, height: nil, duration: nil,
+-                                    mimeType: $0.mimeType, type: $0.type)
+-                            }
+-                            return nil
++        guard let appGroupIdentifier else {
++            self.sendEvent(
++                "onError",
++                [
++                    "value":
++                        "Cannot retreive appGroupIdentifier. Please check your share extention iosAppGroupIdentifier. `\(String(describing: appGroupIdentifier))`"
++                ])
++            return "error"
++        }
++
++        let userDefaults = UserDefaults(suiteName: appGroupIdentifier)
++        let resolvedIntent = resolveStoredIntent(url: url, userDefaults: userDefaults)
++        guard let resolvedIntent else {
++            return "empty"
++        }
++
++        return loadShareIntent(
++            type: resolvedIntent.type,
++            key: resolvedIntent.key,
++            userDefaults: userDefaults
++        )
++    }
++
++    private func resolveStoredIntent(url: URL?, userDefaults: UserDefaults?) -> (type: String, key: String)? {
++        if let url,
++           let fragment = url.fragment,
++           let key = url.host?.components(separatedBy: "=").last
++        {
++            return (fragment, key)
++        }
++
++        guard let entries = userDefaults?.dictionaryRepresentation() else {
++            return nil
++        }
++
++        guard let typeKey = entries.keys.sorted().first(where: { $0.hasSuffix("ShareKey.type") }),
++              let type = entries[typeKey] as? String
++        else {
++            return nil
++        }
++
++        let key = String(typeKey.dropLast(".type".count))
++        return (type, key)
++    }
++
++    private func loadShareIntent(type: String, key: String, userDefaults: UserDefaults?) -> String? {
++        if type == "media" {
++            if let json = userDefaults?.object(forKey: key) as? Data {
++                let sharedArray = decodeMedia(data: json)
++                let sharedMediaFiles: [SharedMediaFile] = sharedArray.compactMap {
++                    if let path = getAbsolutePath(for: $0.path) {
++                        if $0.type == .video && $0.thumbnail != nil {
++                            let thumbnail = getAbsolutePath(for: $0.thumbnail!)
++                            return SharedMediaFile.init(
++                                path: path, thumbnail: thumbnail, fileName: $0.fileName,
++                                fileSize: $0.fileSize, width: $0.width, height: $0.height,
++                                duration: $0.duration, mimeType: $0.mimeType, type: $0.type)
++                        } else if $0.type == .video && $0.thumbnail == nil {
++                            return SharedMediaFile.init(
++                                path: path, thumbnail: nil, fileName: $0.fileName,
++                                fileSize: $0.fileSize, width: $0.width, height: $0.height,
++                                duration: $0.duration, mimeType: $0.mimeType, type: $0.type)
+                         }
+-                        guard let json = toJson(data: sharedMediaFiles) else { return "[]" }
+-                        return "{ \"files\": \(json), \"type\": \"\(url.fragment!)\" }"
+-                    } else {
+-                        return "empty"
++                        return SharedMediaFile.init(
++                            path: path, thumbnail: nil, fileName: $0.fileName,
++                            fileSize: $0.fileSize, width: $0.width, height: $0.height,
++                            duration: $0.duration, mimeType: $0.mimeType, type: $0.type)
+                     }
++                    return nil
+                 }
+-            } else if url.fragment == "weburl" {
+-                if let key = url.host?.components(separatedBy: "=").last {
+-                    if let json = userDefaults?.object(forKey: key) as? Data {
+-                        let sharedArray = decodeWebUrl(data: json)
+-                        let sharedWebUrls: [WebUrl] = sharedArray.compactMap {
+-                            return WebUrl.init(url: $0.url, meta: $0.meta)
+-                        }
+-                        guard let json = toJson(data: sharedWebUrls) else { return "[]" }
+-                        return "{ \"weburls\": \(json), \"type\": \"\(url.fragment!)\" }"
+-                    } else {
+-                        return "empty"
++                guard let json = toJson(data: sharedMediaFiles) else { return "[]" }
++                return "{ \"files\": \(json), \"type\": \"\(type)\" }"
++            }
++            return "empty"
++        } else if type == "file" {
++            if let json = userDefaults?.object(forKey: key) as? Data {
++                let sharedArray = decodeMedia(data: json)
++                let sharedMediaFiles: [SharedMediaFile] = sharedArray.compactMap {
++                    if let path = getAbsolutePath(for: $0.path) {
++                        return SharedMediaFile.init(
++                            path: path, thumbnail: nil, fileName: $0.fileName,
++                            fileSize: $0.fileSize, width: nil, height: nil, duration: nil,
++                            mimeType: $0.mimeType, type: $0.type)
+                     }
++                    return nil
+                 }
+-            } else if url.fragment == "text" {
+-                if let key = url.host?.components(separatedBy: "=").last {
+-                    if let sharedArray = userDefaults?.object(forKey: key) as? [String] {
+-                        latestText = sharedArray.joined(separator: ",")
+-                        let optionalString = latestText
+-                        if let unwrapped = optionalString {
+-                            return try? ShareIntentText(text: unwrapped, type: url.fragment!)
+-                                .toJSON()
+-                        }
+-                        return latestText!
+-                    } else {
+-                        return "empty"
+-                    }
++                guard let json = toJson(data: sharedMediaFiles) else { return "[]" }
++                return "{ \"files\": \(json), \"type\": \"\(type)\" }"
++            }
++            return "empty"
++        } else if type == "weburl" {
++            if let json = userDefaults?.object(forKey: key) as? Data {
++                let sharedArray = decodeWebUrl(data: json)
++                let sharedWebUrls: [WebUrl] = sharedArray.compactMap {
++                    return WebUrl.init(url: $0.url, meta: $0.meta)
+                 }
+-            } else {
+-                latestText = url.absoluteString
+-                let optionalString = latestText
+-                // now unwrap it
+-                if let unwrapwebUrl = optionalString {
+-                    return try? ShareIntentText(text: unwrapwebUrl, type: url.fragment!).toJSON()
+-                } else {
+-                    return "empty"
++                guard let json = toJson(data: sharedWebUrls) else { return "[]" }
++                return "{ \"weburls\": \(json), \"type\": \"\(type)\" }"
++            }
++            return "empty"
++        } else if type == "text" {
++            if let sharedArray = userDefaults?.object(forKey: key) as? [String] {
++                latestText = sharedArray.joined(separator: "\n\n")
++                if let unwrapped = latestText {
++                    return try? ShareIntentText(text: unwrapped, type: type).toJSON()
+                 }
++                return "empty"
+             }
+-            self.sendEvent(
+-                "onError",
+-                [
+-                    "value": "file type is Invalid \(url.fragment!)"
+-                ])
+-            return "error"
++            return "empty"
+         }
++
+         self.sendEvent(
+             "onError",
+             [
+-                "value":
+-                    "Cannot retreive appGroupIdentifier. Please check your share extention iosAppGroupIdentifier. `\(String(describing: appGroupIdentifier))`"
++                "value": "file type is Invalid \(type)"
+             ])
+         return "error"
+     }
+diff --git a/node_modules/expo-share-intent/plugin/build/ios/ShareExtensionViewController.swift b/node_modules/expo-share-intent/plugin/build/ios/ShareExtensionViewController.swift
+index 0911a9e..113b464 100644
+--- a/node_modules/expo-share-intent/plugin/build/ios/ShareExtensionViewController.swift
++++ b/node_modules/expo-share-intent/plugin/build/ios/ShareExtensionViewController.swift
+@@ -13,9 +13,13 @@ class ShareViewController: UIViewController {
+   let hostAppGroupIdentifier = "<GROUPIDENTIFIER>"
+   let shareProtocol = "<SCHEME>"
+   let sharedKey = "<SCHEME>ShareKey"
++  let sharedTypeKey = "<SCHEME>ShareKey.type"
+   var sharedMedia: [SharedMediaFile] = []
+   var sharedWebUrl: [WebUrl] = []
+   var sharedText: [String] = []
++  var totalAttachmentCount = 0
++  var processedAttachmentCount = 0
++  var didCompleteShareFlow = false
+   let imageContentType: String = UTType.image.identifier
+   let videoContentType: String = UTType.movie.identifier
+   let textContentType: String = UTType.text.identifier
+@@ -40,6 +44,9 @@ class ShareViewController: UIViewController {
+         dismissWithError(message: "No content found")
+         return
+       }
++      totalAttachmentCount = attachments.count
++      processedAttachmentCount = 0
++      didCompleteShareFlow = false
+       for (index, attachment) in (attachments).enumerated() {
+         if attachment.hasItemConformingToTypeIdentifier(imageContentType) {
+           await handleImages(content: content, attachment: attachment, index: index)
+@@ -60,13 +67,89 @@ class ShareViewController: UIViewController {
+         } else if attachment.hasItemConformingToTypeIdentifier(textContentType) {
+           await handleText(content: content, attachment: attachment, index: index)
+         } else {
+-          NSLog("[ERROR] content type not handle !\(String(describing: content))")
+-          dismissWithError(message: "content type not handle \(String(describing: content)))")
++          NSLog("[WARN] content type not handled, skipping \(attachment.registeredTypeIdentifiers)")
++          await MainActor.run {
++            self.markAttachmentProcessed()
++          }
+         }
+       }
+     }
+   }
+ 
++  @MainActor
++  private func markAttachmentProcessed() {
++    processedAttachmentCount += 1
++    guard processedAttachmentCount >= totalAttachmentCount else {
++      return
++    }
++    completeShareFlow()
++  }
++
++  @MainActor
++  private func completeShareFlow() {
++    guard !didCompleteShareFlow else {
++      return
++    }
++    didCompleteShareFlow = true
++
++    let userDefaults = UserDefaults(suiteName: hostAppGroupIdentifier)
++    if !sharedText.isEmpty {
++      userDefaults?.set(sharedText, forKey: sharedKey)
++      userDefaults?.set(RedirectType.text.rawValue, forKey: sharedTypeKey)
++      userDefaults?.synchronize()
++      redirectToHostApp(type: .text)
++      return
++    }
++
++    if !sharedWebUrl.isEmpty {
++      userDefaults?.set(self.toData(data: sharedWebUrl), forKey: sharedKey)
++      userDefaults?.set(RedirectType.weburl.rawValue, forKey: sharedTypeKey)
++      userDefaults?.synchronize()
++      redirectToHostApp(type: .weburl)
++      return
++    }
++
++    if !sharedMedia.isEmpty {
++      let redirectType: RedirectType = sharedMedia.contains(where: { $0.type != .file }) ? .media : .file
++      userDefaults?.set(self.toData(data: sharedMedia), forKey: sharedKey)
++      userDefaults?.set(redirectType.rawValue, forKey: sharedTypeKey)
++      userDefaults?.synchronize()
++      redirectToHostApp(type: redirectType)
++      return
++    }
++
++    dismissWithError(message: "No supported content found")
++  }
++
++  nonisolated private func extractSharedText(from item: Any?) -> String? {
++    if let text = item as? String {
++      return text.trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++    if let text = item as? NSString {
++      return String(text).trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++    if let attributedText = item as? NSAttributedString {
++      return attributedText.string.trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++    if let url = item as? URL {
++      return url.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++    if let data = item as? Data, let text = String(data: data, encoding: .utf8) {
++      return text.trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++    return nil
++  }
++
++  nonisolated private func extractSharedURL(from item: Any?) -> URL? {
++    if let url = item as? URL {
++      return url
++    }
++    guard let text = extractSharedText(from: item) else {
++      return nil
++    }
++    return URL(string: text)
++  }
++
+   private func handleVCard(content: NSExtensionItem, attachment: NSItemProvider, index: Int) async {
+     Task.detached {
+       do {
+@@ -96,48 +179,46 @@ class ShareViewController: UIViewController {
+ 
+   private func handleText(content: NSExtensionItem, attachment: NSItemProvider, index: Int) async {
+     Task.detached {
+-      if let item = try! await attachment.loadItem(forTypeIdentifier: self.textContentType)
+-        as? String
+-      {
+-        Task { @MainActor in
+-
+-          self.sharedText.append(item)
+-          // If this is the last item, save sharedText in userDefaults and redirect to host app
+-          if index == (content.attachments?.count)! - 1 {
+-            let userDefaults = UserDefaults(suiteName: self.hostAppGroupIdentifier)
+-            userDefaults?.set(self.sharedText, forKey: self.sharedKey)
+-            userDefaults?.synchronize()
+-            self.redirectToHostApp(type: .text)
+-          }
++      do {
++        let item = try await attachment.loadItem(forTypeIdentifier: self.textContentType)
++        guard let text = self.extractSharedText(from: item), !text.isEmpty else {
++          NSLog("[ERROR] Cannot load text content !\(String(describing: content))")
++          await self.dismissWithError(
++            message: "Cannot load text content \(String(describing: content))")
++          return
++        }
+ 
++        await MainActor.run {
++          self.sharedText.append(text)
++          self.markAttachmentProcessed()
+         }
+-      } else {
+-        NSLog("[ERROR] Cannot load text content !\(String(describing: content))")
++      } catch {
++        NSLog("[ERROR] Cannot load text content !\(error.localizedDescription)")
+         await self.dismissWithError(
+-          message: "Cannot load text content \(String(describing: content))")
++          message: "Cannot load text content \(error.localizedDescription)")
+       }
+     }
+   }
+ 
+   private func handleUrl(content: NSExtensionItem, attachment: NSItemProvider, index: Int) async {
+     Task.detached {
+-      if let item = try! await attachment.loadItem(forTypeIdentifier: self.urlContentType) as? URL {
+-        Task { @MainActor in
+-
+-          self.sharedWebUrl.append(WebUrl(url: item.absoluteString, meta: ""))
+-          // If this is the last item, save sharedText in userDefaults and redirect to host app
+-          if index == (content.attachments?.count)! - 1 {
+-            let userDefaults = UserDefaults(suiteName: self.hostAppGroupIdentifier)
+-            userDefaults?.set(self.toData(data: self.sharedWebUrl), forKey: self.sharedKey)
+-            userDefaults?.synchronize()
+-            self.redirectToHostApp(type: .weburl)
+-          }
++      do {
++        let item = try await attachment.loadItem(forTypeIdentifier: self.urlContentType)
++        guard let url = self.extractSharedURL(from: item) else {
++          NSLog("[ERROR] Cannot load url content !\(String(describing: content))")
++          await self.dismissWithError(
++            message: "Cannot load url content \(String(describing: content))")
++          return
++        }
+ 
++        await MainActor.run {
++          self.sharedWebUrl.append(WebUrl(url: url.absoluteString, meta: ""))
++          self.markAttachmentProcessed()
+         }
+-      } else {
+-        NSLog("[ERROR] Cannot load url content !\(String(describing: content))")
++      } catch {
++        NSLog("[ERROR] Cannot load url content !\(error.localizedDescription)")
+         await self.dismissWithError(
+-          message: "Cannot load url content \(String(describing: content))")
++          message: "Cannot load url content \(error.localizedDescription)")
+       }
+     }
+   }
+@@ -146,38 +227,33 @@ class ShareViewController: UIViewController {
+     async
+   {
+     Task.detached {
+-      if let item = try! await attachment.loadItem(
+-        forTypeIdentifier: self.propertyListType, options: nil)
+-        as? NSDictionary
+-      {
+-        Task { @MainActor in
++      do {
++        let item = try await attachment.loadItem(
++          forTypeIdentifier: self.propertyListType, options: nil)
++
++        guard let dictionary = item as? NSDictionary,
++          let results = dictionary[NSExtensionJavaScriptPreprocessingResultsKey] as? NSDictionary,
++          let baseURI = results["baseURI"] as? String
++        else {
++          NSLog("[ERROR] Cannot load preprocessing content !\(String(describing: content))")
++          await self.dismissWithError(
++            message: "Cannot load preprocessing content \(String(describing: content))")
++          return
++        }
+ 
+-          if let results = item[NSExtensionJavaScriptPreprocessingResultsKey]
+-            as? NSDictionary
+-          {
+-            NSLog(
+-              "[DEBUG] NSExtensionJavaScriptPreprocessingResultsKey \(String(describing: results))"
+-            )
+-            self.sharedWebUrl.append(
+-              WebUrl(url: results["baseURI"] as! String, meta: results["meta"] as! String))
+-            // If this is the last item, save sharedText in userDefaults and redirect to host app
+-            if index == (content.attachments?.count)! - 1 {
+-              let userDefaults = UserDefaults(suiteName: self.hostAppGroupIdentifier)
+-              userDefaults?.set(self.toData(data: self.sharedWebUrl), forKey: self.sharedKey)
+-              userDefaults?.synchronize()
+-              self.redirectToHostApp(type: .weburl)
+-            }
+-          } else {
+-            NSLog("[ERROR] Cannot load preprocessing results !\(String(describing: content))")
+-            self.dismissWithError(
+-              message: "Cannot load preprocessing results \(String(describing: content))")
+-          }
++        let meta = results["meta"] as? String ?? ""
+ 
++        await MainActor.run {
++          NSLog(
++            "[DEBUG] NSExtensionJavaScriptPreprocessingResultsKey \(String(describing: results))"
++          )
++          self.sharedWebUrl.append(WebUrl(url: baseURI, meta: meta))
++          self.markAttachmentProcessed()
+         }
+-      } else {
+-        NSLog("[ERROR] Cannot load preprocessing content !\(String(describing: content))")
++      } catch {
++        NSLog("[ERROR] Cannot load preprocessing content !\(error.localizedDescription)")
+         await self.dismissWithError(
+-          message: "Cannot load preprocessing content \(String(describing: content))")
++          message: "Cannot load preprocessing content \(error.localizedDescription)")
+       }
+     }
+   }
+@@ -299,13 +375,7 @@ class ShareViewController: UIViewController {
+                 mimeType: mimeType, type: .image))
+           }
+ 
+-          // If this is the last item, save imagesData in userDefaults and redirect to host app
+-          if index == (content.attachments?.count)! - 1 {
+-            let userDefaults = UserDefaults(suiteName: self.hostAppGroupIdentifier)
+-            userDefaults?.set(self.toData(data: self.sharedMedia), forKey: self.sharedKey)
+-            userDefaults?.synchronize()
+-            self.redirectToHostApp(type: .media)
+-          }
++          self.markAttachmentProcessed()
+         }
+       } catch {
+         NSLog("[ERROR] handleImages: Exception loading image item: \(error)")
+@@ -384,13 +454,7 @@ class ShareViewController: UIViewController {
+             self.sharedMedia.append(sharedFile)
+           }
+ 
+-          // If this is the last item, save imagesData in userDefaults and redirect to host app
+-          if index == (content.attachments?.count)! - 1 {
+-            let userDefaults = UserDefaults(suiteName: self.hostAppGroupIdentifier)
+-            userDefaults?.set(self.toData(data: self.sharedMedia), forKey: self.sharedKey)
+-            userDefaults?.synchronize()
+-            self.redirectToHostApp(type: .media)
+-          }
++          self.markAttachmentProcessed()
+ 
+         }
+       } else {
+@@ -453,16 +517,15 @@ class ShareViewController: UIViewController {
+           type: .file))
+     }
+ 
+-    if index == (content.attachments?.count)! - 1 {
+-      let userDefaults = UserDefaults(suiteName: self.hostAppGroupIdentifier)
+-      userDefaults?.set(self.toData(data: self.sharedMedia), forKey: self.sharedKey)
+-      userDefaults?.synchronize()
+-      self.redirectToHostApp(type: .file)
+-    }
++    self.markAttachmentProcessed()
+   }
+ 
+   private func dismissWithError(message: String? = nil) {
+     DispatchQueue.main.async {
++      if self.didCompleteShareFlow {
++        return
++      }
++      self.didCompleteShareFlow = true
+       NSLog("[ERROR] Error loading application ! \(message!)")
+       let alert = UIAlertController(
+         title: "Error", message: "Error loading application: \(message!)", preferredStyle: .alert)
+@@ -478,7 +541,7 @@ class ShareViewController: UIViewController {
+   }
+ 
+   private func redirectToHostApp(type: RedirectType) {
+-    let url = URL(string: "\(shareProtocol)://dataUrl=\(sharedKey)#\(type)")!
++    let url = URL(string: "\(shareProtocol)://dataUrl=\(sharedKey)#\(type.rawValue)")!
+     var responder = self as UIResponder?
+ 
+     while responder != nil {
+@@ -497,7 +560,7 @@ class ShareViewController: UIViewController {
+     extensionContext!.completeRequest(returningItems: [], completionHandler: nil)
+   }
+ 
+-  enum RedirectType {
++  enum RedirectType: String {
+     case media
+     case text
+     case weburl
+@@ -542,7 +605,7 @@ class ShareViewController: UIViewController {
+     }
+   }
+ 
+-  func copyFile(at srcURL: URL, to dstURL: URL) -> Bool {
++  nonisolated func copyFile(at srcURL: URL, to dstURL: URL) -> Bool {
+     do {
+       if FileManager.default.fileExists(atPath: dstURL.path) {
+         try FileManager.default.removeItem(at: dstURL)

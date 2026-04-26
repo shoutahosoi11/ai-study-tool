@@ -1,16 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { listIncorrectQuestions, listSavedQuestions } from "../../api/questions";
 import { getMe, updateQuestionSettings } from "../../api/users";
 import { signOutUser } from "../../api/auth";
 import { Avatar } from "../../components/common/Avatar";
 import { Button } from "../../components/common/Button";
 import { Spinner } from "../../components/common/Spinner";
-import { IncorrectQuestionsModal } from "./IncorrectQuestionsModal";
-import { SavedQuestionsModal } from "./SavedQuestionsModal";
 import { theme } from "../../theme";
 import type { MeResponse } from "../../types/user";
-import type { IncorrectQuestion, SavedQuestion } from "../../types/question";
 
 type UserProfile = MeResponse & {
   follower_count?: number;
@@ -29,14 +25,6 @@ export function ProfilePage() {
   const [defaultQuestionCount, setDefaultQuestionCount] = useState(3);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
-  const [savedQuestionsOpen, setSavedQuestionsOpen] = useState(false);
-  const [savedQuestions, setSavedQuestions] = useState<SavedQuestion[]>([]);
-  const [savedQuestionsLoading, setSavedQuestionsLoading] = useState(false);
-  const [savedQuestionsError, setSavedQuestionsError] = useState("");
-  const [incorrectQuestionsOpen, setIncorrectQuestionsOpen] = useState(false);
-  const [incorrectQuestions, setIncorrectQuestions] = useState<IncorrectQuestion[]>([]);
-  const [incorrectQuestionsLoading, setIncorrectQuestionsLoading] = useState(false);
-  const [incorrectQuestionsError, setIncorrectQuestionsError] = useState("");
 
   useEffect(function () {
     getMe()
@@ -69,34 +57,6 @@ export function ProfilePage() {
       setSettingsMessage("既定の出題数の保存に失敗しました");
     } finally {
       setSavingSettings(false);
-    }
-  }
-
-  async function handleOpenSavedQuestions() {
-    setSavedQuestionsOpen(true);
-    setSavedQuestionsLoading(true);
-    setSavedQuestionsError("");
-    try {
-      const questions = await listSavedQuestions();
-      setSavedQuestions(questions);
-    } catch {
-      setSavedQuestionsError("保存済み問題の取得に失敗しました");
-    } finally {
-      setSavedQuestionsLoading(false);
-    }
-  }
-
-  async function handleOpenIncorrectQuestions() {
-    setIncorrectQuestionsOpen(true);
-    setIncorrectQuestionsLoading(true);
-    setIncorrectQuestionsError("");
-    try {
-      const questions = await listIncorrectQuestions();
-      setIncorrectQuestions(questions);
-    } catch {
-      setIncorrectQuestionsError("間違った問題の取得に失敗しました");
-    } finally {
-      setIncorrectQuestionsLoading(false);
     }
   }
 
@@ -174,7 +134,7 @@ export function ProfilePage() {
               <option value={0}>全部（安全のため最大20問）</option>
             </select>
             <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>
-              「問題を作る」を押した時は、この設定がそのまま使われます。
+              「問題を解く」を押した時は、この設定がそのまま使われます。
             </p>
             {settingsMessage && (
               <p
@@ -193,72 +153,10 @@ export function ProfilePage() {
               </Button>
             </div>
           </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: theme.spacing.sm,
-              padding: theme.spacing.md,
-              borderRadius: theme.radius.md,
-              border: `1px solid ${theme.colors.border}`,
-              background: theme.colors.background,
-            }}
-          >
-            <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.sm }}>保存済み問題</p>
-            <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>
-              解き終わったあとに保存した問題と、自分のメモを見返せます。
-            </p>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <Button variant="outline" onClick={handleOpenSavedQuestions}>
-                保存済み問題を見る
-              </Button>
-            </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: theme.spacing.sm,
-              padding: theme.spacing.md,
-              borderRadius: theme.radius.md,
-              border: `1px solid ${theme.colors.border}`,
-              background: theme.colors.background,
-            }}
-          >
-            <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.sm }}>間違った問題</p>
-            <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>
-              直近で不正解だった問題を一覧で見返せます。正解し直すと、この一覧から消えます。
-            </p>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <Button variant="outline" onClick={handleOpenIncorrectQuestions}>
-                間違った問題を見る
-              </Button>
-            </div>
-          </div>
           <Button variant="outline" onClick={handleSignOut}>
             ログアウト
           </Button>
         </div>
-      )}
-      {savedQuestionsOpen && (
-        <SavedQuestionsModal
-          questions={savedQuestions}
-          loading={savedQuestionsLoading}
-          error={savedQuestionsError}
-          onClose={function () {
-            setSavedQuestionsOpen(false);
-          }}
-        />
-      )}
-      {incorrectQuestionsOpen && (
-        <IncorrectQuestionsModal
-          questions={incorrectQuestions}
-          loading={incorrectQuestionsLoading}
-          error={incorrectQuestionsError}
-          onClose={function () {
-            setIncorrectQuestionsOpen(false);
-          }}
-        />
       )}
     </div>
   );

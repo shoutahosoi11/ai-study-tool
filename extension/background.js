@@ -315,7 +315,39 @@ function handleNotebookHighlightData(message, sender) {
     return;
   }
 
-  postImport(sync.appOrigin, token, highlights)
+  filterNewHighlights(sync.appOrigin, token, highlights)
+    .then(function (filtered) {
+      if (filtered.hashCheckSkipped) {
+        sendToWebapp(sync.webappTabId, {
+          type: 'SYNC_BOOK_PROGRESS',
+          requestId: sync.requestId,
+          bookId: sync.bookId,
+          stage: 'hash_check_failed',
+        });
+      }
+
+      if (!filtered.newHighlights.length) {
+        return {
+          saved_count: 0,
+          duplicate_count: filtered.duplicateCount,
+          copy_protected_count: 0,
+          resolved_asin: sync.asin || '',
+          highlights: [],
+          warning: filtered.hashCheckSkipped ? '重複チェックをスキップしました' : undefined,
+        };
+      }
+
+      return postImport(sync.appOrigin, token, filtered.newHighlights).then(function (result) {
+        result.duplicate_count = Number(result.duplicate_count || 0) + filtered.duplicateCount;
+        if (!result.resolved_asin) {
+          result.resolved_asin = sync.asin || '';
+        }
+        if (filtered.hashCheckSkipped && !result.warning) {
+          result.warning = '重複チェックをスキップしました';
+        }
+        return result;
+      });
+    })
     .then(function (result) {
       sendToWebapp(sync.webappTabId, {
         type: 'SYNC_BOOK_RESULT',
@@ -436,6 +468,137 @@ function buildImportURL(appOrigin) {
   } catch (_) {
     return '';
   }
+}
+
+function buildHashCheckURL(appOrigin) {
+  try {
+    return new URL('/api/highlights/sync/check', appOrigin).toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+function normalizeContent(content) {
+  return String(content || '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ');
+}
+
+function encodeUTF8(value) {
+  return new TextEncoder().encode(String(value || ''));
+}
+
+function toHex(buffer) {
+  var bytes = new Uint8Array(buffer);
+  var hex = '';
+  for (var i = 0; i < bytes.length; i += 1) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+}
+
+function sha256Hex(value) {
+  return crypto.subtle.digest('SHA-256', encodeUTF8(value)).then(function (buffer) {
+    return toHex(buffer);
+  });
+}
+
+function computeKindleContentHash(highlight) {
+  var key = 'source:kindle:asin:'
+    + String(highlight && highlight.asin ? highlight.asin : '').trim()
+    + ':loc:'
+    + String(highlight && highlight.location ? highlight.location : '').trim()
+    + ':content:'
+    + normalizeContent(highlight && highlight.content ? highlight.content : '');
+
+  return sha256Hex(key);
+}
+
+function checkExistingHashes(appOrigin, token, hashes) {
+  var url = buildHashCheckURL(appOrigin);
+  if (!url) {
+    return Promise.reject('HASH_CHECK_URL_INVALID');
+  }
+
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token,
+    },
+    body: JSON.stringify({ hashes: hashes }),
+  }).then(function (res) {
+    return res.text().then(function (text) {
+      var body = {};
+      if (text) {
+        try { body = JSON.parse(text); } catch (_) {}
+      }
+      if (res.ok) {
+        return Array.isArray(body.existing_hashes) ? body.existing_hashes : [];
+      }
+      throw 'HASH_CHECK_FAILED';
+    });
+  }).catch(function (err) {
+    if (typeof err === 'string') throw err;
+    throw 'NETWORK_ERROR';
+  });
+}
+
+function filterNewHighlights(appOrigin, token, highlights) {
+  return Promise.all(
+    highlights.map(function (highlight) {
+      return computeKindleContentHash(highlight).then(function (hash) {
+        return {
+          highlight: highlight,
+          hash: hash,
+        };
+      });
+    })
+  ).then(function (entries) {
+    var hashes = entries.map(function (entry) {
+      return entry.hash;
+    });
+
+    return checkExistingHashes(appOrigin, token, hashes)
+      .then(function (existingHashes) {
+        var existingSet = {};
+        for (var i = 0; i < existingHashes.length; i += 1) {
+          existingSet[existingHashes[i]] = true;
+        }
+
+        var newHighlights = [];
+        var duplicateCount = 0;
+        for (var j = 0; j < entries.length; j += 1) {
+          var entry = entries[j];
+          if (existingSet[entry.hash]) {
+            duplicateCount += 1;
+            continue;
+          }
+          newHighlights.push(entry.highlight);
+        }
+
+        return {
+          newHighlights: newHighlights,
+          duplicateCount: duplicateCount,
+          hashCheckSkipped: false,
+          hashCheckError: '',
+        };
+      })
+      .catch(function (err) {
+        console.warn('[kindle-sync][background] hash check failed, importing all highlights', err);
+        return {
+          newHighlights: entries.map(function (entry) {
+            return entry.highlight;
+          }),
+          duplicateCount: 0,
+          hashCheckSkipped: true,
+          hashCheckError: typeof err === 'string' ? err : 'HASH_CHECK_FAILED',
+        };
+      });
+  });
 }
 
 function normalizeAmazonNotebookURL(rawURL) {

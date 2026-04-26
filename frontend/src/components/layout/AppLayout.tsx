@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { BottomNav } from "./BottomNav";
+import { KindleSyncBootstrap } from "../system/KindleSyncBootstrap";
 
 type Props = { children: ReactNode };
 
@@ -14,6 +15,7 @@ export function AppLayout({ children }: Props) {
         position: "relative",
       }}
     >
+      <KindleSyncBootstrap />
       {children}
       <BottomNav />
     </div>

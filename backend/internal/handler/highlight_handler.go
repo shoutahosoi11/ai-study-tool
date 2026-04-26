@@ -73,6 +73,67 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 	})
 }
 
+func (h *HighlightHandler) CheckExistingHashes(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	req := new(dto.CheckHighlightHashesRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	existing, err := h.highlightUsecase.ListExistingContentHashes(c.Request().Context(), user.ID, req.Hashes)
+	if err != nil {
+		log.Printf("highlight check hashes error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, dto.CheckHighlightHashesResponse{
+		ExistingHashes: existing,
+	})
+}
+
+func (h *HighlightHandler) ImportShared(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	req := new(dto.ImportSharedHighlightRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	result, err := h.highlightUsecase.ImportSharedHighlight(c.Request().Context(), user.ID, usecase.ImportSharedHighlightInput{
+		BookTitle:  req.BookTitle,
+		BookAuthor: req.BookAuthor,
+		Content:    req.Content,
+		SourceApp:  req.SourceApp,
+		SourceURL:  req.SourceURL,
+		SharedAt:   req.SharedAt,
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "content is required")
+		}
+		log.Printf("highlight share import error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	var responseHighlight *dto.HighlightResponse
+	if result.Highlight != nil {
+		responseHighlight = toHighlightResponse(result.Highlight)
+	}
+
+	return c.JSON(http.StatusOK, dto.ImportSharedHighlightResponse{
+		Saved:     result.Saved,
+		Duplicate: result.Duplicate,
+		Highlight: responseHighlight,
+	})
+}
+
 func (h *HighlightHandler) ListBooks(c echo.Context) error {
 	user, err := h.currentUser(c)
 	if err != nil {
@@ -207,6 +268,8 @@ func toHighlightResponse(h *domain.Highlight) *dto.HighlightResponse {
 		Location:      h.Location,
 		HighlightedAt: h.HighlightedAt,
 		Source:        h.Source,
+		SourceApp:     h.SourceApp,
+		SourceURL:     h.SourceURL,
 		CreatedAt:     h.CreatedAt,
 	}
 

@@ -102,8 +102,8 @@ func (r *socialRepository) CreateComment(ctx context.Context, comment *domain.Co
 	err := r.withTx(ctx, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx, `
 WITH inserted AS (
-	INSERT INTO comments (post_id, user_id, content)
-	VALUES ($1, $2, $3)
+	INSERT INTO comments (post_id, user_id, body, content)
+	VALUES ($1, $2, $3, $3)
 	RETURNING id, post_id, user_id, content, created_at
 )
 SELECT

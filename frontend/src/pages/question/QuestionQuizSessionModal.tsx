@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { saveQuestion, submitAnswer } from "../../api/questions";
 import { Button } from "../../components/common/Button";
 import { theme } from "../../theme";
@@ -8,7 +8,9 @@ type QuizEntry = {
   question: Question;
   userAnswer: string;
   result: AnswerResult;
-}
+};
+
+type SummaryStep = "review" | "share";
 
 export type QuestionSharePayload = {
   body: string;
@@ -19,7 +21,7 @@ export type QuestionSharePayload = {
     sortOrder: number;
     note: string;
   }>;
-}
+};
 
 type Props = {
   bookTitle: string;
@@ -34,7 +36,7 @@ type Props = {
   onShare?: (payload: QuestionSharePayload) => Promise<void>;
   onShareSuccess?: () => void;
   onClose: () => void;
-}
+};
 
 export function QuestionQuizSessionModal({
   bookTitle,
@@ -44,7 +46,6 @@ export function QuestionQuizSessionModal({
   readonlyExplanationNotes,
   mergedNoteLabel = "メモ",
   loading = false,
-  sessionMode,
   shareEnabled = false,
   onShare,
   onShareSuccess,
@@ -64,9 +65,31 @@ export function QuestionQuizSessionModal({
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState("");
   const [shareSuccess, setShareSuccess] = useState("");
+  const [summaryStep, setSummaryStep] = useState<SummaryStep>("review");
+  const [entered, setEntered] = useState(false);
 
   const currentQuestion = questions[currentIndex];
   const isSummary = !loading && currentIndex >= questions.length && questions.length > 0;
+
+  useEffect(
+    function () {
+      setNotes(initialNotes ?? {});
+    },
+    [initialNotes, questions]
+  );
+
+  useEffect(
+    function () {
+      setEntered(false);
+      const frameId = window.requestAnimationFrame(function () {
+        setEntered(true);
+      });
+      return function () {
+        window.cancelAnimationFrame(frameId);
+      };
+    },
+    [currentIndex, currentQuestion?.id, isSummary, summaryStep]
+  );
 
   const progressText = useMemo(function () {
     return `${Math.min(currentIndex + 1, questions.length)} / ${questions.length}`;
@@ -96,6 +119,7 @@ export function QuestionQuizSessionModal({
           },
         ];
       });
+      setSummaryStep("review");
       setSelected("");
       setTextAnswer("");
       setCurrentIndex(function (prev) {
@@ -179,62 +203,79 @@ export function QuestionQuizSessionModal({
     return `${entry.result.explanation}\n\n${mergedNoteLabel}: ${mergedNote}`;
   }
 
+  const canMoveNext = currentQuestion
+    ? currentQuestion.question_type === "multiple_choice"
+      ? Boolean(selected)
+      : Boolean(textAnswer.trim())
+    : false;
+
+  const stageStyle = {
+    transform: entered ? "translateX(0)" : "translateX(24px)",
+    opacity: entered ? 1 : 0.7,
+    transition: "transform 220ms ease, opacity 220ms ease",
+  } as const;
+
   return (
     <div
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.5)",
+        background: theme.colors.background,
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: theme.spacing.md,
+        flexDirection: "column",
         zIndex: 240,
-      }}
-      onClick={function (event) {
-        if (event.target === event.currentTarget && !submitting && !savingQuestionId && !sharing) {
-          onClose();
-        }
       }}
     >
       <div
         style={{
-          width: "100%",
-          maxWidth: "760px",
-          maxHeight: "88vh",
-          overflowY: "auto",
-          background: theme.colors.background,
-          borderRadius: theme.radius.md,
-          padding: theme.spacing.lg,
+          borderBottom: `1px solid ${theme.colors.border}`,
+          padding: `${theme.spacing.md} ${theme.spacing.lg}`,
           display: "flex",
           flexDirection: "column",
-          gap: theme.spacing.md,
+          gap: theme.spacing.xs,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: theme.spacing.md }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.xs }}>
-            <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
-              {loading ? "問題を準備中" : isSummary ? "解答まとめ" : `問題 ${progressText}`}
-            </p>
-            <p style={{ margin: 0, fontSize: theme.fontSize.base, fontWeight: 700 }}>{bookTitle || "Kindle 本"}</p>
-          </div>
-          <Button variant="ghost" onClick={onClose} disabled={submitting || Boolean(savingQuestionId) || sharing}>
-            閉じる
-          </Button>
-        </div>
+        <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm, fontWeight: 700 }}>
+          Study
+        </p>
+        <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
+          {loading ? "問題を準備中" : isSummary ? (summaryStep === "review" ? "解答まとめ" : "ポスト") : `問題 ${progressText}`}
+        </p>
+      </div>
 
-        {loading ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.md }}>
-            <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>
-              選択式の問題文と選択肢を生成しています...
+      {loading ? (
+        <div
+          style={{
+            flex: 1,
+            padding: theme.spacing.xl,
+            display: "flex",
+            flexDirection: "column",
+            gap: theme.spacing.md,
+            justifyContent: "center",
+          }}
+        >
+          <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.lg }}>
+            問題を準備しています...
+          </p>
+          <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
+            少し待つと、そのまま1問目が表示されます。
+          </p>
+        </div>
+      ) : !isSummary && currentQuestion ? (
+        <div style={{ ...stageStyle, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: `${theme.spacing.xl} ${theme.spacing.lg}`,
+              display: "flex",
+              flexDirection: "column",
+              gap: theme.spacing.lg,
+            }}
+          >
+            <p style={{ margin: 0, fontWeight: 700, fontSize: "1.75rem", lineHeight: 1.5 }}>
+              {currentQuestion.content}
             </p>
-            <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
-              少し待つと、そのまま1問目が表示されます。
-            </p>
-          </div>
-        ) : !isSummary && currentQuestion ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.md }}>
-            <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>{currentQuestion.content}</p>
 
             {currentQuestion.question_type === "multiple_choice" ? (
               <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.sm }}>
@@ -248,13 +289,14 @@ export function QuestionQuizSessionModal({
                         setSelected(option);
                       }}
                       style={{
-                        padding: theme.spacing.sm,
-                        borderRadius: theme.radius.sm,
+                        padding: `${theme.spacing.md} ${theme.spacing.lg}`,
+                        borderRadius: theme.radius.md,
                         border: `1px solid ${isSelected ? theme.colors.primary : theme.colors.border}`,
                         background: isSelected ? theme.colors.primary : theme.colors.background,
-                        color: isSelected ? theme.colors.background : theme.colors.primary,
+                        color: isSelected ? theme.colors.background : "#0f1419",
                         cursor: "pointer",
                         textAlign: "left",
+                        fontSize: theme.fontSize.base,
                       }}
                     >
                       {option}
@@ -263,227 +305,290 @@ export function QuestionQuizSessionModal({
                 })}
               </div>
             ) : (
-              <textarea
+              <AutoGrowTextarea
                 value={textAnswer}
-                onChange={function (event) {
-                  setTextAnswer(event.target.value);
-                }}
-                rows={5}
+                onChange={setTextAnswer}
                 placeholder="回答を入力してください"
-                style={{
-                  width: "100%",
-                  resize: "vertical",
-                  padding: theme.spacing.sm,
-                  border: `1px solid ${theme.colors.border}`,
-                  borderRadius: theme.radius.sm,
-                  fontSize: theme.fontSize.sm,
-                  background: theme.colors.background,
-                }}
+                minHeight={120}
               />
             )}
 
             {submitError && (
               <p style={{ margin: 0, color: theme.colors.danger, fontSize: theme.fontSize.sm }}>{submitError}</p>
             )}
-
-            <Button
-              onClick={handleSubmit}
-              loading={submitting}
-              disabled={currentQuestion.question_type === "multiple_choice" ? !selected : !textAnswer.trim()}
-              fullWidth
-            >
-              {currentIndex === questions.length - 1 ? "解き終える" : "次の問題へ"}
-            </Button>
           </div>
-        ) : isSummary ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.md }}>
-            {entries.map(function (entry, index) {
-              const isSaving = savingQuestionId === entry.question.id;
-              const note = notes[entry.question.id] ?? "";
-              const explanationText = buildExplanationText(entry);
 
-              return (
-                <div
-                  key={entry.question.id}
+          <div
+            style={{
+              borderTop: `1px solid ${theme.colors.border}`,
+              padding: `${theme.spacing.md} ${theme.spacing.lg}`,
+              display: "flex",
+              justifyContent: "flex-end",
+            }}
+          >
+            <button
+              type="button"
+              onClick={function () {
+                void handleSubmit();
+              }}
+              disabled={submitting || !canMoveNext}
+              style={{
+                width: "3.5rem",
+                height: "3.5rem",
+                borderRadius: theme.radius.full,
+                border: "none",
+                background: submitting || !canMoveNext ? theme.colors.secondary : theme.colors.primary,
+                color: theme.colors.background,
+                cursor: submitting || !canMoveNext ? "not-allowed" : "pointer",
+                fontSize: "1.5rem",
+                fontWeight: 700,
+              }}
+            >
+              {submitting ? "..." : "→"}
+            </button>
+          </div>
+        </div>
+      ) : isSummary && summaryStep === "review" ? (
+        <div
+          style={{
+            ...stageStyle,
+            flex: 1,
+            overflowY: "auto",
+            padding: theme.spacing.lg,
+            display: "flex",
+            flexDirection: "column",
+            gap: theme.spacing.md,
+          }}
+        >
+          <div
+            style={{
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radius.md,
+              background: theme.colors.background,
+              padding: theme.spacing.md,
+              display: "flex",
+              flexDirection: "column",
+              gap: theme.spacing.sm,
+            }}
+          >
+            <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>解答まとめ</p>
+            <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
+              各問題の答えと解説を見ながら、問題ごとのメモ保存までここで進められます。
+            </p>
+          </div>
+
+          {entries.map(function (entry, index) {
+            const isSaving = savingQuestionId === entry.question.id;
+            const note = notes[entry.question.id] ?? "";
+            const explanationText = buildExplanationText(entry);
+
+            return (
+              <div
+                key={entry.question.id}
+                style={{
+                  border: `1px solid ${theme.colors.border}`,
+                  borderRadius: theme.radius.md,
+                  background: theme.colors.backgroundAlt,
+                  padding: theme.spacing.md,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: theme.spacing.sm,
+                }}
+              >
+                <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>問題 {index + 1}</p>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>{entry.question.content}</p>
+                <p style={{ margin: 0, fontSize: theme.fontSize.sm }}>あなたの回答: {entry.userAnswer}</p>
+                <p
                   style={{
-                    border: `1px solid ${theme.colors.border}`,
-                    borderRadius: theme.radius.md,
-                    background: theme.colors.backgroundAlt,
-                    padding: theme.spacing.md,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: theme.spacing.sm,
+                    margin: 0,
+                    fontSize: theme.fontSize.sm,
+                    color: entry.result.is_correct ? theme.colors.success : theme.colors.danger,
                   }}
                 >
-                  <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>問題 {index + 1}</p>
-                  <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>{entry.question.content}</p>
-                  <p style={{ margin: 0, fontSize: theme.fontSize.sm }}>あなたの回答: {entry.userAnswer}</p>
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: theme.fontSize.sm,
-                      color: entry.result.is_correct ? theme.colors.success : theme.colors.danger,
-                    }}
-                  >
-                    {entry.result.is_correct ? "正解" : `不正解 / 正解: ${entry.result.correct_answer}`}
-                  </p>
-                  {entry.result.feedback && (
-                    <p style={{ margin: 0, fontSize: theme.fontSize.sm }}>{entry.result.feedback}</p>
-                  )}
-                  <p style={{ margin: 0, fontSize: theme.fontSize.sm, color: theme.colors.secondary, whiteSpace: "pre-wrap" }}>
-                    解説: {explanationText}
-                  </p>
-                  {note.trim() && !mergeInitialNotesIntoExplanation && (
-                    <div
-                      style={{
-                        borderRadius: theme.radius.sm,
-                        background: theme.colors.background,
-                        border: `1px solid ${theme.colors.border}`,
-                        padding: theme.spacing.sm,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: theme.spacing.xs,
-                      }}
-                    >
-                      <p style={{ margin: 0, fontSize: theme.fontSize.xs, color: theme.colors.secondary }}>
-                        自分のメモ
-                      </p>
-                      <p style={{ margin: 0, fontSize: theme.fontSize.sm }}>
-                        {note}
-                      </p>
-                    </div>
-                  )}
-
-                  <textarea
-                    value={note}
-                    onChange={function (event) {
-                      const nextValue = event.target.value;
-                      setNotes(function (prev) {
-                        return {
-                          ...prev,
-                          [entry.question.id]: nextValue,
-                        };
-                      });
-                      setSavedQuestionIds(function (prev) {
-                        if (!prev[entry.question.id]) {
-                          return prev;
-                        }
-                        return {
-                          ...prev,
-                          [entry.question.id]: false,
-                        };
-                      });
-                    }}
-                    rows={4}
-                    placeholder="自分の解説や補足を書けます"
-                    style={{
-                      width: "100%",
-                      resize: "vertical",
-                      padding: theme.spacing.sm,
-                      border: `1px solid ${theme.colors.border}`,
-                      borderRadius: theme.radius.sm,
-                      fontSize: theme.fontSize.sm,
-                      background: theme.colors.background,
-                    }}
-                  />
-
-                  {saveErrors[entry.question.id] && (
-                    <p style={{ margin: 0, color: theme.colors.danger, fontSize: theme.fontSize.sm }}>
-                      {saveErrors[entry.question.id]}
-                    </p>
-                  )}
-                  {savedQuestionIds[entry.question.id] && !saveErrors[entry.question.id] && (
-                    <p style={{ margin: 0, color: theme.colors.success, fontSize: theme.fontSize.sm }}>
-                      保存しました
-                    </p>
-                  )}
-
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <Button
-                      onClick={function () {
-                        void handleSaveQuestion(entry.question.id);
-                      }}
-                      loading={isSaving}
-                      disabled={isSaving}
-                    >
-                      問題を保存
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-
-            {shareEnabled && onShare && sessionMode !== "generate" && (
-              <div style={{ border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.md, background: theme.colors.backgroundAlt, padding: theme.spacing.md, display: "flex", flexDirection: "column", gap: theme.spacing.sm }}>
-                <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>どうだった？</p>
-                <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
-                  一言つけて投稿すると、タイムラインから他の人もこの問題を解けます。
+                  {entry.result.is_correct ? "正解" : `不正解 / 正解: ${entry.result.correct_answer}`}
                 </p>
-                <textarea
-                  value={shareBody}
-                  onChange={function (event) {
-                    setShareBody(event.target.value);
-                    if (shareError) setShareError("");
-                    if (shareSuccess) setShareSuccess("");
+                {entry.result.feedback && (
+                  <p style={{ margin: 0, fontSize: theme.fontSize.sm }}>{entry.result.feedback}</p>
+                )}
+                <p style={{ margin: 0, fontSize: theme.fontSize.sm, color: theme.colors.secondary, whiteSpace: "pre-wrap" }}>
+                  解説: {explanationText}
+                </p>
+                <AutoGrowTextarea
+                  value={note}
+                  onChange={function (nextValue) {
+                    setNotes(function (prev) {
+                      return {
+                        ...prev,
+                        [entry.question.id]: nextValue,
+                      };
+                    });
+                    setSavedQuestionIds(function (prev) {
+                      if (!prev[entry.question.id]) {
+                        return prev;
+                      }
+                      return {
+                        ...prev,
+                        [entry.question.id]: false,
+                      };
+                    });
                   }}
-                  rows={3}
-                  maxLength={280}
-                  placeholder="どうだったかを一言で書く"
-                  style={{ width: "100%", resize: "vertical", padding: theme.spacing.sm, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, fontSize: theme.fontSize.sm, background: theme.colors.background }}
+                  placeholder="この問題だけに残したいメモを書く"
+                  minHeight={44}
                 />
-                {shareError && <p style={{ margin: 0, color: theme.colors.danger, fontSize: theme.fontSize.sm }}>{shareError}</p>}
-                {shareSuccess && <p style={{ margin: 0, color: theme.colors.success, fontSize: theme.fontSize.sm }}>{shareSuccess}</p>}
+
+                {saveErrors[entry.question.id] && (
+                  <p style={{ margin: 0, color: theme.colors.danger, fontSize: theme.fontSize.sm }}>
+                    {saveErrors[entry.question.id]}
+                  </p>
+                )}
+                {savedQuestionIds[entry.question.id] && !saveErrors[entry.question.id] && (
+                  <p style={{ margin: 0, color: theme.colors.success, fontSize: theme.fontSize.sm }}>
+                    保存しました
+                  </p>
+                )}
+
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <Button onClick={function () { void handleShare(); }} loading={sharing} disabled={sharing}>
-                    投稿する
+                  <Button
+                    onClick={function () {
+                      void handleSaveQuestion(entry.question.id);
+                    }}
+                    loading={isSaving}
+                    disabled={isSaving}
+                  >
+                    この問題を保存
                   </Button>
                 </div>
               </div>
-            )}
+            );
+          })}
 
-            {shareEnabled && onShare && sessionMode === "generate" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.sm }}>
-                <textarea
-                  value={shareBody}
-                  onChange={function (event) {
-                    setShareBody(event.target.value);
-                    if (shareError) setShareError("");
-                  }}
-                  rows={3}
-                  maxLength={280}
-                  placeholder="一言コメント（任意）"
-                  style={{ width: "100%", resize: "vertical", padding: theme.spacing.sm, border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.sm, fontSize: theme.fontSize.sm, background: theme.colors.background }}
-                />
-                {shareError && <p style={{ margin: 0, color: theme.colors.danger, fontSize: theme.fontSize.sm }}>{shareError}</p>}
-              </div>
-            )}
-
-            <Button
-              onClick={function () {
-                if (sessionMode === "generate" && shareEnabled && onShare && entries.length > 0) {
-                  void handleShare();
-                } else {
-                  onClose();
-                }
-              }}
-              loading={sharing}
-              disabled={sharing}
-              fullWidth
-            >
-              {sessionMode === "generate" && shareEnabled && onShare && entries.length > 0 ? "投稿して閉じる" : "閉じる"}
+          {shareEnabled && onShare ? (
+            <Button fullWidth onClick={function () { setSummaryStep("share"); }}>
+              ポスト画面へ進む
             </Button>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.md }}>
+          ) : (
+            <Button variant="outline" fullWidth onClick={onClose}>
+              完了して戻る
+            </Button>
+          )}
+        </div>
+      ) : isSummary ? (
+        <div
+          style={{
+            ...stageStyle,
+            flex: 1,
+            overflowY: "auto",
+            padding: theme.spacing.lg,
+            display: "flex",
+            flexDirection: "column",
+            gap: theme.spacing.md,
+          }}
+        >
+          <div
+            style={{
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radius.md,
+              background: theme.colors.background,
+              padding: theme.spacing.md,
+              display: "flex",
+              flexDirection: "column",
+              gap: theme.spacing.sm,
+            }}
+          >
+            <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>ポスト</p>
             <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
-              問題はまだありません
+              一言メモを付けて投稿できます。この本文が、問題セットの上に表示されます。
             </p>
-            <Button onClick={onClose} fullWidth>
-              閉じる
-            </Button>
+            <AutoGrowTextarea
+              value={shareBody}
+              onChange={function (nextValue) {
+                setShareBody(nextValue);
+                if (shareError) setShareError("");
+                if (shareSuccess) setShareSuccess("");
+              }}
+              placeholder="この問題セットについて一言メモを書く"
+              minHeight={44}
+            />
+            {shareError && <p style={{ margin: 0, color: theme.colors.danger, fontSize: theme.fontSize.sm }}>{shareError}</p>}
+            {shareSuccess && <p style={{ margin: 0, color: theme.colors.success, fontSize: theme.fontSize.sm }}>{shareSuccess}</p>}
+            <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.sm }}>
+              <Button fullWidth onClick={function () { void handleShare(); }} loading={sharing} disabled={sharing}>
+                ポスト
+              </Button>
+              <Button variant="outline" fullWidth onClick={function () { setSummaryStep("review"); }} disabled={sharing}>
+                解答まとめに戻る
+              </Button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            flex: 1,
+            padding: theme.spacing.lg,
+            display: "flex",
+            flexDirection: "column",
+            gap: theme.spacing.md,
+            justifyContent: "center",
+          }}
+        >
+          <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.sm }}>
+            問題はまだありません
+          </p>
+          <Button variant="outline" fullWidth onClick={onClose}>
+            戻る
+          </Button>
+        </div>
+      )}
     </div>
+  );
+}
+
+function AutoGrowTextarea({
+  value,
+  onChange,
+  placeholder,
+  minHeight = 44,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  minHeight?: number;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(
+    function () {
+      if (!ref.current) {
+        return;
+      }
+      ref.current.style.height = "auto";
+      ref.current.style.height = `${Math.max(ref.current.scrollHeight, minHeight)}px`;
+    },
+    [minHeight, value]
+  );
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={function (event) {
+        onChange(event.target.value);
+      }}
+      rows={1}
+      placeholder={placeholder}
+      style={{
+        width: "100%",
+        resize: "none",
+        minHeight,
+        padding: theme.spacing.sm,
+        border: `1px solid ${theme.colors.border}`,
+        borderRadius: theme.radius.sm,
+        fontSize: theme.fontSize.sm,
+        background: theme.colors.background,
+        overflow: "hidden",
+        boxSizing: "border-box",
+      }}
+    />
   );
 }

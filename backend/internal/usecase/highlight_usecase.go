@@ -29,6 +29,15 @@ type ImportHighlightItem struct {
 	HighlightedAt *time.Time
 }
 
+type ImportSharedHighlightInput struct {
+	BookTitle  string
+	BookAuthor string
+	Content    string
+	SourceApp  string
+	SourceURL  string
+	SharedAt   *time.Time
+}
+
 type ImportKindleResult struct {
 	Saved              int
 	DuplicateCount     int
@@ -36,6 +45,12 @@ type ImportKindleResult struct {
 	ResolvedASIN       string
 	Highlights         []*domain.Highlight
 	Warning            *string
+}
+
+type ImportSharedHighlightResult struct {
+	Saved     bool
+	Duplicate bool
+	Highlight *domain.Highlight
 }
 
 func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
@@ -71,6 +86,52 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 	}
 
 	return result, nil
+}
+
+func (u *HighlightUsecase) ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input ImportSharedHighlightInput) (*ImportSharedHighlightResult, error) {
+	highlight, err := newSharedHighlight(userID, input)
+	if err != nil {
+		return nil, err
+	}
+
+	saved, err := u.repo.BulkUpsert(ctx, []*domain.Highlight{highlight})
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: import shared highlight: %w", err)
+	}
+	if saved < 0 || saved > 1 {
+		return nil, fmt.Errorf("highlight usecase: import shared highlight: invalid saved count %d", saved)
+	}
+
+	result := &ImportSharedHighlightResult{
+		Saved:     saved == 1,
+		Duplicate: saved == 0,
+	}
+	if result.Saved {
+		result.Highlight = highlight
+	}
+
+	return result, nil
+}
+
+func (u *HighlightUsecase) ListExistingContentHashes(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error) {
+	if len(hashes) == 0 {
+		return make([]string, 0), nil
+	}
+
+	normalized := normalizeHashList(hashes)
+	if len(normalized) == 0 {
+		return make([]string, 0), nil
+	}
+
+	existing, err := u.repo.ListExistingContentHashesByUserID(ctx, userID, normalized)
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: list existing content hashes: %w", err)
+	}
+	if existing == nil {
+		return make([]string, 0), nil
+	}
+
+	return existing, nil
 }
 
 func (u *HighlightUsecase) ListKindleBooks(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error) {
@@ -145,7 +206,7 @@ func newImportHighlight(userID uuid.UUID, item ImportHighlightItem) (*domain.Hig
 
 	asin := strings.TrimSpace(item.ASIN)
 	location := strings.TrimSpace(item.Location)
-	contentHash := computeContentHash(asin, location, content)
+	contentHash := computeKindleContentHash(asin, location, content)
 	highlightedAt := sanitizeHighlightedAt(item.HighlightedAt)
 
 	return &domain.Highlight{
@@ -158,12 +219,42 @@ func newImportHighlight(userID uuid.UUID, item ImportHighlightItem) (*domain.Hig
 		Location:      optionalString(location),
 		HighlightedAt: highlightedAt,
 		Source:        domain.HighlightSourceKindle,
+		Status:        domain.HighlightStatusPending,
+		RequestedAt:   time.Now().UTC(),
 	}, true
 }
 
-func computeContentHash(asin, location, content string) string {
+func newSharedHighlight(userID uuid.UUID, input ImportSharedHighlightInput) (*domain.Highlight, error) {
+	content := strings.TrimSpace(input.Content)
+	if content == "" {
+		return nil, domain.ErrInvalidInput
+	}
+
+	sourceApp := strings.TrimSpace(input.SourceApp)
+	sourceURL := strings.TrimSpace(input.SourceURL)
+	bookTitle := strings.TrimSpace(input.BookTitle)
+	bookAuthor := strings.TrimSpace(input.BookAuthor)
+	contentHash := computeMobileShareContentHash(sourceApp, sourceURL, bookTitle, bookAuthor, content)
+
+	return &domain.Highlight{
+		UserID:        userID,
+		BookTitle:     optionalString(bookTitle),
+		BookAuthor:    optionalString(bookAuthor),
+		Content:       content,
+		ContentHash:   &contentHash,
+		HighlightedAt: sanitizeHighlightedAt(input.SharedAt),
+		Source:        domain.HighlightSourceMobileShare,
+		SourceApp:     optionalString(sourceApp),
+		SourceURL:     optionalString(sourceURL),
+		Status:        domain.HighlightStatusPending,
+		RequestedAt:   time.Now().UTC(),
+	}, nil
+}
+
+func computeKindleContentHash(asin, location, content string) string {
 	key := fmt.Sprintf(
-		"asin:%s:loc:%s:content:%s",
+		"source:%s:asin:%s:loc:%s:content:%s",
+		domain.HighlightSourceKindle,
 		strings.TrimSpace(asin),
 		strings.TrimSpace(location),
 		normalizeContent(content),
@@ -172,8 +263,39 @@ func computeContentHash(asin, location, content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func computeMobileShareContentHash(sourceApp, sourceURL, bookTitle, bookAuthor, content string) string {
+	key := fmt.Sprintf(
+		"source:%s:app:%s:url:%s:title:%s:author:%s:content:%s",
+		domain.HighlightSourceMobileShare,
+		strings.TrimSpace(sourceApp),
+		strings.TrimSpace(sourceURL),
+		strings.TrimSpace(bookTitle),
+		strings.TrimSpace(bookAuthor),
+		normalizeContent(content),
+	)
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
 func normalizeContent(content string) string {
 	return strings.Join(strings.Fields(strings.ToLower(content)), " ")
+}
+
+func normalizeHashList(hashes []string) []string {
+	seen := make(map[string]struct{}, len(hashes))
+	items := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		normalized := strings.TrimSpace(hash)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		items = append(items, normalized)
+	}
+	return items
 }
 
 func sanitizeHighlightedAt(highlightedAt *time.Time) *time.Time {

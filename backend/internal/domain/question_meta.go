@@ -7,5 +7,7 @@ type QuestionMeta struct {
 	SourceID      string
 	HighlightID   string
 	GenerationID  string
+	Perspective   string
+	Version       int
 	IsAIGenerated bool
 }

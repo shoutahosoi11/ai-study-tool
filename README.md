@@ -35,6 +35,11 @@ Phase 1 deployment targets Cloud Run, Neon PostgreSQL, Firebase Auth,
 Cloud Storage signed URLs, and GitHub Actions. See
 [`docs/deploy-phase-1.md`](docs/deploy-phase-1.md).
 
+For the upcoming iOS / Android share-sheet intake flow, see
+[`docs/mobile-share-api.md`](docs/mobile-share-api.md).
+
+The React Native / Expo mobile app scaffold lives in [`mobile/`](mobile/README.md).
+
 ## AI Consensus Review
 
 This repository includes a local two-reviewer workflow that runs Codex and Claude on the same diff, shares both reviews back into a consensus pass, and can optionally ask Codex to apply only the mutually agreed findings.

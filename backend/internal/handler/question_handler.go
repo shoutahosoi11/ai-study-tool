@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -13,12 +14,21 @@ import (
 )
 
 type QuestionHandler struct {
-	questionUsecase *usecase.QuestionUsecase
-	userUsecase     usecase.UserUsecaseInterface
+	questionUsecase     *usecase.QuestionUsecase
+	questionSyncUsecase *usecase.QuestionSyncUsecase
+	userUsecase         usecase.UserUsecaseInterface
 }
 
-func NewQuestionHandler(qu *usecase.QuestionUsecase, userUsecase usecase.UserUsecaseInterface) *QuestionHandler {
-	return &QuestionHandler{questionUsecase: qu, userUsecase: userUsecase}
+func NewQuestionHandler(
+	qu *usecase.QuestionUsecase,
+	questionSyncUsecase *usecase.QuestionSyncUsecase,
+	userUsecase usecase.UserUsecaseInterface,
+) *QuestionHandler {
+	return &QuestionHandler{
+		questionUsecase:     qu,
+		questionSyncUsecase: questionSyncUsecase,
+		userUsecase:         userUsecase,
+	}
 }
 
 func (h *QuestionHandler) List(c echo.Context) error {
@@ -131,6 +141,98 @@ func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusCreated, responses)
+}
+
+func (h *QuestionHandler) ListPrepared(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	sourceType := domain.SourceType(strings.TrimSpace(c.QueryParam("source_type")))
+	sourceID := strings.TrimSpace(c.QueryParam("source_id"))
+	if sourceID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "source_id is required")
+	}
+	if err := validateQuestionSourceID(sourceType, sourceID); err != nil {
+		if errors.Is(err, domain.ErrInvalidSourceType) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
+		}
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid source id")
+	}
+
+	questionCount := 0
+	if rawLimit := strings.TrimSpace(c.QueryParam("question_count")); rawLimit != "" {
+		if parsedLimit, parseErr := strconv.Atoi(rawLimit); parseErr == nil {
+			questionCount = parsedLimit
+		}
+	}
+
+	input := domain.GenerateQuestionsInput{
+		CreatorID:     user.ID.String(),
+		SourceType:    sourceType,
+		SourceID:      sourceID,
+		BookTitle:     strings.TrimSpace(c.QueryParam("book_title")),
+		BookAuthor:    strings.TrimSpace(c.QueryParam("book_author")),
+		QuestionCount: questionCount,
+	}
+
+	questions, err := h.questionUsecase.ListPreparedQuestions(c.Request().Context(), input)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidSourceType) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
+		}
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
+		if errors.Is(err, domain.ErrQuestionsPreparing) {
+			return echo.NewHTTPError(http.StatusConflict, "questions are still preparing")
+		}
+		if errors.Is(err, domain.ErrQuestionGenerationFailed) {
+			return echo.NewHTTPError(http.StatusConflict, "question generation failed")
+		}
+		if errors.Is(err, domain.ErrSourceTextUnavailable) {
+			return echo.NewHTTPError(http.StatusUnprocessableEntity, "source text is unavailable")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	responses := make([]dto.QuestionResponse, 0, len(questions))
+	for _, q := range questions {
+		responses = append(responses, dto.ToQuestionResponse(q))
+	}
+
+	return c.JSON(http.StatusOK, responses)
+}
+
+func (h *QuestionHandler) SyncStock(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	result, err := h.questionSyncUsecase.SyncQuestionStock(c.Request().Context(), user)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	response := dto.SyncQuestionStockResponse{
+		Books:                  make([]dto.SyncQuestionStockBookResponse, 0, len(result.Books)),
+		QueuedCount:            result.QueuedCount,
+		SkippedDueToDailyLimit: result.SkippedDueToDailyLimit,
+	}
+	for _, book := range result.Books {
+		response.Books = append(response.Books, dto.SyncQuestionStockBookResponse{
+			BookKey:    book.BookKey,
+			BookTitle:  book.BookTitle,
+			BookAuthor: book.BookAuthor,
+			Stock:      book.Stock,
+			Target:     book.Target,
+			Preparing:  book.Preparing,
+		})
+	}
+
+	return c.JSON(http.StatusOK, response)
 }
 
 func (h *QuestionHandler) SaveQuestion(c echo.Context) error {

@@ -2,8 +2,10 @@ package usecase_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
@@ -34,11 +36,19 @@ type mockQuestionRepository struct {
 	listByCreatorID              func(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error)
 	listSavedByUserID            func(ctx context.Context, userID string, limit int) ([]*domain.SavedQuestion, error)
 	listIncorrectByUserID        func(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error)
+	listPreparedByHighlightIDs   func(ctx context.Context, userID string, highlightIDs []uuid.UUID, limit int) ([]*domain.Question, error)
+	listPerspectivesByHighlight  func(ctx context.Context, userID string, highlightID uuid.UUID) ([]string, error)
 	listUsedHighlightIDsByUserID func(ctx context.Context, userID string, highlightIDs []uuid.UUID) ([]uuid.UUID, error)
 	findByID                     func(ctx context.Context, id string) (*domain.Question, *domain.QuestionMeta, *domain.QuestionStats, error)
 	updateStats                  func(ctx context.Context, questionID string, isCorrect bool) error
 	saveGeneration               func(ctx context.Context, userID, sourceType, sourceID, promptUsed, modelUsed string) (string, error)
 	saveForUser                  func(ctx context.Context, userID, questionID, note string) error
+	getDailyGeneratedCount       func(ctx context.Context, userID uuid.UUID, day time.Time) (int, error)
+	incrementDailyGeneratedCount func(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error
+	enqueueRegeneration          func(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error
+	claimPendingRegeneration     func(ctx context.Context, limit int) ([]*domain.RegenerationTask, error)
+	markRegenerationCompleted    func(ctx context.Context, taskIDs []uuid.UUID) error
+	markRegenerationFailed       func(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error
 }
 
 func (m *mockQuestionRepository) Save(ctx context.Context, q *domain.Question, meta *domain.QuestionMeta) error {
@@ -64,6 +74,20 @@ func (m *mockQuestionRepository) ListIncorrectByUserID(ctx context.Context, user
 		return make([]*domain.IncorrectQuestion, 0), nil
 	}
 	return m.listIncorrectByUserID(ctx, userID, limit)
+}
+
+func (m *mockQuestionRepository) ListPreparedByUserIDAndHighlightIDs(ctx context.Context, userID string, highlightIDs []uuid.UUID, limit int) ([]*domain.Question, error) {
+	if m.listPreparedByHighlightIDs == nil {
+		return make([]*domain.Question, 0), nil
+	}
+	return m.listPreparedByHighlightIDs(ctx, userID, highlightIDs, limit)
+}
+
+func (m *mockQuestionRepository) ListPerspectivesByHighlightID(ctx context.Context, userID string, highlightID uuid.UUID) ([]string, error) {
+	if m.listPerspectivesByHighlight == nil {
+		return make([]string, 0), nil
+	}
+	return m.listPerspectivesByHighlight(ctx, userID, highlightID)
 }
 
 func (m *mockQuestionRepository) ListUsedHighlightIDsByUserID(ctx context.Context, userID string, highlightIDs []uuid.UUID) ([]uuid.UUID, error) {
@@ -95,6 +119,48 @@ func (m *mockQuestionRepository) SaveForUser(ctx context.Context, userID, questi
 		return nil
 	}
 	return m.saveForUser(ctx, userID, questionID, note)
+}
+
+func (m *mockQuestionRepository) GetDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time) (int, error) {
+	if m.getDailyGeneratedCount == nil {
+		return 0, nil
+	}
+	return m.getDailyGeneratedCount(ctx, userID, day)
+}
+
+func (m *mockQuestionRepository) IncrementDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
+	if m.incrementDailyGeneratedCount == nil {
+		return nil
+	}
+	return m.incrementDailyGeneratedCount(ctx, userID, day, delta)
+}
+
+func (m *mockQuestionRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
+	if m.enqueueRegeneration == nil {
+		return nil
+	}
+	return m.enqueueRegeneration(ctx, userID, highlightID, questionID)
+}
+
+func (m *mockQuestionRepository) ClaimPendingRegenerationTasks(ctx context.Context, limit int) ([]*domain.RegenerationTask, error) {
+	if m.claimPendingRegeneration == nil {
+		return make([]*domain.RegenerationTask, 0), nil
+	}
+	return m.claimPendingRegeneration(ctx, limit)
+}
+
+func (m *mockQuestionRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {
+	if m.markRegenerationCompleted == nil {
+		return nil
+	}
+	return m.markRegenerationCompleted(ctx, taskIDs)
+}
+
+func (m *mockQuestionRepository) MarkRegenerationTasksFailed(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error {
+	if m.markRegenerationFailed == nil {
+		return nil
+	}
+	return m.markRegenerationFailed(ctx, taskIDs, lastError, maxRetry)
 }
 
 type mockQuestionSourceResolver struct {
@@ -279,6 +345,40 @@ func TestGenerateQuestions_SupportsKindleBookSource(t *testing.T) {
 	}
 	if len(questions) != 1 {
 		t.Fatalf("expected 1 question, got %d", len(questions))
+	}
+}
+
+func TestListPreparedQuestions_ReturnsPreparingWhenHighlightsPending(t *testing.T) {
+	ctx := context.Background()
+	highlightID := uuid.New()
+
+	repo := &mockQuestionRepository{
+		listPreparedByHighlightIDs: func(ctx context.Context, userID string, highlightIDs []uuid.UUID, limit int) ([]*domain.Question, error) {
+			return make([]*domain.Question, 0), nil
+		},
+	}
+	resolver := &mockQuestionSourceResolver{
+		resolveHighlights: func(ctx context.Context, userID string, sourceType domain.SourceType, sourceID string, bookTitle string, bookAuthor string) ([]*domain.Highlight, error) {
+			return []*domain.Highlight{
+				{
+					ID:      highlightID,
+					Content: "共有ハイライト",
+					Status:  domain.HighlightStatusPending,
+				},
+			}, nil
+		},
+	}
+
+	uc := usecase.NewQuestionUsecase(repo, &mockLLMClient{}, resolver)
+
+	_, err := uc.ListPreparedQuestions(ctx, domain.GenerateQuestionsInput{
+		CreatorID:     "user-123",
+		SourceType:    domain.SourceTypeKindleBook,
+		SourceID:      "metadata:book",
+		QuestionCount: 3,
+	})
+	if !errors.Is(err, domain.ErrQuestionsPreparing) {
+		t.Fatalf("expected ErrQuestionsPreparing, got %v", err)
 	}
 }
 

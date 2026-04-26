@@ -23,8 +23,8 @@ ORDER BY highlighted_at ASC NULLS LAST, created_at ASC;
 -- name: ListHighlightBooksByUserID :many
 SELECT
     asin,
-    MAX(book_title)::text AS book_title,
-    MAX(book_author)::text AS book_author,
+    COALESCE(MAX(book_title), '')::text AS book_title,
+    COALESCE(MAX(book_author), '')::text AS book_author,
     COUNT(*) AS highlight_count,
     source
 FROM highlights

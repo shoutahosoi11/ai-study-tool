@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Kindle Highlights Scraper",
+  "version": "0.1.0",
+  "description": "Kindle Notebook から全書籍のハイライトを取得して JSON で確認する MVP 拡張機能",
+  "permissions": ["storage", "downloads", "tabs"],
+  "host_permissions": [
+    "https://read.amazon.co.jp/*",
+    "https://read.amazon.com/*",
+    "https://read.amazon.co.uk/*",
+    "https://read.amazon.de/*",
+    "https://read.amazon.fr/*",
+    "https://read.amazon.es/*",
+    "https://read.amazon.it/*",
+    "https://read.amazon.in/*",
+    "https://read.amazon.ca/*",
+    "https://read.amazon.com.au/*",
+    "https://read.amazon.com.mx/*",
+    "https://read.amazon.com.br/*",
+    "https://read.amazon.nl/*",
+    "https://read.amazon.sg/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://read.amazon.co.jp/*",
+        "https://read.amazon.com/*",
+        "https://read.amazon.co.uk/*",
+        "https://read.amazon.de/*",
+        "https://read.amazon.fr/*",
+        "https://read.amazon.es/*",
+        "https://read.amazon.it/*",
+        "https://read.amazon.in/*",
+        "https://read.amazon.ca/*",
+        "https://read.amazon.com.au/*",
+        "https://read.amazon.com.mx/*",
+        "https://read.amazon.com.br/*",
+        "https://read.amazon.nl/*",
+        "https://read.amazon.sg/*"
+      ],
+      "js": ["lib/constants.js", "lib/utils.js", "content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Kindle Highlights Scraper"
+  }
+}

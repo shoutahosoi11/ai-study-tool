@@ -15,6 +15,23 @@ type ImportHighlightsRequest struct {
 	Highlights []ImportHighlightItem `json:"highlights"`
 }
 
+type CheckHighlightHashesRequest struct {
+	Hashes []string `json:"hashes"`
+}
+
+type CheckHighlightHashesResponse struct {
+	ExistingHashes []string `json:"existing_hashes"`
+}
+
+type ImportSharedHighlightRequest struct {
+	BookTitle  string     `json:"book_title"`
+	BookAuthor string     `json:"book_author"`
+	Content    string     `json:"content"`
+	SourceApp  string     `json:"source_app"`
+	SourceURL  string     `json:"source_url"`
+	SharedAt   *time.Time `json:"shared_at"`
+}
+
 type UpdateHighlightExplanationRequest struct {
 	Explanation string `json:"explanation"`
 }
@@ -30,6 +47,8 @@ type HighlightResponse struct {
 	Location      *string    `json:"location,omitempty"`
 	HighlightedAt *time.Time `json:"highlighted_at,omitempty"`
 	Source        string     `json:"source"`
+	SourceApp     *string    `json:"source_app,omitempty"`
+	SourceURL     *string    `json:"source_url,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
@@ -40,6 +59,12 @@ type ImportHighlightsResponse struct {
 	ResolvedASIN       string               `json:"resolved_asin"`
 	Highlights         []*HighlightResponse `json:"highlights"`
 	Warning            *string              `json:"warning,omitempty"`
+}
+
+type ImportSharedHighlightResponse struct {
+	Saved     bool               `json:"saved"`
+	Duplicate bool               `json:"duplicate"`
+	Highlight *HighlightResponse `json:"highlight,omitempty"`
 }
 
 type ListBookHighlightsResponse struct {

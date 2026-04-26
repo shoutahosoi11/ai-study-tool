@@ -198,6 +198,47 @@
     return document.querySelectorAll(HIGHLIGHT_SELECTOR).length > 0;
   }
 
+  function getScrollableHighlightContainers() {
+    var containers = [];
+    var elements = document.querySelectorAll('div, section, main, article, ul, ol');
+
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      if (!el || !el.querySelector) continue;
+      if (!el.querySelector(HIGHLIGHT_SELECTOR)) continue;
+      if (el.scrollHeight <= el.clientHeight + 20) continue;
+
+      var style = window.getComputedStyle(el);
+      if (style.overflowY !== 'auto' && style.overflowY !== 'scroll') continue;
+
+      containers.push(el);
+    }
+
+    return containers;
+  }
+
+  function nudgeHighlightScrolling(step) {
+    var amount = Math.max(220, Math.min(720, step * 45));
+    var containers = getScrollableHighlightContainers();
+
+    for (var i = 0; i < containers.length; i++) {
+      var el = containers[i];
+      var nextTop = Math.min(el.scrollTop + amount, Math.max(0, el.scrollHeight - el.clientHeight));
+      if (nextTop !== el.scrollTop) {
+        el.scrollTop = nextTop;
+      }
+    }
+
+    var scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    if (scrollingElement && typeof scrollingElement.scrollTop === 'number') {
+      var nextPageTop = Math.min(
+        scrollingElement.scrollTop + Math.floor(amount / 2),
+        Math.max(0, scrollingElement.scrollHeight - scrollingElement.clientHeight)
+      );
+      scrollingElement.scrollTop = nextPageTop;
+    }
+  }
+
   function isGenericBookLabel(value) {
     var normalized = normalizeText(value).toLowerCase();
     return Boolean(normalized && GENERIC_BOOK_LABELS[normalized]);
@@ -652,6 +693,42 @@
     }, 500);
   }
 
+  function collectHighlightsWithProgress(targetAsin, callback) {
+    var attempts = 0;
+    var lastCount = -1;
+    var stableCount = 0;
+    var bestHighlights = [];
+    var lastProgressCount = -1;
+
+    var timer = window.setInterval(function () {
+      attempts += 1;
+      nudgeHighlightScrolling(attempts);
+
+      var highlights = scrapeHighlights(targetAsin);
+      if (highlights.length > bestHighlights.length) {
+        bestHighlights = highlights;
+      }
+
+      var visibleCount = bestHighlights.length;
+      if (visibleCount !== lastProgressCount) {
+        lastProgressCount = visibleCount;
+        sendProgress('highlight_data_progress', visibleCount);
+      }
+
+      if (highlights.length === lastCount) {
+        stableCount += 1;
+      } else {
+        stableCount = 0;
+        lastCount = highlights.length;
+      }
+
+      if ((bestHighlights.length > 0 && stableCount >= 4) || attempts >= 40) {
+        window.clearInterval(timer);
+        callback(bestHighlights);
+      }
+    }, 600);
+  }
+
   function findBookElementByASIN(asin) {
     var direct = document.querySelector('[data-asin="' + escapeAttrValue(asin) + '"]');
     if (direct) return direct;
@@ -747,13 +824,19 @@
     return true;
   }
 
-  function sendHighlights(targetAsin) {
+  function sendHighlights(targetAsin, preparedHighlights) {
     var effectiveASIN = targetAsin || getASINFromURL() || '';
-    var highlights = scrapeHighlights(effectiveASIN);
+    var highlights = Array.isArray(preparedHighlights) ? preparedHighlights : scrapeHighlights(effectiveASIN);
     sendProgress('highlight_data_found', highlights.length);
     chrome.runtime.sendMessage({
       type: 'NOTEBOOK_HIGHLIGHT_DATA',
       highlights: highlights,
+    });
+  }
+
+  function collectAndSendHighlights(targetAsin) {
+    collectHighlightsWithProgress(targetAsin, function (highlights) {
+      sendHighlights(targetAsin, highlights);
     });
   }
 
@@ -765,7 +848,7 @@
         window.clearInterval(timer);
         sendProgress('book_opened');
         waitForHighlights(function () {
-          sendHighlights(targetAsin);
+          collectAndSendHighlights(targetAsin);
         });
         return;
       }
@@ -786,7 +869,7 @@
     if (getASINFromURL() === normalizeText(targetAsin)) {
       sendProgress('book_ready');
       waitForHighlights(function () {
-        sendHighlights(targetAsin);
+        collectAndSendHighlights(targetAsin);
       });
       return;
     }
@@ -856,14 +939,14 @@
 
     if (mode === 'sync') {
       waitForHighlights(function () {
-        sendHighlights(getASINFromURL() || asin);
+        collectAndSendHighlights(getASINFromURL() || asin);
       });
       return;
     }
 
     if (asin) {
       waitForHighlights(function () {
-        sendHighlights(asin);
+        collectAndSendHighlights(asin);
       });
     } else {
       waitForBookList(function () {

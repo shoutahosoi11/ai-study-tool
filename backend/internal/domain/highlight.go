@@ -7,7 +7,17 @@ import (
 )
 
 const (
-	HighlightSourceKindle = "kindle"
+	HighlightSourceKindle      = "kindle"
+	HighlightSourceMobileShare = "mobile_share"
+)
+
+type HighlightStatus string
+
+const (
+	HighlightStatusPending    HighlightStatus = "pending"
+	HighlightStatusProcessing HighlightStatus = "processing"
+	HighlightStatusCompleted  HighlightStatus = "completed"
+	HighlightStatusFailed     HighlightStatus = "failed"
 )
 
 type Highlight struct {
@@ -23,6 +33,15 @@ type Highlight struct {
 	Location      *string
 	HighlightedAt *time.Time
 	Source        string
+	SourceApp     *string
+	SourceURL     *string
+	Status        HighlightStatus
+	RetryCount    int
+	LastError     *string
+	RequestedAt   time.Time
+	ProcessingAt  *time.Time
+	CompletedAt   *time.Time
+	FailedAt      *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
