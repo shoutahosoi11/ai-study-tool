@@ -32,11 +32,11 @@ func main() {
 		log.Fatalf("failed to ping database: %v", err)
 	}
 
-	llmClient, err := gemini.NewClient(os.Getenv("GEMINI_API_KEY"))
+	llmClient, closeLLMClient, err := gemini.NewConfiguredClient(os.Getenv("GEMINI_API_KEY"))
 	if err != nil {
 		log.Fatalf("failed to create gemini client: %v", err)
 	}
-	defer llmClient.Close()
+	defer closeLLMClient()
 
 	highlightRepo := persistence.NewHighlightRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)

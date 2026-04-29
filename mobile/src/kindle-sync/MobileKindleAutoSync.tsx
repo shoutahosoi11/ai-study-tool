@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppState, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
-import { isAxiosError } from 'axios'
 import { WebView, type WebViewMessageEvent } from 'react-native-webview'
 
+import { isApiStatus } from '../api/errors'
 import { importKindleHighlights, type ImportKindleHighlightItem } from '../api/highlights'
 import { buildKindleSyncInjectedScript } from './injected-script'
 
@@ -259,7 +259,7 @@ export function MobileKindleAutoSync({ enabled, onImported, onStatusChange }: Pr
           await reloadSyncedBooks()
         }
       } catch (error) {
-        if (!(isAxiosError(error) && error.response?.status === 422)) {
+        if (!isApiStatus(error, 422)) {
           failedRef.current += 1
         }
       } finally {

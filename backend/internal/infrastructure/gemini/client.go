@@ -58,6 +58,10 @@ func ModelForPlan(plan string) string {
 	return ModelFlash
 }
 
+func (c *Client) ModelForPlan(plan string) string {
+	return ModelForPlan(plan)
+}
+
 func (c *Client) GenerateQuestions(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
 	prompt := BuildBatchGeneratorPrompt(points, questionType, customInstruction)
 	resp, err := c.generate(ctx, model, prompt)

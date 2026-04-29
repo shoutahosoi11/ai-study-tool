@@ -531,23 +531,97 @@ WHERE user_id = $1
 	return count, nil
 }
 
-func (r *questionRepository) IncrementDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
-	if delta <= 0 {
-		return nil
+func (r *questionRepository) QueueHighlightsWithinDailyLimit(
+	ctx context.Context,
+	userID uuid.UUID,
+	day time.Time,
+	limit int,
+	highlightIDs []uuid.UUID,
+	questionCountByHighlightID map[uuid.UUID]int,
+	requestedAt time.Time,
+) ([]uuid.UUID, bool, error) {
+	if len(highlightIDs) == 0 || len(questionCountByHighlightID) == 0 {
+		return make([]uuid.UUID, 0), true, nil
+	}
+	if limit <= 0 {
+		return nil, false, nil
 	}
 
-	query := `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("question repo: begin sync queue transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	queueQuery := `
+UPDATE highlights
+SET
+    status = 'pending',
+    retry_count = 0,
+    generation_requested_at = $3,
+    processing_started_at = NULL,
+    completed_at = NULL,
+    failed_at = NULL,
+    last_error = NULL,
+    updated_at = NOW()
+WHERE user_id = $1
+  AND id::text = ANY($2)
+  AND status NOT IN ('pending', 'processing')
+RETURNING id`
+
+	rows, err := tx.QueryContext(ctx, queueQuery, userID, pq.Array(uuidStrings(highlightIDs)), requestedAt.UTC())
+	if err != nil {
+		return nil, false, fmt.Errorf("question repo: queue sync highlights: %w", err)
+	}
+	defer rows.Close()
+
+	queuedIDs := make([]uuid.UUID, 0, len(highlightIDs))
+	queuedQuestionCount := 0
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, false, fmt.Errorf("question repo: scan sync queued highlight id: %w", err)
+		}
+		queuedIDs = append(queuedIDs, id)
+		queuedQuestionCount += questionCountByHighlightID[id]
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("question repo: rows sync queued highlight ids: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, false, fmt.Errorf("question repo: close sync queued highlight rows: %w", err)
+	}
+
+	if queuedQuestionCount <= 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, false, fmt.Errorf("question repo: commit empty sync queue transaction: %w", err)
+		}
+		return queuedIDs, true, nil
+	}
+
+	reserveQuery := `
 INSERT INTO user_daily_generation_counts (user_id, date, count)
 VALUES ($1, $2, $3)
 ON CONFLICT (user_id, date)
 DO UPDATE SET
-    count = user_daily_generation_counts.count + EXCLUDED.count`
+    count = user_daily_generation_counts.count + EXCLUDED.count
+WHERE user_daily_generation_counts.count + EXCLUDED.count <= $4
+RETURNING count`
 
-	if _, err := r.db.ExecContext(ctx, query, userID, day.Format("2006-01-02"), delta); err != nil {
-		return fmt.Errorf("question repo: increment daily generated count: %w", err)
+	var count int
+	err = tx.QueryRowContext(ctx, reserveQuery, userID, day.Format("2006-01-02"), queuedQuestionCount, limit).Scan(&count)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("question repo: reserve sync daily generated count: %w", err)
 	}
 
-	return nil
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("question repo: commit sync queue transaction: %w", err)
+	}
+
+	return queuedIDs, true, nil
 }
 
 func (r *questionRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {

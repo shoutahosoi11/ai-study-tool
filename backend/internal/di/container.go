@@ -47,7 +47,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 
-	geminiClient, err := gemini.NewClient(geminiAPIKey)
+	geminiClient, _, err := gemini.NewConfiguredClient(geminiAPIKey)
 	if err != nil {
 		return nil, err
 	}

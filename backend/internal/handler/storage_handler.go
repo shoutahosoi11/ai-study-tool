@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -8,16 +9,20 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
-	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type StorageHandler struct {
-	storageUsecase *usecase.StorageUsecase
+	storageUsecase StorageUsecase
 	userUsecase    usecase.UserUsecaseInterface
 }
 
-func NewStorageHandler(storageUsecase *usecase.StorageUsecase, userUsecase usecase.UserUsecaseInterface) *StorageHandler {
+type StorageUsecase interface {
+	CreateUploadSignedURL(ctx context.Context, input usecase.CreateUploadSignedURLInput) (*domain.SignedURL, error)
+	CreateDownloadSignedURL(ctx context.Context, input usecase.CreateDownloadSignedURLInput) (*domain.SignedURL, error)
+}
+
+func NewStorageHandler(storageUsecase StorageUsecase, userUsecase usecase.UserUsecaseInterface) *StorageHandler {
 	return &StorageHandler{
 		storageUsecase: storageUsecase,
 		userUsecase:    userUsecase,
@@ -72,21 +77,7 @@ func (h *StorageHandler) CreateDownloadSignedURL(c echo.Context) error {
 }
 
 func (h *StorageHandler) currentUser(c echo.Context) (*domain.User, error) {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		log.Printf("storage currentUser error: %v", err)
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
-	}
-
-	return user, nil
+	return resolveCurrentUser(c, h.userUsecase, "storage")
 }
 
 func storageError(err error) error {

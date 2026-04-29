@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
@@ -15,6 +14,13 @@ import (
 type mockLLMClient struct {
 	generateQuestions func(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error)
 	gradeAnswer       func(ctx context.Context, question *domain.Question, userAnswer string, model string) (*domain.GradeResult, error)
+}
+
+func (m *mockLLMClient) ModelForPlan(plan string) string {
+	if plan == "pro" {
+		return "gemini-2.5-pro"
+	}
+	return "gemini-2.5-flash"
 }
 
 func (m *mockLLMClient) GenerateQuestions(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
@@ -43,12 +49,6 @@ type mockQuestionRepository struct {
 	updateStats                  func(ctx context.Context, questionID string, isCorrect bool) error
 	saveGeneration               func(ctx context.Context, userID, sourceType, sourceID, promptUsed, modelUsed string) (string, error)
 	saveForUser                  func(ctx context.Context, userID, questionID, note string) error
-	getDailyGeneratedCount       func(ctx context.Context, userID uuid.UUID, day time.Time) (int, error)
-	incrementDailyGeneratedCount func(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error
-	enqueueRegeneration          func(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error
-	claimPendingRegeneration     func(ctx context.Context, limit int) ([]*domain.RegenerationTask, error)
-	markRegenerationCompleted    func(ctx context.Context, taskIDs []uuid.UUID) error
-	markRegenerationFailed       func(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error
 }
 
 func (m *mockQuestionRepository) Save(ctx context.Context, q *domain.Question, meta *domain.QuestionMeta) error {
@@ -119,48 +119,6 @@ func (m *mockQuestionRepository) SaveForUser(ctx context.Context, userID, questi
 		return nil
 	}
 	return m.saveForUser(ctx, userID, questionID, note)
-}
-
-func (m *mockQuestionRepository) GetDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time) (int, error) {
-	if m.getDailyGeneratedCount == nil {
-		return 0, nil
-	}
-	return m.getDailyGeneratedCount(ctx, userID, day)
-}
-
-func (m *mockQuestionRepository) IncrementDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
-	if m.incrementDailyGeneratedCount == nil {
-		return nil
-	}
-	return m.incrementDailyGeneratedCount(ctx, userID, day, delta)
-}
-
-func (m *mockQuestionRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
-	if m.enqueueRegeneration == nil {
-		return nil
-	}
-	return m.enqueueRegeneration(ctx, userID, highlightID, questionID)
-}
-
-func (m *mockQuestionRepository) ClaimPendingRegenerationTasks(ctx context.Context, limit int) ([]*domain.RegenerationTask, error) {
-	if m.claimPendingRegeneration == nil {
-		return make([]*domain.RegenerationTask, 0), nil
-	}
-	return m.claimPendingRegeneration(ctx, limit)
-}
-
-func (m *mockQuestionRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {
-	if m.markRegenerationCompleted == nil {
-		return nil
-	}
-	return m.markRegenerationCompleted(ctx, taskIDs)
-}
-
-func (m *mockQuestionRepository) MarkRegenerationTasksFailed(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error {
-	if m.markRegenerationFailed == nil {
-		return nil
-	}
-	return m.markRegenerationFailed(ctx, taskIDs, lastError, maxRetry)
 }
 
 type mockQuestionSourceResolver struct {

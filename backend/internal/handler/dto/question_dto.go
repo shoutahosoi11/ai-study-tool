@@ -16,8 +16,6 @@ type GenerateQuestionRequest struct {
 	CustomInstruction string `json:"custom_instruction"`
 }
 
-type SyncQuestionStockRequest struct{}
-
 type SyncQuestionStockBookResponse struct {
 	BookKey    string `json:"book_key"`
 	BookTitle  string `json:"book_title"`

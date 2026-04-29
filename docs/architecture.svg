@@ -1,0 +1,195 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 720" font-family="'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#555"/>
+    </marker>
+    <marker id="arrow-impl" markerWidth="8" markerHeight="8" refX="2" refY="3" orient="auto">
+      <path d="M8,0 L8,6 L0,3 z" fill="#2196F3"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="720" fill="#f8f9fa"/>
+
+  <!-- Title -->
+  <text x="550" y="42" text-anchor="middle" font-size="22" font-weight="bold" fill="#0f1419">Clean Architecture — AI Study Tool Backend</text>
+
+  <!-- ── Layer panels ── -->
+  <!-- Handler -->
+  <rect x="20" y="62" width="170" height="590" rx="12" fill="#fce4ec" stroke="#E91E63" stroke-width="2"/>
+  <text x="105" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#880E4F">Handler / HTTP</text>
+
+  <!-- Usecase -->
+  <rect x="202" y="62" width="178" height="590" rx="12" fill="#fff8e1" stroke="#FFC107" stroke-width="2"/>
+  <text x="291" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#E65100">Usecase</text>
+
+  <!-- Domain -->
+  <rect x="392" y="62" width="250" height="590" rx="12" fill="#e8f5e9" stroke="#4CAF50" stroke-width="2"/>
+  <text x="517" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#1B5E20">Domain</text>
+
+  <!-- Infrastructure -->
+  <rect x="654" y="62" width="426" height="590" rx="12" fill="#e8f4fd" stroke="#2196F3" stroke-width="2"/>
+  <text x="867" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#1565C0">Infrastructure</text>
+
+  <!-- ── Handler contents ── -->
+  <rect x="32" y="102" width="146" height="22" rx="4" fill="#F48FB1"/>
+  <text x="105" y="117" text-anchor="middle" font-size="10" fill="#880E4F">UserHandler</text>
+  <rect x="32" y="130" width="146" height="22" rx="4" fill="#F48FB1"/>
+  <text x="105" y="145" text-anchor="middle" font-size="10" fill="#880E4F">QuestionHandler</text>
+  <rect x="32" y="158" width="146" height="22" rx="4" fill="#F48FB1"/>
+  <text x="105" y="173" text-anchor="middle" font-size="10" fill="#880E4F">HighlightHandler</text>
+  <rect x="32" y="186" width="146" height="22" rx="4" fill="#F48FB1"/>
+  <text x="105" y="201" text-anchor="middle" font-size="10" fill="#880E4F">PostHandler</text>
+  <rect x="32" y="214" width="146" height="22" rx="4" fill="#F48FB1"/>
+  <text x="105" y="229" text-anchor="middle" font-size="10" fill="#880E4F">AnswerHandler</text>
+  <rect x="32" y="242" width="146" height="22" rx="4" fill="#F48FB1"/>
+  <text x="105" y="257" text-anchor="middle" font-size="10" fill="#880E4F">SocialHandler</text>
+  <rect x="32" y="270" width="146" height="22" rx="4" fill="#F48FB1"/>
+  <text x="105" y="285" text-anchor="middle" font-size="10" fill="#880E4F">StorageHandler</text>
+
+  <line x1="50" y1="305" x2="160" y2="305" stroke="#F48FB1" stroke-width="1" stroke-dasharray="3,2"/>
+  <rect x="32" y="312" width="146" height="20" rx="4" fill="#fff" stroke="#F48FB1"/>
+  <text x="105" y="326" text-anchor="middle" font-size="9" fill="#880E4F">Request / Response DTOs</text>
+  <rect x="32" y="338" width="146" height="20" rx="4" fill="#fff" stroke="#F48FB1"/>
+  <text x="105" y="352" text-anchor="middle" font-size="9" fill="#880E4F">Firebase Auth Middleware</text>
+
+  <!-- Worker box (separate process) -->
+  <rect x="32" y="400" width="146" height="62" rx="6" fill="#EDE7F6" stroke="#7E57C2" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="105" y="420" text-anchor="middle" font-size="10" font-weight="bold" fill="#4527A0">cmd/question-worker</text>
+  <text x="105" y="436" text-anchor="middle" font-size="9" fill="#555">別プロセス / ポーリング型</text>
+  <text x="105" y="450" text-anchor="middle" font-size="9" fill="#555">非同期バッチ問題生成</text>
+
+  <!-- ── Usecase contents ── -->
+  <rect x="214" y="102" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="117" text-anchor="middle" font-size="10" fill="#E65100">UserUsecase</text>
+  <rect x="214" y="130" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="145" text-anchor="middle" font-size="10" fill="#E65100">QuestionUsecase</text>
+  <rect x="214" y="158" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="173" text-anchor="middle" font-size="10" fill="#E65100">HighlightUsecase</text>
+  <rect x="214" y="186" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="201" text-anchor="middle" font-size="10" fill="#E65100">PostUsecase</text>
+  <rect x="214" y="214" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="229" text-anchor="middle" font-size="10" fill="#E65100">AnswerUsecase</text>
+  <rect x="214" y="242" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="257" text-anchor="middle" font-size="10" fill="#E65100">SocialUsecase</text>
+  <rect x="214" y="270" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="285" text-anchor="middle" font-size="10" fill="#E65100">StorageUsecase</text>
+  <rect x="214" y="298" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="313" text-anchor="middle" font-size="10" fill="#E65100">QuestionWorkerUsecase</text>
+  <rect x="214" y="326" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="341" text-anchor="middle" font-size="10" fill="#E65100">QuestionSyncUsecase</text>
+  <rect x="214" y="354" width="154" height="22" rx="4" fill="#FFE082"/>
+  <text x="291" y="369" text-anchor="middle" font-size="10" fill="#E65100">QuestionSourceResolver</text>
+
+  <!-- ── Domain contents ── -->
+  <!-- Entities -->
+  <text x="517" y="110" text-anchor="middle" font-size="10" font-weight="bold" fill="#2E7D32">── Entities ──</text>
+  <rect x="404" y="116" width="226" height="20" rx="4" fill="#C8E6C9"/>
+  <text x="517" y="130" text-anchor="middle" font-size="9" fill="#1B5E20">User · Highlight · Question · Answer</text>
+  <rect x="404" y="142" width="226" height="20" rx="4" fill="#C8E6C9"/>
+  <text x="517" y="156" text-anchor="middle" font-size="9" fill="#1B5E20">Post · Comment · Follow · Like · Repost</text>
+  <rect x="404" y="168" width="226" height="20" rx="4" fill="#C8E6C9"/>
+  <text x="517" y="182" text-anchor="middle" font-size="9" fill="#1B5E20">KindleBook · RegenerationTask · BookStock</text>
+  <rect x="404" y="194" width="226" height="20" rx="4" fill="#C8E6C9"/>
+  <text x="517" y="208" text-anchor="middle" font-size="9" fill="#1B5E20">QuestionGeneration · PendingHighlightUserStat</text>
+
+  <!-- Repository Interfaces -->
+  <text x="517" y="238" text-anchor="middle" font-size="10" font-weight="bold" fill="#2E7D32">── Repository Interfaces ──</text>
+  <rect x="404" y="244" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
+  <text x="517" y="258" text-anchor="middle" font-size="9" fill="#1B5E20">HighlightRepository + GenerationLifecycle</text>
+  <rect x="404" y="270" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
+  <text x="517" y="284" text-anchor="middle" font-size="9" fill="#1B5E20">QuestionRepository + WorkerRepository</text>
+  <rect x="404" y="296" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
+  <text x="517" y="310" text-anchor="middle" font-size="9" fill="#1B5E20">UserRepository · PostRepository</text>
+  <rect x="404" y="322" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
+  <text x="517" y="336" text-anchor="middle" font-size="9" fill="#1B5E20">SocialRepository · AnswerRepository</text>
+
+  <!-- Service Interfaces -->
+  <text x="517" y="366" text-anchor="middle" font-size="10" font-weight="bold" fill="#2E7D32">── Service Interfaces ──</text>
+  <rect x="404" y="372" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
+  <text x="517" y="386" text-anchor="middle" font-size="9" fill="#1B5E20">LLMClient (GenerateQuestions / GradeAnswer)</text>
+  <rect x="404" y="398" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
+  <text x="517" y="412" text-anchor="middle" font-size="9" fill="#1B5E20">StorageSigner (Upload / Download)</text>
+  <rect x="404" y="424" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
+  <text x="517" y="438" text-anchor="middle" font-size="9" fill="#1B5E20">QuestionSourceResolver (interface)</text>
+
+  <!-- Domain Errors -->
+  <text x="517" y="468" text-anchor="middle" font-size="10" font-weight="bold" fill="#2E7D32">── Domain Errors ──</text>
+  <rect x="404" y="474" width="226" height="20" rx="4" fill="#C8E6C9"/>
+  <text x="517" y="488" text-anchor="middle" font-size="9" fill="#1B5E20">ErrNotFound · ErrInvalidInput · ErrAlreadyExists</text>
+  <rect x="404" y="500" width="226" height="20" rx="4" fill="#C8E6C9"/>
+  <text x="517" y="514" text-anchor="middle" font-size="9" fill="#1B5E20">ErrSourceTextUnavailable · ErrQuestionsPreparing</text>
+  <rect x="404" y="526" width="226" height="20" rx="4" fill="#C8E6C9"/>
+  <text x="517" y="540" text-anchor="middle" font-size="9" fill="#1B5E20">ErrQuestionGenerationFailed · ErrAllCopyProtected</text>
+
+  <!-- ── Infrastructure contents ── -->
+  <!-- Persistence column -->
+  <rect x="666" y="92" width="196" height="308" rx="8" fill="#DCEEFB" stroke="#90CAF9"/>
+  <text x="764" y="110" text-anchor="middle" font-size="10" font-weight="bold" fill="#1565C0">Persistence</text>
+  <rect x="676" y="116" width="176" height="20" rx="4" fill="#BBDEFB"/>
+  <text x="764" y="130" text-anchor="middle" font-size="9" fill="#0D47A1">PostgreSQL (database/sql + SQLC)</text>
+  <rect x="676" y="142" width="176" height="20" rx="4" fill="#BBDEFB"/>
+  <text x="764" y="156" text-anchor="middle" font-size="9" fill="#0D47A1">highlightRepository (persistence/)</text>
+  <rect x="676" y="168" width="176" height="20" rx="4" fill="#BBDEFB"/>
+  <text x="764" y="182" text-anchor="middle" font-size="9" fill="#0D47A1">questionRepository (persistence/)</text>
+  <rect x="676" y="194" width="176" height="20" rx="4" fill="#BBDEFB"/>
+  <text x="764" y="208" text-anchor="middle" font-size="9" fill="#0D47A1">userRepository (postgres/)</text>
+  <rect x="676" y="220" width="176" height="20" rx="4" fill="#BBDEFB"/>
+  <text x="764" y="234" text-anchor="middle" font-size="9" fill="#0D47A1">postRepository / socialRepository</text>
+  <rect x="676" y="246" width="176" height="20" rx="4" fill="#BBDEFB"/>
+  <text x="764" y="260" text-anchor="middle" font-size="9" fill="#0D47A1">answerRepository</text>
+  <rect x="676" y="272" width="176" height="20" rx="4" fill="#E3F2FD" stroke="#90CAF9"/>
+  <text x="764" y="286" text-anchor="middle" font-size="9" fill="#0D47A1">repository/sqlcgen/ (SQLC generated)</text>
+  <rect x="676" y="298" width="176" height="20" rx="4" fill="#E3F2FD" stroke="#90CAF9"/>
+  <text x="764" y="312" text-anchor="middle" font-size="9" fill="#0D47A1">30 migrations (db/migrations/*.sql)</text>
+  <rect x="676" y="324" width="176" height="20" rx="4" fill="#E3F2FD" stroke="#90CAF9"/>
+  <text x="764" y="338" text-anchor="middle" font-size="9" fill="#0D47A1">content_hash dedup + bulk upsert</text>
+  <rect x="676" y="350" width="176" height="20" rx="4" fill="#E3F2FD" stroke="#90CAF9"/>
+  <text x="764" y="364" text-anchor="middle" font-size="9" fill="#0D47A1">SELECT … FOR UPDATE SKIP LOCKED</text>
+
+  <!-- External Services column -->
+  <rect x="874" y="92" width="196" height="308" rx="8" fill="#DCEEFB" stroke="#90CAF9"/>
+  <text x="972" y="110" text-anchor="middle" font-size="10" font-weight="bold" fill="#1565C0">External Services</text>
+  <rect x="884" y="116" width="176" height="20" rx="4" fill="#90CAF9"/>
+  <text x="972" y="130" text-anchor="middle" font-size="9" fill="#0D47A1">Gemini API (LLMClient impl)</text>
+  <text x="884" y="150" font-size="8" fill="#555">  model: gemini-2.5-flash (free)</text>
+  <text x="884" y="163" font-size="8" fill="#555">  model: gemini-2.5-pro (pro)</text>
+  <text x="884" y="176" font-size="8" fill="#555">  retry=2, timeout=90s</text>
+  <rect x="884" y="190" width="176" height="20" rx="4" fill="#90CAF9"/>
+  <text x="972" y="204" text-anchor="middle" font-size="9" fill="#0D47A1">Google Cloud Storage (StorageSigner)</text>
+  <text x="884" y="224" font-size="8" fill="#555">  v4 Signed URL (upload / download)</text>
+  <text x="884" y="237" font-size="8" fill="#555">  user-namespaced path</text>
+  <rect x="884" y="252" width="176" height="20" rx="4" fill="#90CAF9"/>
+  <text x="972" y="266" text-anchor="middle" font-size="9" fill="#0D47A1">Firebase Admin (TokenVerifier)</text>
+  <text x="884" y="286" font-size="8" fill="#555">  VerifyIDToken + revoke check</text>
+  <text x="884" y="299" font-size="8" fill="#555">  fail-closed on invalid token</text>
+
+  <!-- ── Dependency Arrows ── -->
+  <!-- Handler → Usecase -->
+  <line x1="192" y1="300" x2="202" y2="300" stroke="#555" stroke-width="2" marker-end="url(#arrow)"/>
+  <!-- Usecase → Domain -->
+  <line x1="380" y1="300" x2="392" y2="300" stroke="#555" stroke-width="2" marker-end="url(#arrow)"/>
+  <!-- Infrastructure → Domain (implements) -->
+  <line x1="652" y1="300" x2="632" y2="300" stroke="#2196F3" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arrow-impl)"/>
+  <!-- Worker → Usecase -->
+  <line x1="105" y1="462" x2="214" y2="390" stroke="#7E57C2" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+  <!-- Arrow labels -->
+  <rect x="176" y="285" width="50" height="14" rx="3" fill="#f8f9fa"/>
+  <text x="201" y="295" text-anchor="middle" font-size="8" fill="#555">calls</text>
+  <rect x="364" y="285" width="50" height="14" rx="3" fill="#f8f9fa"/>
+  <text x="389" y="295" text-anchor="middle" font-size="8" fill="#555">calls</text>
+  <rect x="622" y="285" width="66" height="14" rx="3" fill="#f8f9fa"/>
+  <text x="655" y="295" text-anchor="middle" font-size="8" fill="#2196F3">implements</text>
+
+  <!-- ── Footer ── -->
+  <rect x="20" y="668" width="470" height="44" rx="8" fill="#fff" stroke="#ddd"/>
+  <text x="32" y="685" font-size="11" font-weight="bold" fill="#333">依存ルール</text>
+  <text x="32" y="700" font-size="10" fill="#555">Handler → Usecase → Domain ← Infrastructure（依存は内側 Domain に向かう）</text>
+  <text x="32" y="712" font-size="10" fill="#888">下位レイヤーは上位レイヤーを参照しない</text>
+
+  <rect x="504" y="668" width="576" height="44" rx="8" fill="#fff" stroke="#ddd"/>
+  <text x="516" y="685" font-size="11" font-weight="bold" fill="#333">DI (di/container.go)</text>
+  <text x="516" y="700" font-size="10" fill="#555">全依存を main.go 起動時に組み立て。Repository / LLMClient は interface 経由で注入。</text>
+  <text x="516" y="712" font-size="10" fill="#888">Firebase / Gemini / GCS クライアントも同一コンテナで初期化。</text>
+</svg>

@@ -17,7 +17,6 @@ import {
 } from 'react-native'
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ShareIntentModule, useShareIntent } from 'expo-share-intent'
-import { isAxiosError } from 'axios'
 
 import {
   getCurrentUser,
@@ -27,6 +26,7 @@ import {
   signUpWithEmail,
   type MobileAuthUser,
 } from './src/api/auth'
+import { getApiErrorMessage, isApiError, isApiStatus, serializeApiDebugError } from './src/api/errors'
 import {
   importSharedHighlight,
   listBookHighlights,
@@ -310,7 +310,7 @@ export default function App() {
       setProfile(me)
       setDefaultQuestionCount(resolveDefaultQuestionCount(me.default_question_count))
     } catch (error) {
-      if (isAxiosError(error) && error.response?.status === 404) {
+      if (isApiStatus(error, 404)) {
         const fallbackUsername = createFallbackUsername(authUser.email)
         await signUpBackendUser({ username: fallbackUsername })
         const me = await getMe()
@@ -2814,12 +2814,15 @@ function toReadableAuthError(error: unknown): string {
 }
 
 function toReadableError(error: unknown, fallback: string): string {
-  if (isAxiosError(error)) {
-    const message = typeof error.response?.data?.message === 'string' ? error.response.data.message : null
+  const message = getApiErrorMessage(error)
+  if (message) {
     if (message === 'questions are still preparing') return '問題はまだ準備中です'
     if (message === 'question generation failed') return '問題の準備に失敗しました'
     if (message === 'source text is unavailable') return 'この本からはまだ問題を作れません'
-    return message ?? fallback
+    return message
+  }
+  if (isApiError(error)) {
+    return fallback
   }
   if (error instanceof Error && error.message) {
     return error.message
@@ -2828,14 +2831,9 @@ function toReadableError(error: unknown, fallback: string): string {
 }
 
 function serializeDebugError(error: unknown) {
-  if (isAxiosError(error)) {
-    return {
-      kind: 'axios',
-      message: error.message,
-      code: error.code,
-      status: error.response?.status,
-      data: error.response?.data,
-    }
+  const apiError = serializeApiDebugError(error)
+  if (apiError) {
+    return apiError
   }
   if (typeof error === 'object' && error !== null) {
     return {

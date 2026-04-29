@@ -443,30 +443,57 @@ RETURNING
 	return highlights, nil
 }
 
-func (r *highlightRepository) QueueHighlightsForGeneration(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-	if len(highlightIDs) == 0 {
-		return nil
-	}
-
+func (r *highlightRepository) RequeueStaleProcessing(ctx context.Context, cutoff time.Time) (int, error) {
 	query := `
 UPDATE highlights
 SET
     status = 'pending',
-    generation_requested_at = $3,
+    generation_requested_at = NOW(),
     processing_started_at = NULL,
-    completed_at = NULL,
-    failed_at = NULL,
+    last_error = NULL,
+    updated_at = NOW()
+WHERE status = 'processing'
+  AND processing_started_at IS NOT NULL
+  AND processing_started_at < $1`
+
+	result, err := r.db.ExecContext(ctx, query, cutoff.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("highlight repo: requeue stale processing: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("highlight repo: stale processing rows affected: %w", err)
+	}
+
+	return int(affected), nil
+}
+
+func (r *highlightRepository) RequeueStaleProcessingByUserID(ctx context.Context, userID uuid.UUID, cutoff time.Time) (int, error) {
+	query := `
+UPDATE highlights
+SET
+    status = 'pending',
+    generation_requested_at = NOW(),
+    processing_started_at = NULL,
     last_error = NULL,
     updated_at = NOW()
 WHERE user_id = $1
-  AND id::text = ANY($2)
-  AND status NOT IN ('pending', 'processing')`
+  AND status = 'processing'
+  AND processing_started_at IS NOT NULL
+  AND processing_started_at < $2`
 
-	if _, err := r.db.ExecContext(ctx, query, userID, pq.Array(uuidStrings(highlightIDs)), requestedAt.UTC()); err != nil {
-		return fmt.Errorf("highlight repo: queue highlights for generation: %w", err)
+	result, err := r.db.ExecContext(ctx, query, userID, cutoff.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("highlight repo: requeue stale processing by user: %w", err)
 	}
 
-	return nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("highlight repo: stale processing by user rows affected: %w", err)
+	}
+
+	return int(affected), nil
 }
 
 func (r *highlightRepository) MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error {

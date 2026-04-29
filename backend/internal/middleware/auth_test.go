@@ -12,8 +12,8 @@ import (
 )
 
 type stubTokenVerifier struct {
-	verifyFunc               func(ctx context.Context, idToken string) (*auth.Token, error)
-	verifyWithoutRevokeFunc  func(ctx context.Context, idToken string) (*auth.Token, error)
+	verifyFunc              func(ctx context.Context, idToken string) (*auth.Token, error)
+	verifyWithoutRevokeFunc func(ctx context.Context, idToken string) (*auth.Token, error)
 }
 
 func (s stubTokenVerifier) VerifyIDToken(ctx context.Context, idToken string) (*auth.Token, error) {

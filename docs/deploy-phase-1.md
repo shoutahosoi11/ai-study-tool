@@ -1,16 +1,17 @@
-# Phase 1 Deploy: Cloud Run + Neon PostgreSQL + Firebase Auth + Cloud Storage
+# Phase 1 Deploy: Cloud Run + Neon + Firebase Auth + Cloud Storage
 
-This guide sets up the first deployable production-like environment:
+This guide sets up the first production-like environment:
 
 - Cloud Run: `api-service`
-- Neon PostgreSQL: managed Postgres connection through `DATABASE_URL`
+- Neon PostgreSQL: managed Postgres reached through a standard `DATABASE_URL`
+- Secret Manager: `DATABASE_URL` and `GEMINI_API_KEY`
 - Firebase Auth: frontend issues ID tokens, backend verifies them
 - Cloud Storage: upload/download signed URLs
 - GitHub Actions: build, test, push image, deploy Cloud Run
 
-Neon works with a standard PostgreSQL connection string. For the Cloud Run app,
-use the pooled Neon connection string when possible. For migrations, use the
-direct/unpooled connection string.
+The backend reads a standard lib/pq `DATABASE_URL`. For production, store the
+Neon connection string in Secret Manager. Cloud SQL connectors, Cloud SQL Auth
+Proxy, and `--add-cloudsql-instances` are not part of the current deployment.
 
 ## 1. Create Google Cloud resources
 
@@ -67,29 +68,30 @@ gcloud storage buckets update "gs://${BUCKET_NAME}" \
 
 ## 2. Create Neon PostgreSQL
 
-In the Neon console:
+Create a Neon project and database from the Neon dashboard. Use PostgreSQL 16
+for parity with local Docker development.
 
-1. Create a project.
-2. Open the project dashboard.
-3. Click **Connect**.
-4. Copy the pooled connection string for the app runtime.
-5. Copy the direct/unpooled connection string for migrations.
+Recommended connection choices:
 
-The runtime string should look like this:
+- Runtime API: use Neon's pooled connection string unless a transaction-heavy
+  code path needs the direct endpoint.
+- Migrations: use Neon's direct connection string.
+- SSL: keep `sslmode=require` in production.
+
+Example:
 
 ```text
-postgresql://USER:PASSWORD@HOST-pooler.REGION.aws.neon.tech/DB?sslmode=require&channel_binding=require
+postgresql://USER:PASSWORD@HOST.neon.tech/DB_NAME?sslmode=require
 ```
-
-The migration string should not contain `-pooler` in the hostname.
 
 ## 3. Store secrets
 
-Create Secret Manager secrets. Use the pooled Neon connection string for
-`DATABASE_URL`.
+Create Secret Manager secrets:
 
 ```sh
-printf '%s' 'PASTE_NEON_POOLED_DATABASE_URL_HERE' | gcloud secrets create DATABASE_URL \
+DATABASE_URL="postgresql://USER:PASSWORD@HOST.neon.tech/DB_NAME?sslmode=require"
+
+printf '%s' "${DATABASE_URL}" | gcloud secrets create DATABASE_URL \
   --data-file=- \
   --project="${PROJECT_ID}"
 
@@ -101,7 +103,7 @@ printf '%s' 'PASTE_GEMINI_API_KEY_HERE' | gcloud secrets create GEMINI_API_KEY \
 If a secret already exists, add a new version:
 
 ```sh
-printf '%s' 'PASTE_NEON_POOLED_DATABASE_URL_HERE' | gcloud secrets versions add DATABASE_URL \
+printf '%s' "${DATABASE_URL}" | gcloud secrets versions add DATABASE_URL \
   --data-file=- \
   --project="${PROJECT_ID}"
 
@@ -191,23 +193,27 @@ Set these GitHub Actions variables:
 
 ## 6. Run migrations
 
-For Phase 1, run migrations manually using the direct Neon connection string.
-Avoid using the pooled connection string for migrations.
+Run migrations against the Neon direct connection string:
 
 ```sh
-DIRECT_DATABASE_URL='PASTE_NEON_DIRECT_DATABASE_URL_HERE'
+MIGRATION_DATABASE_URL="postgresql://USER:PASSWORD@HOST.neon.tech/DB_NAME?sslmode=require"
 
 for file in backend/db/migrations/*.sql; do
-  psql "$DIRECT_DATABASE_URL" -f "$file"
+  psql "${MIGRATION_DATABASE_URL}" -f "$file"
 done
 ```
+
+The production schema must include `030_add_user_daily_generation_count.sql`
+before enabling question sync in production.
 
 ## 7. First deploy
 
 Push to `main` or run the `Deploy API to Cloud Run` workflow manually.
 
-After the service exists, allow browser access to the public API. The backend
-still requires Firebase ID tokens on `/api/*`.
+The workflow injects `DATABASE_URL` / `GEMINI_API_KEY` from Secret Manager and
+does not attach a Cloud SQL instance. After the service exists, allow browser
+access to the public API. The backend still requires Firebase ID tokens on
+`/api/*`.
 
 ```sh
 gcloud run services add-iam-policy-binding "${SERVICE}" \
@@ -228,3 +234,5 @@ Add the deployed frontend domain to:
 - Locally, `FIREBASE_CREDENTIALS_PATH` can point at a service account JSON.
 - On Cloud Run, Firebase Admin uses the runtime service account through Application Default Credentials.
 - Signed uploads must send the exact `Content-Type` returned by `/api/storage/signed-urls/upload`.
+- For staging without Gemini cost, set `USE_GEMINI_MOCK=true`.
+- To test tighter generation budgets, set `QUESTION_SYNC_DAILY_LIMIT` and `QUESTION_SYNC_PER_TRIGGER_LIMIT` to small values.
