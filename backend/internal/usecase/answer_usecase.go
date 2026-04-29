@@ -85,11 +85,11 @@ func (u *AnswerUsecase) SubmitAnswer(ctx context.Context, input SubmitAnswerInpu
 		Feedback:    feedback,
 		GraderModel: graderModel,
 	}
-	if _, err := u.answerRepo.UpsertAndUpdateStats(ctx, upsertInput, input.QuestionID, isCorrect); err != nil {
+	if _, err := u.answerRepo.UpsertAndUpdateStats(ctx, upsertInput); err != nil {
 		return nil, fmt.Errorf("answer usecase: upsert answer: %w", err)
 	}
 
-	if meta != nil && meta.HighlightID != "" {
+	if meta != nil && meta.CreatorID == input.UserID && meta.HighlightID != "" {
 		highlightID, parseErr := uuid.Parse(meta.HighlightID)
 		if parseErr == nil {
 			if enqueueErr := u.questionRepo.EnqueueRegeneration(ctx, input.UserID, highlightID, input.QuestionID); enqueueErr != nil {

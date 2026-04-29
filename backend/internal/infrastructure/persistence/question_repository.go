@@ -531,6 +531,35 @@ WHERE user_id = $1
 	return count, nil
 }
 
+func (r *questionRepository) ReserveDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int, limit int) (bool, error) {
+	if delta <= 0 {
+		return true, nil
+	}
+	if limit <= 0 {
+		return false, nil
+	}
+
+	query := `
+INSERT INTO user_daily_generation_counts (user_id, date, count)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id, date)
+DO UPDATE SET
+    count = user_daily_generation_counts.count + EXCLUDED.count
+WHERE user_daily_generation_counts.count + EXCLUDED.count <= $4
+RETURNING count`
+
+	var count int
+	err := r.db.QueryRowContext(ctx, query, userID, day.Format("2006-01-02"), delta, limit).Scan(&count)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("question repo: reserve daily generated count: %w", err)
+	}
+
+	return true, nil
+}
+
 func (r *questionRepository) QueueHighlightsWithinDailyLimit(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -659,6 +688,7 @@ WITH claimed AS (
     SELECT id
     FROM regeneration_queue
     WHERE status = 'pending'
+      AND requested_at <= NOW()
     ORDER BY requested_at ASC
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -816,6 +846,28 @@ JOIN highlights h
 	}
 
 	return tasks, nil
+}
+
+func (r *questionRepository) DeferRegenerationTasks(ctx context.Context, taskIDs []uuid.UUID, lastError string) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+
+	query := `
+UPDATE regeneration_queue
+SET
+    status = 'pending',
+    requested_at = NOW() + INTERVAL '1 hour',
+    processing_started_at = NULL,
+    last_error = LEFT($2, 500),
+    updated_at = NOW()
+WHERE id::text = ANY($1)`
+
+	if _, err := r.db.ExecContext(ctx, query, pq.Array(uuidTextSlice(taskIDs)), strings.TrimSpace(lastError)); err != nil {
+		return fmt.Errorf("question repo: defer regeneration tasks: %w", err)
+	}
+
+	return nil
 }
 
 func (r *questionRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {

@@ -51,6 +51,7 @@ type QuestionGenerationRepository interface {
 
 type QuestionDailyQuotaRepository interface {
 	GetDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time) (int, error)
+	ReserveDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int, limit int) (bool, error)
 }
 
 type QuestionSyncTransactionRepository interface {
@@ -60,6 +61,7 @@ type QuestionSyncTransactionRepository interface {
 type QuestionRegenerationRepository interface {
 	EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error
 	ClaimPendingRegenerationTasks(ctx context.Context, limit int) ([]*RegenerationTask, error)
+	DeferRegenerationTasks(ctx context.Context, taskIDs []uuid.UUID, lastError string) error
 	MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error
 	MarkRegenerationTasksFailed(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error
 }
@@ -90,5 +92,6 @@ type QuestionSyncQuestionRepository interface {
 
 type QuestionWorkerRepository interface {
 	QuestionGenerationRepository
+	QuestionDailyQuotaRepository
 	QuestionRegenerationRepository
 }

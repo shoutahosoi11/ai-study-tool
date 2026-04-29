@@ -24,6 +24,7 @@ type Container struct {
 	HighlightHandler   *handler.HighlightHandler
 	StorageHandler     *handler.StorageHandler
 	FirebaseMiddleware *middleware.FirebaseMiddleware
+	closeLLMClient     gemini.ClientCloser
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
@@ -47,7 +48,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 
-	geminiClient, _, err := gemini.NewConfiguredClient(geminiAPIKey)
+	geminiClient, closeLLMClient, err := gemini.NewConfiguredClient(geminiAPIKey)
 	if err != nil {
 		return nil, err
 	}
@@ -96,5 +97,13 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		HighlightHandler:   highlightHandler,
 		StorageHandler:     storageHandler,
 		FirebaseMiddleware: firebaseMiddleware,
+		closeLLMClient:     closeLLMClient,
 	}, nil
+}
+
+func (c *Container) Close() {
+	if c == nil || c.closeLLMClient == nil {
+		return
+	}
+	c.closeLLMClient()
 }

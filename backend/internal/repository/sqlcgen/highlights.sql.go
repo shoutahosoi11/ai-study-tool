@@ -70,7 +70,12 @@ func (q *Queries) ListHighlightBooksByUserID(ctx context.Context, arg ListHighli
 }
 
 const listHighlightsByUserIDAndASIN = `-- name: ListHighlightsByUserIDAndASIN :many
-SELECT id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation FROM highlights
+SELECT
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+FROM highlights
 WHERE user_id = $1
   AND asin = $2
   AND source = $3
@@ -107,6 +112,15 @@ func (q *Queries) ListHighlightsByUserIDAndASIN(ctx context.Context, arg ListHig
 			&i.UpdatedAt,
 			&i.ContentHash,
 			&i.Explanation,
+			&i.SourceApp,
+			&i.SourceUrl,
+			&i.Status,
+			&i.RetryCount,
+			&i.GenerationRequestedAt,
+			&i.ProcessingStartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}
@@ -122,7 +136,12 @@ func (q *Queries) ListHighlightsByUserIDAndASIN(ctx context.Context, arg ListHig
 }
 
 const listHighlightsByUserIDAndBookMetadata = `-- name: ListHighlightsByUserIDAndBookMetadata :many
-SELECT id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation FROM highlights
+SELECT
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+FROM highlights
 WHERE user_id = $1
   AND source = $2
   AND lower(trim(coalesce(book_title, ''))) = lower(trim($3))
@@ -166,6 +185,15 @@ func (q *Queries) ListHighlightsByUserIDAndBookMetadata(ctx context.Context, arg
 			&i.UpdatedAt,
 			&i.ContentHash,
 			&i.Explanation,
+			&i.SourceApp,
+			&i.SourceUrl,
+			&i.Status,
+			&i.RetryCount,
+			&i.GenerationRequestedAt,
+			&i.ProcessingStartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}
@@ -181,7 +209,12 @@ func (q *Queries) ListHighlightsByUserIDAndBookMetadata(ctx context.Context, arg
 }
 
 const listHighlightsByUserIDAndBookTitle = `-- name: ListHighlightsByUserIDAndBookTitle :many
-SELECT id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation FROM highlights
+SELECT
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+FROM highlights
 WHERE user_id = $1
   AND source = $2
   AND lower(trim(coalesce(book_title, ''))) = lower(trim($3))
@@ -218,6 +251,15 @@ func (q *Queries) ListHighlightsByUserIDAndBookTitle(ctx context.Context, arg Li
 			&i.UpdatedAt,
 			&i.ContentHash,
 			&i.Explanation,
+			&i.SourceApp,
+			&i.SourceUrl,
+			&i.Status,
+			&i.RetryCount,
+			&i.GenerationRequestedAt,
+			&i.ProcessingStartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}
@@ -236,7 +278,11 @@ const updateHighlightExplanation = `-- name: UpdateHighlightExplanation :one
 UPDATE highlights
 SET explanation = $3, updated_at = NOW()
 WHERE id = $1 AND user_id = $2
-RETURNING id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation
+RETURNING
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
 `
 
 type UpdateHighlightExplanationParams struct {
@@ -263,6 +309,15 @@ func (q *Queries) UpdateHighlightExplanation(ctx context.Context, arg UpdateHigh
 		&i.UpdatedAt,
 		&i.ContentHash,
 		&i.Explanation,
+		&i.SourceApp,
+		&i.SourceUrl,
+		&i.Status,
+		&i.RetryCount,
+		&i.GenerationRequestedAt,
+		&i.ProcessingStartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.LastError,
 	)
 	return i, err
 }

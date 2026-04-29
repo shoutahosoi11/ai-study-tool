@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
@@ -27,11 +29,13 @@ func main() {
 	if err := db.Ping(); err != nil {
 		log.Fatalf("failed to ping database: %v", err)
 	}
+	configureDatabasePool(db)
 
 	container, err := di.NewContainer(db)
 	if err != nil {
 		log.Fatalf("failed to build DI container: %v", err)
 	}
+	defer container.Close()
 
 	e := echo.New()
 	e.Use(echomiddleware.Logger())
@@ -122,4 +126,23 @@ func allowedOrigins() []string {
 	}
 
 	return origins
+}
+
+func configureDatabasePool(db *sql.DB) {
+	db.SetMaxOpenConns(readEnvInt("DB_MAX_OPEN_CONNS", 10))
+	db.SetMaxIdleConns(readEnvInt("DB_MAX_IDLE_CONNS", 5))
+	db.SetConnMaxLifetime(time.Duration(readEnvInt("DB_CONN_MAX_LIFETIME_SECONDS", 1800)) * time.Second)
+	db.SetConnMaxIdleTime(time.Duration(readEnvInt("DB_CONN_MAX_IDLE_SECONDS", 300)) * time.Second)
+}
+
+func readEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
 }
