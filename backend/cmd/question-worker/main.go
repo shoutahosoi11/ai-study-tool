@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -31,6 +33,7 @@ func main() {
 	if err := db.Ping(); err != nil {
 		log.Fatalf("failed to ping database: %v", err)
 	}
+	configureDatabasePool(db)
 
 	llmClient, closeLLMClient, err := gemini.NewConfiguredClient(os.Getenv("GEMINI_API_KEY"))
 	if err != nil {
@@ -41,9 +44,11 @@ func main() {
 	highlightRepo := persistence.NewHighlightRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)
 	worker := usecase.NewQuestionWorkerUsecase(highlightRepo, questionRepo, llmClient)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	if os.Getenv("WORKER_RUN_ONCE") == "1" {
-		if err := worker.RunOnce(context.Background()); err != nil {
+		if err := worker.RunOnce(ctx); err != nil {
 			log.Fatalf("question worker run failed: %v", err)
 		}
 		return
@@ -55,10 +60,15 @@ func main() {
 
 	log.Printf("question worker started with poll interval %s", pollInterval)
 	for {
-		if err := worker.RunOnce(context.Background()); err != nil {
+		if err := worker.RunOnce(ctx); err != nil {
 			log.Printf("question worker run error: %v", err)
 		}
-		<-ticker.C
+		select {
+		case <-ctx.Done():
+			log.Println("question worker shutting down")
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -74,4 +84,23 @@ func readPollInterval() time.Duration {
 	}
 
 	return time.Duration(seconds) * time.Second
+}
+
+func configureDatabasePool(db *sql.DB) {
+	db.SetMaxOpenConns(readEnvInt("DB_MAX_OPEN_CONNS", 10))
+	db.SetMaxIdleConns(readEnvInt("DB_MAX_IDLE_CONNS", 5))
+	db.SetConnMaxLifetime(time.Duration(readEnvInt("DB_CONN_MAX_LIFETIME_SECONDS", 1800)) * time.Second)
+	db.SetConnMaxIdleTime(time.Duration(readEnvInt("DB_CONN_MAX_IDLE_SECONDS", 300)) * time.Second)
+}
+
+func readEnvInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
 }

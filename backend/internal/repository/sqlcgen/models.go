@@ -58,20 +58,29 @@ type Follow struct {
 }
 
 type Highlight struct {
-	ID            uuid.UUID      `json:"id"`
-	UserID        uuid.UUID      `json:"user_id"`
-	BookID        uuid.NullUUID  `json:"book_id"`
-	Content       string         `json:"content"`
-	Location      sql.NullString `json:"location"`
-	CreatedAt     time.Time      `json:"created_at"`
-	BookTitle     sql.NullString `json:"book_title"`
-	BookAuthor    sql.NullString `json:"book_author"`
-	Asin          sql.NullString `json:"asin"`
-	HighlightedAt sql.NullTime   `json:"highlighted_at"`
-	Source        string         `json:"source"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	ContentHash   sql.NullString `json:"content_hash"`
-	Explanation   sql.NullString `json:"explanation"`
+	ID                    uuid.UUID      `json:"id"`
+	UserID                uuid.UUID      `json:"user_id"`
+	BookID                uuid.NullUUID  `json:"book_id"`
+	Content               string         `json:"content"`
+	Location              sql.NullString `json:"location"`
+	CreatedAt             time.Time      `json:"created_at"`
+	BookTitle             sql.NullString `json:"book_title"`
+	BookAuthor            sql.NullString `json:"book_author"`
+	Asin                  sql.NullString `json:"asin"`
+	HighlightedAt         sql.NullTime   `json:"highlighted_at"`
+	Source                string         `json:"source"`
+	UpdatedAt             time.Time      `json:"updated_at"`
+	ContentHash           sql.NullString `json:"content_hash"`
+	Explanation           sql.NullString `json:"explanation"`
+	SourceApp             sql.NullString `json:"source_app"`
+	SourceUrl             sql.NullString `json:"source_url"`
+	Status                string         `json:"status"`
+	RetryCount            int32          `json:"retry_count"`
+	GenerationRequestedAt time.Time      `json:"generation_requested_at"`
+	ProcessingStartedAt   sql.NullTime   `json:"processing_started_at"`
+	CompletedAt           sql.NullTime   `json:"completed_at"`
+	FailedAt              sql.NullTime   `json:"failed_at"`
+	LastError             sql.NullString `json:"last_error"`
 }
 
 type Like struct {

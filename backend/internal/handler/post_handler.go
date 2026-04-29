@@ -46,7 +46,7 @@ func (h *PostHandler) GetTimeline(c echo.Context) error {
 
 	posts, err := h.postUsecase.GetTimeline(c.Request().Context(), user.ID, limit, offset)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	if posts == nil {
@@ -212,22 +212,25 @@ func (h *PostHandler) CreatePost(c echo.Context) error {
 	}
 
 	if req.QuestionID != nil {
-		id, err := uuid.Parse(*req.QuestionID)
-		if err == nil {
-			input.QuestionID = &id
+		id, err := parseOptionalPostUUID(*req.QuestionID, "question id")
+		if err != nil {
+			return err
 		}
+		input.QuestionID = id
 	}
 	if req.BookID != nil {
-		id, err := uuid.Parse(*req.BookID)
-		if err == nil {
-			input.BookID = &id
+		id, err := parseOptionalPostUUID(*req.BookID, "book id")
+		if err != nil {
+			return err
 		}
+		input.BookID = id
 	}
 	if req.FieldID != nil {
-		id, err := uuid.Parse(*req.FieldID)
-		if err == nil {
-			input.FieldID = &id
+		id, err := parseOptionalPostUUID(*req.FieldID, "field id")
+		if err != nil {
+			return err
 		}
+		input.FieldID = id
 	}
 	for index, question := range req.Questions {
 		id, err := uuid.Parse(question.QuestionID)
@@ -250,10 +253,22 @@ func (h *PostHandler) CreatePost(c echo.Context) error {
 		if strings.HasPrefix(err.Error(), "validation:") {
 			return echo.NewHTTPError(http.StatusBadRequest, strings.TrimPrefix(err.Error(), "validation: "))
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
 	return c.JSON(http.StatusCreated, toPostResponse(post))
+}
+
+func parseOptionalPostUUID(value string, fieldName string) (*uuid.UUID, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(trimmed)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid "+fieldName)
+	}
+	return &id, nil
 }
 
 func (h *PostHandler) ListQuestions(c echo.Context) error {

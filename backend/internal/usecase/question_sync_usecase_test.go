@@ -68,6 +68,10 @@ func (m *mockQuestionSyncQuestionRepository) GetDailyGeneratedCount(ctx context.
 	return m.getDailyGeneratedCount(ctx, userID, day)
 }
 
+func (m *mockQuestionSyncQuestionRepository) ReserveDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int, limit int) (bool, error) {
+	return true, nil
+}
+
 func (m *mockQuestionSyncQuestionRepository) QueueHighlightsWithinDailyLimit(ctx context.Context, userID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
 	if m.queueWithinDailyLimit != nil {
 		return m.queueWithinDailyLimit(ctx, userID, day, limit, highlightIDs, questionCountByHighlightID, requestedAt)
@@ -680,8 +684,9 @@ func TestSyncQuestionStockDailyLimitOverflow(t *testing.T) {
 	}
 }
 
-// M2: target を超過する fallback は行わない
-func TestSyncQuestionStockDoesNotOvershootTargetWithLargeHighlight(t *testing.T) {
+// M2: exact target cannot be reached when the only available highlight has a larger capacity,
+// but queueing it avoids starving that book forever.
+func TestSyncQuestionStockQueuesLargeHighlightWhenExactTargetCannotBeReached(t *testing.T) {
 	userID := uuid.New()
 	queuedCount := 0
 	uc := NewQuestionSyncUsecase(
@@ -706,16 +711,16 @@ func TestSyncQuestionStockDoesNotOvershootTargetWithLargeHighlight(t *testing.T)
 	if err != nil {
 		t.Fatalf("SyncQuestionStock failed: %v", err)
 	}
-	if result.QueuedCount != 0 {
-		t.Fatalf("expected 0 queued because only available highlight would overshoot needed=2, got %d", result.QueuedCount)
+	if result.QueuedCount != 3 {
+		t.Fatalf("expected 3 queued from the only available highlight, got %d", result.QueuedCount)
 	}
-	if queuedCount != 0 {
-		t.Fatalf("expected no highlights queued, got %d", queuedCount)
+	if queuedCount != 1 {
+		t.Fatalf("expected 1 highlight queued, got %d", queuedCount)
 	}
 }
 
-// L3 JST 日跨ぎ: now() を注入して 23:59:59 JST と 00:00:01 JST で counter キーが分かれる
-func TestSyncQuestionStockJSTDayBoundary(t *testing.T) {
+// L3 UTC day boundary: daily quota keys are based on UTC to avoid server-local timezone drift.
+func TestSyncQuestionStockUTCDayBoundary(t *testing.T) {
 	userID := uuid.New()
 	receivedDays := make([]string, 0, 2)
 
@@ -734,15 +739,13 @@ func TestSyncQuestionStockJSTDayBoundary(t *testing.T) {
 		},
 	}
 
-	jst := time.FixedZone("JST", 9*60*60)
-
 	uc := NewQuestionSyncUsecase(repoHighlight, repoQuestion, nil)
-	uc.now = func() time.Time { return time.Date(2026, 4, 26, 23, 59, 59, 0, jst) }
+	uc.now = func() time.Time { return time.Date(2026, 4, 26, 23, 59, 59, 0, time.UTC) }
 	if _, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: userID, DefaultQuestionCount: 3}); err != nil {
 		t.Fatalf("first sync failed: %v", err)
 	}
 
-	uc.now = func() time.Time { return time.Date(2026, 4, 27, 0, 0, 1, 0, jst) }
+	uc.now = func() time.Time { return time.Date(2026, 4, 27, 0, 0, 1, 0, time.UTC) }
 	if _, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: userID, DefaultQuestionCount: 3}); err != nil {
 		t.Fatalf("second sync failed: %v", err)
 	}
@@ -751,7 +754,7 @@ func TestSyncQuestionStockJSTDayBoundary(t *testing.T) {
 		t.Fatalf("expected 2 reservation calls, got %d", len(receivedDays))
 	}
 	if receivedDays[0] == receivedDays[1] {
-		t.Fatalf("expected different counter keys across JST midnight, got %s and %s", receivedDays[0], receivedDays[1])
+		t.Fatalf("expected different counter keys across UTC midnight, got %s and %s", receivedDays[0], receivedDays[1])
 	}
 	if receivedDays[0] != "2026-04-26" || receivedDays[1] != "2026-04-27" {
 		t.Fatalf("expected 2026-04-26 then 2026-04-27, got %v", receivedDays)

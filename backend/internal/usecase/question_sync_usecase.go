@@ -20,8 +20,6 @@ const (
 	defaultQuestionSyncWorkerTimeout   = 2 * time.Minute
 )
 
-var questionSyncDailyLocation = time.FixedZone("Asia/Tokyo", 9*60*60)
-
 type QuestionSyncUsecase struct {
 	highlightRepo          domain.QuestionSyncHighlightRepository
 	questionRepo           domain.QuestionSyncQuestionRepository
@@ -432,6 +430,7 @@ func appendQuestionSyncCandidates(
 		return
 	}
 
+	var fallback *questionSyncCandidate
 	for _, candidate := range candidates {
 		if candidate.highlight == nil {
 			continue
@@ -447,7 +446,14 @@ func appendQuestionSyncCandidates(
 		}
 
 		remainingNeed := softTarget - selection.questionCount
-		if remainingNeed <= 0 || candidate.remaining > remainingNeed {
+		if remainingNeed <= 0 {
+			continue
+		}
+		if candidate.remaining > remainingNeed {
+			if fallback == nil || candidate.remaining < fallback.remaining {
+				candidateCopy := candidate
+				fallback = &candidateCopy
+			}
 			continue
 		}
 
@@ -456,6 +462,21 @@ func appendQuestionSyncCandidates(
 		selection.countByID[candidate.highlight.ID] = candidate.remaining
 		seen[candidate.highlight.ID] = struct{}{}
 	}
+
+	if fallback == nil || selection.questionCount > 0 {
+		return
+	}
+	if selection.questionCount+fallback.remaining > hardBudget {
+		return
+	}
+	if _, ok := seen[fallback.highlight.ID]; ok {
+		return
+	}
+
+	selection.highlightIDs = append(selection.highlightIDs, fallback.highlight.ID)
+	selection.questionCount += fallback.remaining
+	selection.countByID[fallback.highlight.ID] = fallback.remaining
+	seen[fallback.highlight.ID] = struct{}{}
 }
 
 func sortUnderstockBooks(books []domain.BookStock) {
@@ -480,6 +501,6 @@ func resolveQuestionStockTarget(defaultQuestionCount int16) int {
 }
 
 func questionSyncDay(now time.Time) time.Time {
-	localNow := now.In(questionSyncDailyLocation)
-	return time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, questionSyncDailyLocation)
+	utcNow := now.UTC()
+	return time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
 }

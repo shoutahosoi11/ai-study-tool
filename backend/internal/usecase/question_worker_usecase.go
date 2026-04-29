@@ -411,6 +411,14 @@ func (u *QuestionWorkerUsecase) ProcessRegenerationTask(ctx context.Context, tas
 
 	customInstruction := fmt.Sprintf("このハイライトから %s 観点で1問だけ作成してください。", perspectives[0])
 	model := u.llmClient.ModelForPlan("free")
+	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, task.UserID, questionSyncDay(u.now()), 1, readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
+	if err != nil {
+		return fmt.Errorf("question worker: reserve regeneration quota: %w", err)
+	}
+	if !reserved {
+		return u.questionRepo.DeferRegenerationTasks(ctx, []uuid.UUID{task.ID}, "daily generation quota exceeded")
+	}
+
 	generationID, err := u.questionRepo.SaveGeneration(ctx, task.UserID.String(), "regeneration", task.Highlight.ID.String(), customInstruction, model)
 	if err != nil {
 		return u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry)

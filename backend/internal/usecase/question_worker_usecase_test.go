@@ -30,12 +30,24 @@ func (m *mockQuestionWorkerRepository) ListPerspectivesByHighlightID(ctx context
 	return make([]string, 0), nil
 }
 
+func (m *mockQuestionWorkerRepository) GetDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time) (int, error) {
+	return 0, nil
+}
+
+func (m *mockQuestionWorkerRepository) ReserveDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int, limit int) (bool, error) {
+	return true, nil
+}
+
 func (m *mockQuestionWorkerRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
 	return nil
 }
 
 func (m *mockQuestionWorkerRepository) ClaimPendingRegenerationTasks(ctx context.Context, limit int) ([]*domain.RegenerationTask, error) {
 	return make([]*domain.RegenerationTask, 0), nil
+}
+
+func (m *mockQuestionWorkerRepository) DeferRegenerationTasks(ctx context.Context, taskIDs []uuid.UUID, lastError string) error {
+	return nil
 }
 
 func (m *mockQuestionWorkerRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {

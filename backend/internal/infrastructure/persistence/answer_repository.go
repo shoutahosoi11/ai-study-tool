@@ -49,7 +49,7 @@ func (r *answerRepository) Upsert(ctx context.Context, input domain.AnswerUpsert
 	return toDomainAnswer(answer), nil
 }
 
-func (r *answerRepository) UpsertAndUpdateStats(ctx context.Context, input domain.AnswerUpsertInput, questionID string, isCorrect bool) (*domain.Answer, error) {
+func (r *answerRepository) UpsertAndUpdateStats(ctx context.Context, input domain.AnswerUpsertInput) (*domain.Answer, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("answer repo: begin tx: %w", err)
@@ -66,12 +66,23 @@ func (r *answerRepository) UpsertAndUpdateStats(ctx context.Context, input domai
 		return nil, fmt.Errorf("answer repo: parse question id: %w", err)
 	}
 
-	statsQuestionID, err := parseAnswerUUID(questionID)
-	if err != nil {
-		return nil, fmt.Errorf("answer repo: parse stats question id: %w", err)
-	}
-
 	txQueries := r.queries.WithTx(tx)
+
+	var previousCorrect bool
+	hadPreviousAnswer := true
+	err = tx.QueryRowContext(ctx, `
+SELECT is_correct
+FROM answers
+WHERE user_id = $1
+  AND question_id = $2
+FOR UPDATE`, userID, inputQuestionID).Scan(&previousCorrect)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			hadPreviousAnswer = false
+		} else {
+			return nil, fmt.Errorf("answer repo: lock existing answer: %w", err)
+		}
+	}
 
 	answer, err := txQueries.UpsertAnswer(ctx, sqlcgen.UpsertAnswerParams{
 		UserID:      userID,
@@ -86,10 +97,14 @@ func (r *answerRepository) UpsertAndUpdateStats(ctx context.Context, input domai
 		return nil, fmt.Errorf("answer repo: upsert: %w", err)
 	}
 
-	if err := txQueries.UpdateQuestionStats(ctx, sqlcgen.UpdateQuestionStatsParams{
-		ID:        statsQuestionID,
-		IsCorrect: isCorrect,
-	}); err != nil {
+	answerDelta, correctDelta := answerStatDeltas(hadPreviousAnswer, previousCorrect, input.IsCorrect)
+	if _, err := tx.ExecContext(ctx, `
+UPDATE questions
+SET
+    answer_count = GREATEST(answer_count + $2, 0),
+    correct_count = GREATEST(correct_count + $3, 0),
+    updated_at = NOW()
+WHERE id = $1`, inputQuestionID, answerDelta, correctDelta); err != nil {
 		return nil, fmt.Errorf("answer repo: update stats: %w", err)
 	}
 
@@ -98,6 +113,22 @@ func (r *answerRepository) UpsertAndUpdateStats(ctx context.Context, input domai
 	}
 
 	return toDomainAnswer(answer), nil
+}
+
+func answerStatDeltas(hadPreviousAnswer bool, previousCorrect bool, currentCorrect bool) (int, int) {
+	if !hadPreviousAnswer {
+		if currentCorrect {
+			return 1, 1
+		}
+		return 1, 0
+	}
+	if previousCorrect == currentCorrect {
+		return 0, 0
+	}
+	if currentCorrect {
+		return 0, 1
+	}
+	return 0, -1
 }
 
 func toDomainAnswer(answer sqlcgen.Answer) *domain.Answer {
