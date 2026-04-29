@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -10,16 +11,25 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
-	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type HighlightHandler struct {
-	highlightUsecase *usecase.HighlightUsecase
+	highlightUsecase HighlightUsecase
 	userUsecase      usecase.UserUsecaseInterface
 }
 
-func NewHighlightHandler(highlightUsecase *usecase.HighlightUsecase, userUsecase usecase.UserUsecaseInterface) *HighlightHandler {
+type HighlightUsecase interface {
+	ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []usecase.ImportHighlightItem) (*usecase.ImportKindleResult, error)
+	ListExistingContentHashes(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error)
+	ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input usecase.ImportSharedHighlightInput) (*usecase.ImportSharedHighlightResult, error)
+	ListKindleBooks(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error)
+	ListByASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error)
+	ListByBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error)
+	UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation string) (*domain.Highlight, error)
+}
+
+func NewHighlightHandler(highlightUsecase HighlightUsecase, userUsecase usecase.UserUsecaseInterface) *HighlightHandler {
 	return &HighlightHandler{
 		highlightUsecase: highlightUsecase,
 		userUsecase:      userUsecase,
@@ -240,21 +250,7 @@ func (h *HighlightHandler) UpdateExplanation(c echo.Context) error {
 }
 
 func (h *HighlightHandler) currentUser(c echo.Context) (*domain.User, error) {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		log.Printf("currentUser error: %v", err)
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
-	}
-
-	return user, nil
+	return resolveCurrentUser(c, h.userUsecase, "highlight")
 }
 
 func toHighlightResponse(h *domain.Highlight) *dto.HighlightResponse {

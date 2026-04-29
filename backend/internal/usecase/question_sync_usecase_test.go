@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,30 +14,10 @@ import (
 )
 
 type mockQuestionSyncHighlightRepository struct {
-	listBookStock                func(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error)
-	listUnusedHighlightsByBook   func(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error)
-	listUsedHighlightsByBook     func(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error)
-	queueHighlightsForGeneration func(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error
-}
-
-func (m *mockQuestionSyncHighlightRepository) BulkUpsert(ctx context.Context, highlights []*domain.Highlight) (int, error) {
-	return 0, errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) ListExistingContentHashesByUserID(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error) {
-	return make([]string, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) ListByUserIDAndASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) ListByUserIDAndBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) ListBooksWithHighlightsByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error) {
-	return make([]*domain.KindleBook, 0), errors.New("not implemented")
+	listBookStock              func(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error)
+	listUnusedHighlightsByBook func(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error)
+	listUsedHighlightsByBook   func(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error)
+	requeueStaleProcessing     func(ctx context.Context, userID uuid.UUID, cutoff time.Time) (int, error)
 }
 
 func (m *mockQuestionSyncHighlightRepository) ListBookStockByUserID(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error) {
@@ -60,61 +41,17 @@ func (m *mockQuestionSyncHighlightRepository) ListUsedHighlightsWithUncoveredPer
 	return m.listUsedHighlightsByBook(ctx, userID, bookKey, limit)
 }
 
-func (m *mockQuestionSyncHighlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {
-	return make([]domain.PendingHighlightUserStat, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) ClaimPendingByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) ClaimPendingByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) QueueHighlightsForGeneration(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-	if m.queueHighlightsForGeneration == nil {
-		return nil
+func (m *mockQuestionSyncHighlightRepository) RequeueStaleProcessingByUserID(ctx context.Context, userID uuid.UUID, cutoff time.Time) (int, error) {
+	if m.requeueStaleProcessing == nil {
+		return 0, nil
 	}
-	return m.queueHighlightsForGeneration(ctx, userID, highlightIDs, requestedAt)
-}
-
-func (m *mockQuestionSyncHighlightRepository) MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) MarkGenerationFailed(ctx context.Context, highlightIDs []uuid.UUID, lastError string, maxRetry int) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncHighlightRepository) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
+	return m.requeueStaleProcessing(ctx, userID, cutoff)
 }
 
 type mockQuestionSyncQuestionRepository struct {
 	listPerspectivesByHighlightID func(ctx context.Context, userID string, highlightID uuid.UUID) ([]string, error)
 	getDailyGeneratedCount        func(ctx context.Context, userID uuid.UUID, day time.Time) (int, error)
-	incrementDailyGeneratedCount  func(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error
-}
-
-func (m *mockQuestionSyncQuestionRepository) Save(ctx context.Context, q *domain.Question, meta *domain.QuestionMeta) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) ListByCreatorID(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error) {
-	return make([]*domain.Question, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) ListSavedByUserID(ctx context.Context, userID string, limit int) ([]*domain.SavedQuestion, error) {
-	return make([]*domain.SavedQuestion, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) ListIncorrectByUserID(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error) {
-	return make([]*domain.IncorrectQuestion, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) ListPreparedByUserIDAndHighlightIDs(ctx context.Context, userID string, highlightIDs []uuid.UUID, limit int) ([]*domain.Question, error) {
-	return make([]*domain.Question, 0), errors.New("not implemented")
+	queueWithinDailyLimit         func(ctx context.Context, userID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error)
 }
 
 func (m *mockQuestionSyncQuestionRepository) ListPerspectivesByHighlightID(ctx context.Context, userID string, highlightID uuid.UUID) ([]string, error) {
@@ -124,30 +61,6 @@ func (m *mockQuestionSyncQuestionRepository) ListPerspectivesByHighlightID(ctx c
 	return m.listPerspectivesByHighlightID(ctx, userID, highlightID)
 }
 
-func (m *mockQuestionSyncQuestionRepository) ListUsedHighlightIDsByUserID(ctx context.Context, userID string, highlightIDs []uuid.UUID) ([]uuid.UUID, error) {
-	return make([]uuid.UUID, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) FindByID(ctx context.Context, id string) (*domain.Question, *domain.QuestionMeta, *domain.QuestionStats, error) {
-	return nil, nil, nil, errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) GetByID(ctx context.Context, id string) (*domain.Question, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) UpdateStats(ctx context.Context, questionID string, isCorrect bool) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) SaveGeneration(ctx context.Context, userID, sourceType, sourceID, promptUsed, modelUsed string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) SaveForUser(ctx context.Context, userID, questionID, note string) error {
-	return errors.New("not implemented")
-}
-
 func (m *mockQuestionSyncQuestionRepository) GetDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time) (int, error) {
 	if m.getDailyGeneratedCount == nil {
 		return 0, nil
@@ -155,27 +68,11 @@ func (m *mockQuestionSyncQuestionRepository) GetDailyGeneratedCount(ctx context.
 	return m.getDailyGeneratedCount(ctx, userID, day)
 }
 
-func (m *mockQuestionSyncQuestionRepository) IncrementDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
-	if m.incrementDailyGeneratedCount == nil {
-		return nil
+func (m *mockQuestionSyncQuestionRepository) QueueHighlightsWithinDailyLimit(ctx context.Context, userID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
+	if m.queueWithinDailyLimit != nil {
+		return m.queueWithinDailyLimit(ctx, userID, day, limit, highlightIDs, questionCountByHighlightID, requestedAt)
 	}
-	return m.incrementDailyGeneratedCount(ctx, userID, day, delta)
-}
-
-func (m *mockQuestionSyncQuestionRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) ClaimPendingRegenerationTasks(ctx context.Context, limit int) ([]*domain.RegenerationTask, error) {
-	return make([]*domain.RegenerationTask, 0), errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockQuestionSyncQuestionRepository) MarkRegenerationTasksFailed(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error {
-	return errors.New("not implemented")
+	return slices.Clone(highlightIDs), true, nil
 }
 
 func TestSyncQuestionStockReturnsZeroWhenStockIsAlreadySatisfied(t *testing.T) {
@@ -251,17 +148,18 @@ func TestSyncQuestionStockQueuesOnlyThirtyQuestionsInPriorityOrder(t *testing.T)
 			listUnusedHighlightsByBook: func(ctx context.Context, requestUserID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
 				return unusedHighlights[bookKey], nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, requestUserID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-				queuedHighlightIDs = append(queuedHighlightIDs, highlightIDs...)
-				return nil
-			},
 		},
 		&mockQuestionSyncQuestionRepository{
-			incrementDailyGeneratedCount: func(ctx context.Context, requestUserID uuid.UUID, day time.Time, delta int) error {
-				if delta != 30 {
-					t.Fatalf("expected daily increment 30, got %d", delta)
+			queueWithinDailyLimit: func(ctx context.Context, requestUserID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
+				queuedHighlightIDs = append(queuedHighlightIDs, highlightIDs...)
+				requested := 0
+				for _, highlightID := range highlightIDs {
+					requested += questionCountByHighlightID[highlightID]
 				}
-				return nil
+				if requested != 30 {
+					t.Fatalf("expected daily reservation 30, got %d", requested)
+				}
+				return slices.Clone(highlightIDs), true, nil
 			},
 		},
 		nil,
@@ -314,14 +212,14 @@ func TestSyncQuestionStockSkipsWhenDailyLimitReached(t *testing.T) {
 					LatestHighlightAt: time.Now(),
 				}}, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, requestUserID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-				queueCalled = true
-				return nil
-			},
 		},
 		&mockQuestionSyncQuestionRepository{
 			getDailyGeneratedCount: func(ctx context.Context, requestUserID uuid.UUID, day time.Time) (int, error) {
 				return 100, nil
+			},
+			queueWithinDailyLimit: func(ctx context.Context, requestUserID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
+				queueCalled = true
+				return nil, false, nil
 			},
 		},
 		nil,
@@ -343,6 +241,71 @@ func TestSyncQuestionStockSkipsWhenDailyLimitReached(t *testing.T) {
 	}
 	if queueCalled {
 		t.Fatal("queue should not be called when daily limit is reached")
+	}
+}
+
+func TestNewQuestionSyncUsecaseReadsLimitEnv(t *testing.T) {
+	t.Setenv("QUESTION_SYNC_DAILY_LIMIT", "11")
+	t.Setenv("QUESTION_SYNC_PER_TRIGGER_LIMIT", "7")
+
+	uc := NewQuestionSyncUsecase(
+		&mockQuestionSyncHighlightRepository{},
+		&mockQuestionSyncQuestionRepository{},
+		nil,
+	)
+
+	if uc.dailyLimit != 11 {
+		t.Fatalf("expected dailyLimit=11, got %d", uc.dailyLimit)
+	}
+	if uc.perTriggerLimit != 7 {
+		t.Fatalf("expected perTriggerLimit=7, got %d", uc.perTriggerLimit)
+	}
+}
+
+func TestSyncQuestionStockTransactionalQueueDenied(t *testing.T) {
+	userID := uuid.New()
+	queueCalled := false
+
+	uc := NewQuestionSyncUsecase(
+		&mockQuestionSyncHighlightRepository{
+			listBookStock: func(ctx context.Context, requestUserID uuid.UUID) ([]domain.BookStock, error) {
+				return []domain.BookStock{{
+					BookKey:           "B001",
+					BookTitle:         "Book One",
+					Stock:             0,
+					Preparing:         0,
+					LatestHighlightAt: time.Now(),
+				}}, nil
+			},
+			listUnusedHighlightsByBook: func(ctx context.Context, requestUserID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
+				return []*domain.Highlight{{ID: uuid.New(), UserID: userID, Content: contentForCapacity(3)}}, nil
+			},
+		},
+		&mockQuestionSyncQuestionRepository{
+			queueWithinDailyLimit: func(ctx context.Context, requestUserID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
+				queueCalled = true
+				return nil, false, nil
+			},
+		},
+		nil,
+	)
+
+	result, err := uc.SyncQuestionStock(context.Background(), &domain.User{
+		ID:                   userID,
+		DefaultQuestionCount: 3,
+	})
+	if err != nil {
+		t.Fatalf("SyncQuestionStock failed: %v", err)
+	}
+
+	if !result.SkippedDueToDailyLimit {
+		t.Fatal("expected skipped_due_to_daily_limit=true")
+	}
+	if result.QueuedCount != 0 {
+		t.Fatalf("expected queued count 0, got %d", result.QueuedCount)
+	}
+	if !queueCalled {
+		t.Fatal("transactional queue should be called and deny the reservation")
 	}
 }
 
@@ -377,10 +340,6 @@ func TestSyncQuestionStockPrefersUnusedHighlightsBeforeUsedOnes(t *testing.T) {
 					Content: strings.Repeat("別観点の問題も十分に作れる長いハイライト本文です。", 20),
 				}}, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, requestUserID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-				queuedHighlightIDs = append(queuedHighlightIDs, highlightIDs...)
-				return nil
-			},
 		},
 		&mockQuestionSyncQuestionRepository{
 			listPerspectivesByHighlightID: func(ctx context.Context, requestUserID string, highlightID uuid.UUID) ([]string, error) {
@@ -388,6 +347,10 @@ func TestSyncQuestionStockPrefersUnusedHighlightsBeforeUsedOnes(t *testing.T) {
 					return []string{domain.QuestionPerspectiveDefinition}, nil
 				}
 				return []string{}, nil
+			},
+			queueWithinDailyLimit: func(ctx context.Context, requestUserID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
+				queuedHighlightIDs = append(queuedHighlightIDs, highlightIDs...)
+				return slices.Clone(highlightIDs), true, nil
 			},
 		},
 		nil,
@@ -468,12 +431,13 @@ func TestSyncQuestionStockEmptyBookKeySkipped(t *testing.T) {
 			listBookStock: func(ctx context.Context, _ uuid.UUID) ([]domain.BookStock, error) {
 				return []domain.BookStock{{BookKey: "", Stock: 0, Preparing: 0, LatestHighlightAt: time.Now()}}, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
+		},
+		&mockQuestionSyncQuestionRepository{
+			queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int, ids []uuid.UUID, _ map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
 				queueCalled = true
-				return nil
+				return ids, true, nil
 			},
 		},
-		&mockQuestionSyncQuestionRepository{},
 		nil,
 	)
 
@@ -510,12 +474,13 @@ func TestSyncQuestionStockMixedBookStocks(t *testing.T) {
 				t.Fatalf("listUnusedHighlightsByBook unexpectedly called for book %s", bookKey)
 				return nil, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, ids []uuid.UUID, _ time.Time) error {
+		},
+		&mockQuestionSyncQuestionRepository{
+			queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int, ids []uuid.UUID, _ map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
 				queuedHighlights = append(queuedHighlights, ids...)
-				return nil
+				return slices.Clone(ids), true, nil
 			},
 		},
-		&mockQuestionSyncQuestionRepository{},
 		nil,
 	)
 
@@ -545,9 +510,6 @@ func TestSyncQuestionStockDefaultQuestionCountAll(t *testing.T) {
 					highlights = append(highlights, &domain.Highlight{ID: uuid.New(), Content: contentForCapacity(3)})
 				}
 				return highlights, nil
-			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-				return nil
 			},
 		},
 		&mockQuestionSyncQuestionRepository{},
@@ -579,9 +541,6 @@ func TestSyncQuestionStockDefaultQuestionCountMin(t *testing.T) {
 			},
 			listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
 				return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(1)}}, nil
-			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-				return nil
 			},
 		},
 		&mockQuestionSyncQuestionRepository{},
@@ -615,9 +574,6 @@ func TestSyncQuestionStockDefaultQuestionCountMax(t *testing.T) {
 				}
 				return highlights, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-				return nil
-			},
 		},
 		&mockQuestionSyncQuestionRepository{},
 		nil,
@@ -627,8 +583,8 @@ func TestSyncQuestionStockDefaultQuestionCountMax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SyncQuestionStock failed: %v", err)
 	}
-	if result.QueuedCount < 10 {
-		t.Fatalf("expected at least 10 queued for target=10 with sufficient highlights, got %d", result.QueuedCount)
+	if result.QueuedCount == 0 || result.QueuedCount > 10 {
+		t.Fatalf("expected queued count to stay within target=10, got %d", result.QueuedCount)
 	}
 	if result.Books[0].Target != 10 {
 		t.Fatalf("expected target=10, got %d", result.Books[0].Target)
@@ -645,9 +601,6 @@ func TestSyncQuestionStockDefaultQuestionCountNegative(t *testing.T) {
 			},
 			listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
 				return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(3)}}, nil
-			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-				return nil
 			},
 		},
 		&mockQuestionSyncQuestionRepository{},
@@ -674,9 +627,6 @@ func TestSyncQuestionStockDailyLimitNearMax(t *testing.T) {
 			},
 			listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
 				return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(3)}}, nil
-			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-				return nil
 			},
 		},
 		&mockQuestionSyncQuestionRepository{
@@ -730,14 +680,8 @@ func TestSyncQuestionStockDailyLimitOverflow(t *testing.T) {
 	}
 }
 
-// M2: appendQuestionSyncCandidates の fallback で target を超過する
-//
-// シナリオ: target=3, 既存ストック=1 (残必要=2)、未使用ハイライト=1件のみ(capacity=3)
-// 期待 (理想): 2問 queued (target ぴったり)
-// 現状 (M2 バグ): fallback ロジックにより 3問 queued される (target=3 を超過して合計4問になる)
-//
-// このテストは現状の動作を pin する。M2 修正後は queued=2 になる想定で更新が必要。
-func TestSyncQuestionStockFallbackOvershootDocumentsCurrentBehavior(t *testing.T) {
+// M2: target を超過する fallback は行わない
+func TestSyncQuestionStockDoesNotOvershootTargetWithLargeHighlight(t *testing.T) {
 	userID := uuid.New()
 	queuedCount := 0
 	uc := NewQuestionSyncUsecase(
@@ -748,12 +692,13 @@ func TestSyncQuestionStockFallbackOvershootDocumentsCurrentBehavior(t *testing.T
 			listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
 				return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(3)}}, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, ids []uuid.UUID, _ time.Time) error {
+		},
+		&mockQuestionSyncQuestionRepository{
+			queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int, ids []uuid.UUID, _ map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
 				queuedCount = len(ids)
-				return nil
+				return ids, true, nil
 			},
 		},
-		&mockQuestionSyncQuestionRepository{},
 		nil,
 	)
 
@@ -761,12 +706,11 @@ func TestSyncQuestionStockFallbackOvershootDocumentsCurrentBehavior(t *testing.T
 	if err != nil {
 		t.Fatalf("SyncQuestionStock failed: %v", err)
 	}
-	if result.QueuedCount != 3 {
-		// このアサーションが将来 result.QueuedCount==2 で失敗するようになったら M2 が修正された印
-		t.Fatalf("[M2 documenting current overshoot] expected 3 queued (overshoot of needed=2), got %d", result.QueuedCount)
+	if result.QueuedCount != 0 {
+		t.Fatalf("expected 0 queued because only available highlight would overshoot needed=2, got %d", result.QueuedCount)
 	}
-	if queuedCount != 1 {
-		t.Fatalf("expected 1 highlight queued, got %d", queuedCount)
+	if queuedCount != 0 {
+		t.Fatalf("expected no highlights queued, got %d", queuedCount)
 	}
 }
 
@@ -776,9 +720,9 @@ func TestSyncQuestionStockJSTDayBoundary(t *testing.T) {
 	receivedDays := make([]string, 0, 2)
 
 	repoQuestion := &mockQuestionSyncQuestionRepository{
-		incrementDailyGeneratedCount: func(ctx context.Context, _ uuid.UUID, day time.Time, _ int) error {
+		queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, day time.Time, _ int, ids []uuid.UUID, _ map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
 			receivedDays = append(receivedDays, day.Format("2006-01-02"))
-			return nil
+			return ids, true, nil
 		},
 	}
 	repoHighlight := &mockQuestionSyncHighlightRepository{
@@ -787,9 +731,6 @@ func TestSyncQuestionStockJSTDayBoundary(t *testing.T) {
 		},
 		listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
 			return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(1)}}, nil
-		},
-		queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-			return nil
 		},
 	}
 
@@ -807,7 +748,7 @@ func TestSyncQuestionStockJSTDayBoundary(t *testing.T) {
 	}
 
 	if len(receivedDays) != 2 {
-		t.Fatalf("expected 2 increment calls, got %d", len(receivedDays))
+		t.Fatalf("expected 2 reservation calls, got %d", len(receivedDays))
 	}
 	if receivedDays[0] == receivedDays[1] {
 		t.Fatalf("expected different counter keys across JST midnight, got %s and %s", receivedDays[0], receivedDays[1])
@@ -878,9 +819,8 @@ func TestSyncQuestionStockListUnusedHighlightsError(t *testing.T) {
 	}
 }
 
-// L2 異常系: QueueHighlightsForGeneration がエラー → err (highlights 状態不確定、daily counter 未加算)
-func TestSyncQuestionStockQueueHighlightsError(t *testing.T) {
-	incrementCalled := false
+// L2 異常系: transactional queue がエラー → err
+func TestSyncQuestionStockQueueWithinDailyLimitError(t *testing.T) {
 	uc := NewQuestionSyncUsecase(
 		&mockQuestionSyncHighlightRepository{
 			listBookStock: func(ctx context.Context, _ uuid.UUID) ([]domain.BookStock, error) {
@@ -889,14 +829,10 @@ func TestSyncQuestionStockQueueHighlightsError(t *testing.T) {
 			listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
 				return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(3)}}, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-				return errors.New("db error")
-			},
 		},
 		&mockQuestionSyncQuestionRepository{
-			incrementDailyGeneratedCount: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int) error {
-				incrementCalled = true
-				return nil
+			queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int, _ []uuid.UUID, _ map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
+				return nil, false, errors.New("db error")
 			},
 		},
 		nil,
@@ -904,18 +840,42 @@ func TestSyncQuestionStockQueueHighlightsError(t *testing.T) {
 
 	_, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: uuid.New(), DefaultQuestionCount: 3})
 	if err == nil {
-		t.Fatal("expected error from QueueHighlightsForGeneration")
-	}
-	if incrementCalled {
-		t.Fatal("daily counter should not be incremented if Queue failed")
+		t.Fatal("expected error from QueueHighlightsWithinDailyLimit")
 	}
 }
 
-// C3: IncrementDailyGeneratedCount がエラー → err を返すが highlights は既に Queue 済み
-//
-// このテストは C3 のシナリオを pin する: Queue 成功 + Increment 失敗で highlights が pending のまま残り、
-// counter は加算されない不整合が発生する。修正後はトランザクション化により挙動が変わる想定。
-func TestSyncQuestionStockIncrementDailyErrorLeavesHighlightsQueued(t *testing.T) {
+func TestSyncQuestionStockPartialQueueDoesNotOvercountDailyReservation(t *testing.T) {
+	uc := NewQuestionSyncUsecase(
+		&mockQuestionSyncHighlightRepository{
+			listBookStock: func(ctx context.Context, _ uuid.UUID) ([]domain.BookStock, error) {
+				return []domain.BookStock{{BookKey: "B1", Stock: 0, Preparing: 0, LatestHighlightAt: time.Now()}}, nil
+			},
+			listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
+				return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(3)}}, nil
+			},
+		},
+		&mockQuestionSyncQuestionRepository{
+			queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int, ids []uuid.UUID, _ map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
+				if len(ids) != 1 {
+					t.Fatalf("expected one requested highlight, got %d", len(ids))
+				}
+				return []uuid.UUID{}, true, nil
+			},
+		},
+		nil,
+	)
+
+	result, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: uuid.New(), DefaultQuestionCount: 3})
+	if err != nil {
+		t.Fatalf("SyncQuestionStock failed: %v", err)
+	}
+	if result.QueuedCount != 0 {
+		t.Fatalf("expected queued count 0 when repository queued no rows, got %d", result.QueuedCount)
+	}
+}
+
+// C3: 日次予約つき queue がエラーならエラーを返す
+func TestSyncQuestionStockTransactionalQueueError(t *testing.T) {
 	queueCalled := false
 	uc := NewQuestionSyncUsecase(
 		&mockQuestionSyncHighlightRepository{
@@ -925,14 +885,11 @@ func TestSyncQuestionStockIncrementDailyErrorLeavesHighlightsQueued(t *testing.T
 			listUnusedHighlightsByBook: func(ctx context.Context, _ uuid.UUID, _ string, _ int) ([]*domain.Highlight, error) {
 				return []*domain.Highlight{{ID: uuid.New(), Content: contentForCapacity(3)}}, nil
 			},
-			queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-				queueCalled = true
-				return nil
-			},
 		},
 		&mockQuestionSyncQuestionRepository{
-			incrementDailyGeneratedCount: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int) error {
-				return errors.New("db error")
+			queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int, _ []uuid.UUID, _ map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
+				queueCalled = true
+				return nil, false, errors.New("db error")
 			},
 		},
 		nil,
@@ -940,26 +897,19 @@ func TestSyncQuestionStockIncrementDailyErrorLeavesHighlightsQueued(t *testing.T
 
 	_, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: uuid.New(), DefaultQuestionCount: 3})
 	if err == nil {
-		t.Fatal("expected error from IncrementDailyGeneratedCount")
+		t.Fatal("expected error from QueueHighlightsWithinDailyLimit")
 	}
 	if !queueCalled {
-		// [C3 documenting] Queue は成功するが Increment 失敗で highlights pending 残り
-		t.Fatal("[C3] Queue was expected to be called before Increment fails — highlights remain pending without counter increment")
+		t.Fatal("transactional queue should be attempted")
 	}
 }
 
-// C1: 並行 sync 呼び出し時の daily counter 加算挙動を pin する
-//
-// シナリオ: 2 つの goroutine が同時に同じユーザーで sync を実行
-// 期待 (理想): 実際にキューに乗った数だけ counter が加算される
-// 現状 (C1 バグ): 両方とも事前算出した QueuedCount で counter を加算 → 二重加算
-//
-// このテストは現状を pin する。C1 修正後は counter 合計が「実際にキューイング成功した数」になる想定。
-func TestSyncQuestionStockConcurrentCallsDocumentDoubleIncrement(t *testing.T) {
+// C1: 並行 sync 呼び出しでも日次カウントと queue は同じトランザクション入口を通る
+func TestSyncQuestionStockConcurrentCallsUseTransactionalQueue(t *testing.T) {
 	userID := uuid.New()
 	var (
 		mu             sync.Mutex
-		incrementCalls = make([]int, 0, 2)
+		reserveCalls   = make([]int, 0, 2)
 		queueCallCount int
 	)
 
@@ -971,19 +921,18 @@ func TestSyncQuestionStockConcurrentCallsDocumentDoubleIncrement(t *testing.T) {
 			// 並行 sync が両方とも同じ highlight を選ぶように、安定した ID を返す
 			return []*domain.Highlight{{ID: uuid.MustParse("11111111-1111-1111-1111-111111111111"), Content: contentForCapacity(3)}}, nil
 		},
-		queueHighlightsForGeneration: func(ctx context.Context, _ uuid.UUID, _ []uuid.UUID, _ time.Time) error {
-			mu.Lock()
-			queueCallCount++
-			mu.Unlock()
-			return nil
-		},
 	}
 	repoQuestion := &mockQuestionSyncQuestionRepository{
-		incrementDailyGeneratedCount: func(ctx context.Context, _ uuid.UUID, _ time.Time, delta int) error {
+		queueWithinDailyLimit: func(ctx context.Context, _ uuid.UUID, _ time.Time, _ int, ids []uuid.UUID, counts map[uuid.UUID]int, _ time.Time) ([]uuid.UUID, bool, error) {
+			requested := 0
+			for _, id := range ids {
+				requested += counts[id]
+			}
 			mu.Lock()
-			incrementCalls = append(incrementCalls, delta)
+			reserveCalls = append(reserveCalls, requested)
+			queueCallCount++
 			mu.Unlock()
-			return nil
+			return slices.Clone(ids), true, nil
 		},
 	}
 
@@ -1004,21 +953,15 @@ func TestSyncQuestionStockConcurrentCallsDocumentDoubleIncrement(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	totalIncrement := 0
-	for _, n := range incrementCalls {
-		totalIncrement += n
+	totalReserved := 0
+	for _, n := range reserveCalls {
+		totalReserved += n
 	}
 
-	// [C1 documenting] 理想は totalIncrement == 3 (実際にキューに乗ったのは1ユーザー分のみ)
-	// 現状は totalIncrement == 6 (両方とも 3 を独立に加算) になり得る
-	// このテストはレースを保証するわけではないが、加算回数が 2 になることを確認できる
-	if len(incrementCalls) != 2 {
-		t.Logf("expected 2 increment calls (both syncs reached Increment), got %d — race may not have occurred this run", len(incrementCalls))
+	if len(reserveCalls) != queueCallCount {
+		t.Fatalf("expected reserve calls to match queue calls, reserve=%d queue=%d", len(reserveCalls), queueCallCount)
 	}
-	if totalIncrement > 3 {
-		t.Logf("[C1 documenting] daily counter over-incremented by concurrent sync: total=%d (expected 3)", totalIncrement)
-	}
-	t.Logf("queue call count: %d, increment calls: %v, total: %d", queueCallCount, incrementCalls, totalIncrement)
+	t.Logf("queue call count: %d, reserve calls: %v, total: %d", queueCallCount, reserveCalls, totalReserved)
 }
 
 // L1 境界値: highlight content の長さ境界 (questionCountForHighlight の境界)
@@ -1027,9 +970,9 @@ func TestSyncQuestionStockConcurrentCallsDocumentDoubleIncrement(t *testing.T) {
 // 期待: 0 → 0問, 1〜119 → 1問, 120〜319 → 2問, 320〜 → 3問
 func TestQuestionCountForHighlightBoundaries(t *testing.T) {
 	cases := []struct {
-		name    string
-		runes   int
-		want    int
+		name  string
+		runes int
+		want  int
 	}{
 		{"empty", 0, 0},
 		{"just_below_2q_boundary_119", 119, 1},

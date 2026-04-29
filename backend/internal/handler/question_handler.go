@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -9,19 +10,32 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
-	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type QuestionHandler struct {
-	questionUsecase     *usecase.QuestionUsecase
-	questionSyncUsecase *usecase.QuestionSyncUsecase
+	questionUsecase     QuestionUsecase
+	questionSyncUsecase QuestionSyncUsecase
 	userUsecase         usecase.UserUsecaseInterface
 }
 
+type QuestionUsecase interface {
+	ListQuestions(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error)
+	ListSavedQuestions(ctx context.Context, userID string, limit int) ([]*domain.SavedQuestion, error)
+	ListIncorrectQuestions(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error)
+	GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
+	ListPreparedQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
+	SaveQuestion(ctx context.Context, userID string, questionID string, note string) error
+	GradeAnswer(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error)
+}
+
+type QuestionSyncUsecase interface {
+	SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
+}
+
 func NewQuestionHandler(
-	qu *usecase.QuestionUsecase,
-	questionSyncUsecase *usecase.QuestionSyncUsecase,
+	qu QuestionUsecase,
+	questionSyncUsecase QuestionSyncUsecase,
 	userUsecase usecase.UserUsecaseInterface,
 ) *QuestionHandler {
 	return &QuestionHandler{
@@ -325,18 +339,5 @@ func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
 }
 
 func (h *QuestionHandler) currentUser(c echo.Context) (*domain.User, error) {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
-	}
-
-	return user, nil
+	return resolveCurrentUser(c, h.userUsecase, "question")
 }

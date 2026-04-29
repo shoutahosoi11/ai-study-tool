@@ -11,11 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
-	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
 )
 
 type QuestionUsecase struct {
-	repo           domain.QuestionRepository
+	repo           domain.QuestionUsecaseRepository
 	llmClient      domain.LLMClient
 	sourceResolver domain.QuestionSourceResolver
 }
@@ -25,7 +24,7 @@ const (
 	maxQuestionCountForAll   = 20
 )
 
-func NewQuestionUsecase(repo domain.QuestionRepository, llmClient domain.LLMClient, sourceResolver domain.QuestionSourceResolver) *QuestionUsecase {
+func NewQuestionUsecase(repo domain.QuestionUsecaseRepository, llmClient domain.LLMClient, sourceResolver domain.QuestionSourceResolver) *QuestionUsecase {
 	return &QuestionUsecase{
 		repo:           repo,
 		llmClient:      llmClient,
@@ -123,7 +122,7 @@ func (u *QuestionUsecase) ListPreparedQuestions(ctx context.Context, input domai
 }
 
 func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
-	model := modelForPlan(input.UserPlan)
+	model := u.llmClient.ModelForPlan(input.UserPlan)
 
 	if !isSupportedQuestionSourceType(input.SourceType) {
 		return nil, domain.ErrInvalidSourceType
@@ -252,7 +251,7 @@ func (u *QuestionUsecase) SaveQuestion(ctx context.Context, userID string, quest
 }
 
 func (u *QuestionUsecase) GradeAnswer(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error) {
-	model := modelForPlan(userPlan)
+	model := u.llmClient.ModelForPlan(userPlan)
 
 	q, _, _, err := u.repo.FindByID(ctx, input.QuestionID)
 	if err != nil {
@@ -292,10 +291,6 @@ func (u *QuestionUsecase) GradeAnswer(ctx context.Context, input domain.GradeInp
 	}
 
 	return gradeResult, nil
-}
-
-func modelForPlan(plan string) string {
-	return gemini.ModelForPlan(plan)
 }
 
 func isSupportedQuestionSourceType(sourceType domain.SourceType) bool {

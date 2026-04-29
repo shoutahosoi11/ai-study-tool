@@ -1,42 +1,38 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
-	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type PostHandler struct {
-	postUsecase *usecase.PostUsecase
+	postUsecase PostUsecase
 	userUsecase usecase.UserUsecaseInterface
 }
 
-func NewPostHandler(postUsecase *usecase.PostUsecase, userUsecase usecase.UserUsecaseInterface) *PostHandler {
+type PostUsecase interface {
+	GetTimeline(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.TimelinePost, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.TimelinePost, error)
+	CreatePost(ctx context.Context, input domain.CreatePostInput) (*domain.Post, error)
+	ListQuestionsByPostID(ctx context.Context, postID uuid.UUID) ([]*domain.PostedQuestion, error)
+	EnsureVisible(ctx context.Context, viewerID, postID uuid.UUID) error
+}
+
+func NewPostHandler(postUsecase PostUsecase, userUsecase usecase.UserUsecaseInterface) *PostHandler {
 	return &PostHandler{postUsecase: postUsecase, userUsecase: userUsecase}
 }
 
 func (h *PostHandler) currentUser(c echo.Context) (*domain.User, error) {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
-	}
-
-	return user, nil
+	return resolveCurrentUser(c, h.userUsecase, "post")
 }
 
 func (h *PostHandler) GetTimeline(c echo.Context) error {
@@ -57,8 +53,13 @@ func (h *PostHandler) GetTimeline(c echo.Context) error {
 		posts = []*domain.TimelinePost{}
 	}
 
+	responses := make([]TimelinePostResponse, 0, len(posts))
+	for _, post := range posts {
+		responses = append(responses, toTimelinePostResponse(post))
+	}
+
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"posts":  posts,
+		"posts":  responses,
 		"limit":  limit,
 		"offset": offset,
 	})
@@ -85,7 +86,7 @@ func (h *PostHandler) GetPost(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "post not found")
 	}
 
-	return c.JSON(http.StatusOK, post)
+	return c.JSON(http.StatusOK, toTimelinePostResponse(post))
 }
 
 type CreatePostRequest struct {
@@ -114,6 +115,68 @@ type PostQuestionResponse struct {
 	Explanation   string   `json:"explanation"`
 	Note          string   `json:"note"`
 	SortOrder     int      `json:"sort_order"`
+}
+
+type PostResponse struct {
+	ID            string  `json:"id"`
+	UserID        string  `json:"user_id"`
+	QuestionID    *string `json:"question_id,omitempty"`
+	BookID        *string `json:"book_id,omitempty"`
+	FieldID       *string `json:"field_id,omitempty"`
+	Body          *string `json:"body,omitempty"`
+	BookTitle     *string `json:"book_title,omitempty"`
+	QuestionCount int     `json:"question_count"`
+	Type          string  `json:"type"`
+	RepostCount   int     `json:"repost_count"`
+	LikeCount     int     `json:"like_count"`
+	CommentCount  int     `json:"comment_count"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+}
+
+type TimelinePostResponse struct {
+	PostResponse
+	Score       int     `json:"score"`
+	Username    string  `json:"username"`
+	DisplayName string  `json:"display_name"`
+	AvatarURL   *string `json:"avatar_url,omitempty"`
+	FieldName   *string `json:"field_name,omitempty"`
+}
+
+func toPostResponse(post *domain.Post) PostResponse {
+	if post == nil {
+		return PostResponse{}
+	}
+	return PostResponse{
+		ID:            post.ID.String(),
+		UserID:        post.UserID.String(),
+		QuestionID:    uuidStringPtr(post.QuestionID),
+		BookID:        uuidStringPtr(post.BookID),
+		FieldID:       uuidStringPtr(post.FieldID),
+		Body:          post.Body,
+		BookTitle:     post.BookTitle,
+		QuestionCount: post.QuestionCount,
+		Type:          post.Type,
+		RepostCount:   post.RepostCount,
+		LikeCount:     post.LikeCount,
+		CommentCount:  post.CommentCount,
+		CreatedAt:     post.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt:     post.UpdatedAt.Format(time.RFC3339Nano),
+	}
+}
+
+func toTimelinePostResponse(post *domain.TimelinePost) TimelinePostResponse {
+	if post == nil {
+		return TimelinePostResponse{}
+	}
+	return TimelinePostResponse{
+		PostResponse: toPostResponse(&post.Post),
+		Score:        post.Score,
+		Username:     post.Username,
+		DisplayName:  post.DisplayName,
+		AvatarURL:    post.AvatarURL,
+		FieldName:    post.FieldName,
+	}
 }
 
 func toPostQuestionResponse(question *domain.PostedQuestion) PostQuestionResponse {
@@ -190,7 +253,7 @@ func (h *PostHandler) CreatePost(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	return c.JSON(http.StatusCreated, post)
+	return c.JSON(http.StatusCreated, toPostResponse(post))
 }
 
 func (h *PostHandler) ListQuestions(c echo.Context) error {
@@ -224,4 +287,12 @@ func (h *PostHandler) ListQuestions(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"questions": responses,
 	})
+}
+
+func uuidStringPtr(value *uuid.UUID) *string {
+	if value == nil {
+		return nil
+	}
+	formatted := value.String()
+	return &formatted
 }

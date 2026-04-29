@@ -23,10 +23,6 @@ type mockImportHighlightRepository struct {
 	bulkUpsertTime   time.Time
 }
 
-func (m *mockImportHighlightRepository) Create(ctx context.Context, h *domain.Highlight) (*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
-}
-
 func (m *mockImportHighlightRepository) BulkUpsert(ctx context.Context, highlights []*domain.Highlight) (int, error) {
 	m.bulkUpsertCalled = true
 	m.bulkUpsertInput = highlights
@@ -46,14 +42,6 @@ func (m *mockImportHighlightRepository) ListExistingContentHashesByUserID(ctx co
 	return make([]string, 0), errors.New("not implemented")
 }
 
-func (m *mockImportHighlightRepository) GetByID(ctx context.Context, id, userID uuid.UUID) (*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
-}
-
 func (m *mockImportHighlightRepository) ListByUserIDAndASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error) {
 	return make([]*domain.Highlight, 0), errors.New("not implemented")
 }
@@ -66,52 +54,8 @@ func (m *mockImportHighlightRepository) ListBooksWithHighlightsByUserID(ctx cont
 	return make([]*domain.KindleBook, 0), errors.New("not implemented")
 }
 
-func (m *mockImportHighlightRepository) ListBookStockByUserID(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error) {
-	return make([]domain.BookStock, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListUnusedHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListUsedHighlightsWithUncoveredPerspectives(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {
-	return make([]domain.PendingHighlightUserStat, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ClaimPendingByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ClaimPendingByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) QueueHighlightsForGeneration(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) MarkGenerationFailed(ctx context.Context, highlightIDs []uuid.UUID, lastError string, maxRetry int) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) CountByUserID(ctx context.Context, userID uuid.UUID) (int64, error) {
-	return 0, errors.New("not implemented")
-}
-
 func (m *mockImportHighlightRepository) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*domain.Highlight, error) {
 	return nil, errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) Delete(ctx context.Context, id, userID uuid.UUID) error {
-	return errors.New("not implemented")
 }
 
 func (m *mockImportHighlightRepository) markHighlightPersisted(highlight *domain.Highlight, offset int) {

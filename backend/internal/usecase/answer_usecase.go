@@ -12,13 +12,13 @@ import (
 
 type AnswerUsecase struct {
 	answerRepo   domain.AnswerRepository
-	questionRepo domain.QuestionRepository
+	questionRepo domain.AnswerQuestionRepository
 	llmClient    domain.LLMClient
 }
 
 func NewAnswerUsecase(
 	answerRepo domain.AnswerRepository,
-	questionRepo domain.QuestionRepository,
+	questionRepo domain.AnswerQuestionRepository,
 	llmClient domain.LLMClient,
 ) *AnswerUsecase {
 	return &AnswerUsecase{
@@ -63,7 +63,7 @@ func (u *AnswerUsecase) SubmitAnswer(ctx context.Context, input SubmitAnswerInpu
 	case domain.QuestionTypeMultipleChoice:
 		isCorrect = q.IsCorrect(input.UserAnswer)
 	case domain.QuestionTypeDescriptive:
-		model := modelForPlan(input.UserPlan)
+		model := u.llmClient.ModelForPlan(input.UserPlan)
 		gradeResult, err := u.llmClient.GradeAnswer(ctx, q, input.UserAnswer, model)
 		if err != nil {
 			return nil, fmt.Errorf("llm_error: %w", err)

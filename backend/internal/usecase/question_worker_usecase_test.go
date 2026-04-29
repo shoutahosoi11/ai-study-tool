@@ -1,6 +1,8 @@
 package usecase
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,41 @@ import (
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
+
+type mockQuestionWorkerRepository struct {
+	save func(ctx context.Context, question *domain.Question, meta *domain.QuestionMeta) error
+}
+
+func (m *mockQuestionWorkerRepository) Save(ctx context.Context, question *domain.Question, meta *domain.QuestionMeta) error {
+	if m.save == nil {
+		return nil
+	}
+	return m.save(ctx, question, meta)
+}
+
+func (m *mockQuestionWorkerRepository) SaveGeneration(ctx context.Context, userID, sourceType, sourceID, promptUsed, modelUsed string) (string, error) {
+	return "generation-id", nil
+}
+
+func (m *mockQuestionWorkerRepository) ListPerspectivesByHighlightID(ctx context.Context, userID string, highlightID uuid.UUID) ([]string, error) {
+	return make([]string, 0), nil
+}
+
+func (m *mockQuestionWorkerRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
+	return nil
+}
+
+func (m *mockQuestionWorkerRepository) ClaimPendingRegenerationTasks(ctx context.Context, limit int) ([]*domain.RegenerationTask, error) {
+	return make([]*domain.RegenerationTask, 0), nil
+}
+
+func (m *mockQuestionWorkerRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {
+	return nil
+}
+
+func (m *mockQuestionWorkerRepository) MarkRegenerationTasksFailed(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error {
+	return nil
+}
 
 func TestDynamicMaxWaitTime(t *testing.T) {
 	cases := []struct {
@@ -65,14 +102,76 @@ func TestShouldProcessPendingBatch(t *testing.T) {
 		OldestPendingAt: now.Add(-11 * time.Second),
 	}
 
-	if !shouldProcessPendingBatch(stat, now, 5*time.Minute) {
+	if !shouldProcessPendingBatch(stat, now, 5*time.Minute, defaultWorkerBatchSize) {
 		t.Fatal("expected batch to be due once dynamic wait time is exceeded")
 	}
 
 	stat.PendingCount = 10
 	stat.OldestPendingAt = now
-	if !shouldProcessPendingBatch(stat, now, 5*time.Minute) {
+	if !shouldProcessPendingBatch(stat, now, 5*time.Minute, defaultWorkerBatchSize) {
 		t.Fatal("expected batch to be due immediately when pending count reaches 10")
+	}
+
+	stat.PendingCount = 5
+	if !shouldProcessPendingBatch(stat, now, 5*time.Minute, 5) {
+		t.Fatal("expected batch to respect configured worker batch size")
+	}
+}
+
+func TestSaveGeneratedQuestionsForChunkKeepsPartialSaveFailureFailed(t *testing.T) {
+	highlightID := uuid.New()
+	saveCalls := 0
+	uc := &QuestionWorkerUsecase{
+		questionRepo: &mockQuestionWorkerRepository{
+			save: func(ctx context.Context, question *domain.Question, meta *domain.QuestionMeta) error {
+				saveCalls++
+				if saveCalls == 2 {
+					return errors.New("save failed")
+				}
+				return nil
+			},
+		},
+	}
+
+	completed := make(map[uuid.UUID]struct{})
+	failed := make(map[uuid.UUID]string)
+	uc.saveGeneratedQuestionsForChunk(
+		context.Background(),
+		uuid.NewString(),
+		"generation-id",
+		[]highlightGenerationPlan{{
+			highlight: &domain.Highlight{
+				ID: highlightID,
+			},
+			perspectives: []string{
+				domain.QuestionPerspectiveDefinition,
+				domain.QuestionPerspectiveUnderstanding,
+			},
+			versions: []int{1, 1},
+		}},
+		[]domain.GeneratedQuestion{
+			{
+				Content:       "question 1",
+				Options:       []string{"a", "b", "c", "d"},
+				CorrectAnswer: "a",
+				Explanation:   "explanation 1",
+			},
+			{
+				Content:       "question 2",
+				Options:       []string{"a", "b", "c", "d"},
+				CorrectAnswer: "b",
+				Explanation:   "explanation 2",
+			},
+		},
+		completed,
+		failed,
+	)
+
+	if _, ok := completed[highlightID]; ok {
+		t.Fatal("expected partially saved highlight not to be marked completed")
+	}
+	if failed[highlightID] == "" {
+		t.Fatal("expected partially saved highlight to remain failed for retry")
 	}
 }
 

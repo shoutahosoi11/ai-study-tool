@@ -60,42 +60,6 @@ func (s *stubHighlightRepository) ListBooksWithHighlightsByUserID(ctx context.Co
 	return nil, errors.New("not implemented")
 }
 
-func (s *stubHighlightRepository) ListBookStockByUserID(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error) {
-	return make([]domain.BookStock, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ListUnusedHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ListUsedHighlightsWithUncoveredPerspectives(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {
-	return make([]domain.PendingHighlightUserStat, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ClaimPendingByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ClaimPendingByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) QueueHighlightsForGeneration(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-	return errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) MarkGenerationFailed(ctx context.Context, highlightIDs []uuid.UUID, lastError string, maxRetry int) error {
-	return errors.New("not implemented")
-}
-
 func (s *stubHighlightRepository) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*domain.Highlight, error) {
 	return nil, errors.New("not implemented")
 }

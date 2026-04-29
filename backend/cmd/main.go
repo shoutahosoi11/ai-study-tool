@@ -25,7 +25,7 @@ func main() {
 	defer db.Close()
 
 	if err := db.Ping(); err != nil {
-		log.Printf("warning: database not reachable: %v", err)
+		log.Fatalf("failed to ping database: %v", err)
 	}
 
 	container, err := di.NewContainer(db)

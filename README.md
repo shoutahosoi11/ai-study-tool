@@ -4,12 +4,14 @@ AI Study Tool is an AI-powered learning platform for study workflows, question g
 
 ## Tech Stack
 
-- Go + Echo
-- PostgreSQL + sqlc
+- Go 1.25 + Echo
+- PostgreSQL on Neon + sqlc + database/sql
 - React + TypeScript + Tailwind CSS + Vite
+- React Native + Expo for the mobile app
 - Firebase Auth
-- AWS S3
+- Cloud Storage signed URLs
 - Gemini API
+- Chrome Extension for Kindle Notebook highlight import
 
 ## Getting Started
 
@@ -24,15 +26,36 @@ The project follows Clean Architecture:
 - `backend/cmd` contains the application entrypoint.
 - `backend/internal/domain` contains core business entities and rules.
 - `backend/internal/usecase` contains application-specific business logic.
-- `backend/internal/repository` contains persistence adapters and sqlc-generated access code.
+- `backend/internal/infrastructure` contains adapters for PostgreSQL, Gemini, Firebase, and Cloud Storage.
+- `backend/internal/repository/sqlcgen` contains sqlc-generated database access code.
 - `backend/internal/handler` contains HTTP handlers.
 - `backend/internal/middleware` contains cross-cutting HTTP middleware.
 - `frontend/src` contains the client application organized by components, pages, hooks, theme, types, and API access.
+- `mobile` contains the Expo app used for iOS share-sheet intake and mobile learning flows.
+- `extension` and `kindle-highlights-extension` contain browser-extension work for Kindle Notebook scraping and import experiments.
+
+## Question Generation
+
+Question generation is on-demand. The frontend calls `POST /api/questions/sync`
+after highlight import or app startup. The backend queues only the missing stock
+needed to satisfy each user's `default_question_count`, then the worker processes
+queued highlights asynchronously.
+
+Relevant runtime controls:
+
+- `QUESTION_SYNC_PER_TRIGGER_LIMIT`: max questions queued by one sync trigger.
+- `QUESTION_SYNC_DAILY_LIMIT`: max questions queued per user per day.
+- `QUESTION_SYNC_STALE_PROCESSING_SECONDS`: retry window for stale processing highlights.
+- `QUESTION_SYNC_WORKER_TIMEOUT_SECONDS`: timeout for the on-demand worker kicked by question sync.
+- `QUESTION_WORKER_POLL_INTERVAL_SECONDS`: fallback worker polling interval.
+- `USE_GEMINI_MOCK=true`: use the fake Gemini client for local/staging checks.
 
 ## Deployment
 
 Phase 1 deployment targets Cloud Run, Neon PostgreSQL, Firebase Auth,
-Cloud Storage signed URLs, and GitHub Actions. See
+Cloud Storage signed URLs, Secret Manager, and GitHub Actions. Store the Neon
+pooled or direct connection string in the `DATABASE_URL` Secret Manager secret.
+See
 [`docs/deploy-phase-1.md`](docs/deploy-phase-1.md).
 
 For the upcoming iOS / Android share-sheet intake flow, see

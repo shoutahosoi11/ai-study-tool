@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
@@ -14,14 +13,6 @@ import (
 type mockHighlightRepository struct {
 	listByUserIDAndASIN    func(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error)
 	listByUserIDAndBookMet func(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error)
-}
-
-func (m *mockHighlightRepository) BulkUpsert(ctx context.Context, highlights []*domain.Highlight) (int, error) {
-	return 0, errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) ListExistingContentHashesByUserID(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error) {
-	return make([]string, 0), errors.New("not implemented")
 }
 
 func (m *mockHighlightRepository) ListByUserIDAndASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error) {
@@ -36,50 +27,6 @@ func (m *mockHighlightRepository) ListByUserIDAndBookMetadata(ctx context.Contex
 		return make([]*domain.Highlight, 0), nil
 	}
 	return m.listByUserIDAndBookMet(ctx, userID, bookTitle, bookAuthor)
-}
-
-func (m *mockHighlightRepository) ListBooksWithHighlightsByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error) {
-	return make([]*domain.KindleBook, 0), errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) ListBookStockByUserID(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error) {
-	return make([]domain.BookStock, 0), errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) ListUnusedHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) ListUsedHighlightsWithUncoveredPerspectives(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {
-	return make([]domain.PendingHighlightUserStat, 0), errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) ClaimPendingByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) ClaimPendingByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) QueueHighlightsForGeneration(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) MarkGenerationFailed(ctx context.Context, highlightIDs []uuid.UUID, lastError string, maxRetry int) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockHighlightRepository) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
 }
 
 func TestQuestionSourceResolver_ResolveHighlightsFromKindleBook(t *testing.T) {

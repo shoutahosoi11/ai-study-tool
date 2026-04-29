@@ -13,10 +13,10 @@ import (
 )
 
 type HighlightUsecase struct {
-	repo domain.HighlightRepository
+	repo domain.HighlightImportRepository
 }
 
-func NewHighlightUsecase(repo domain.HighlightRepository) *HighlightUsecase {
+func NewHighlightUsecase(repo domain.HighlightImportRepository) *HighlightUsecase {
 	return &HighlightUsecase{repo: repo}
 }
 
