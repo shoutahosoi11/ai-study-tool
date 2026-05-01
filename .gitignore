@@ -21,3 +21,10 @@ gha-creds-*.json
 *.env
 !*.env.example
 .ai-consensus/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
