@@ -1,8 +1,11 @@
 # Cloud Run Deployment Guardrails
 
 This service is deployed to Cloud Run by `.github/workflows/deploy-api.yml`.
-The API is an Echo HTTP server on port `8080` with `/health` as the lightweight
-health endpoint.
+The API is an Echo HTTP server on port `8080` with separate lightweight
+probes:
+
+- `/health`: process liveness only.
+- `/ready`: readiness, including database connectivity.
 
 ## Required Limits
 
@@ -31,14 +34,20 @@ quickly and let workers do longer-running work.
 
 ## Health Check
 
-Use:
+Use liveness checks for process health:
 
 ```text
 GET /health
 ```
 
-The endpoint should not require Firebase Auth and should not touch expensive
-dependencies. It is also used by the deploy workflow after Cloud Run deploy.
+Use readiness checks before routing real traffic or during manual verification:
+
+```text
+GET /ready
+```
+
+`/health` should not require Firebase Auth and should not touch expensive
+dependencies. `/ready` may return `503` when the database is unavailable.
 
 ## Manual Deploy Snippet
 
@@ -106,4 +115,5 @@ gcloud run services describe "${SERVICE}" \
   --format="value(spec.template.spec.containerConcurrency,spec.template.metadata.annotations.autoscaling.knative.dev/maxScale)"
 
 curl --fail "https://YOUR_SERVICE_URL/health"
+curl --fail "https://YOUR_SERVICE_URL/ready"
 ```

@@ -54,3 +54,15 @@ Signing service account:
 - Confirm object names cannot escape the intended user prefix.
 - Confirm frontend and mobile never receive broad bucket credentials.
 - Confirm lifecycle retention and deletion policy match product expectations.
+
+## Future Upload Path Decision
+
+The current design uses signed URLs so large upload/download traffic goes
+directly between the client and Cloud Storage. This keeps Cloud Run cost and
+latency lower, and it avoids making API instances carry file bodies.
+
+An alternative is uploading through the backend first, then writing to Cloud
+Storage server-side. That gives the backend one place to enforce deeper content
+validation, malware scanning, quota accounting, and metadata normalization, but
+it increases Cloud Run bandwidth, memory pressure, timeout risk, and request
+cost. Treat that as a separate design change, not a small routing tweak.

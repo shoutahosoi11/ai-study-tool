@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -13,7 +15,10 @@ import (
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	_ "github.com/lib/pq"
 	"github.com/shout/ai-study-tool/backend/internal/di"
+	"github.com/shout/ai-study-tool/backend/internal/router"
 )
+
+const readinessTimeout = 2 * time.Second
 
 func main() {
 	if err := godotenv.Load(); err != nil {
@@ -26,9 +31,6 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := db.Ping(); err != nil {
-		log.Fatalf("failed to ping database: %v", err)
-	}
 	configureDatabasePool(db)
 
 	container, err := di.NewContainer(db)
@@ -47,66 +49,31 @@ func main() {
 	}))
 
 	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(200, map[string]string{"status": "ok"})
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
+	e.GET("/ready", readinessHandler(db))
 
-	api := e.Group("/api")
-	authMiddleware := container.FirebaseMiddleware.Authenticate
-	ingestRateLimit := container.RateLimitMiddleware.Limit
-
-	users := api.Group("/users")
-	users.POST("/signup", container.UserHandler.SignUp, authMiddleware)
-	users.GET("/me", container.UserHandler.GetMe, authMiddleware)
-	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings, authMiddleware)
-	users.GET("/:id", container.UserHandler.GetUser, authMiddleware)
-	users.PUT("/me", container.UserHandler.UpdateProfile, authMiddleware)
-
-	posts := api.Group("/posts", authMiddleware)
-	posts.GET("/timeline", container.PostHandler.GetTimeline)
-	posts.GET("/:id/questions", container.PostHandler.ListQuestions)
-	posts.GET("/:id", container.PostHandler.GetPost)
-	posts.POST("", container.PostHandler.CreatePost)
-
-	highlights := api.Group("/highlights", authMiddleware)
-	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes)
-	highlights.POST("/import", container.HighlightHandler.Import, ingestRateLimit)
-	highlights.POST("/share", container.HighlightHandler.ImportShared, ingestRateLimit)
-	highlights.POST("/paste", container.HighlightHandler.ImportPaste, echomiddleware.BodyLimit("5K"), ingestRateLimit)
-	highlights.GET("/books", container.HighlightHandler.ListBooks)
-	highlights.GET("/books/search/items", container.HighlightHandler.ListByBookMetadata)
-	highlights.GET("/books/:asin/items", container.HighlightHandler.ListByASIN)
-	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation)
-
-	storage := api.Group("/storage", authMiddleware)
-	storage.POST("/signed-urls/upload", container.StorageHandler.CreateUploadSignedURL)
-	storage.POST("/signed-urls/download", container.StorageHandler.CreateDownloadSignedURL)
-
-	questions := api.Group("/questions", authMiddleware)
-	questions.GET("", container.QuestionHandler.List)
-	questions.GET("/prepared", container.QuestionHandler.ListPrepared)
-	questions.GET("/saved", container.QuestionHandler.ListSaved)
-	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
-	questions.POST("/sync", container.QuestionHandler.SyncStock)
-	questions.POST("", container.QuestionHandler.GenerateQuestions)
-	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
-	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)
-	questions.POST("/:id/grade", container.QuestionHandler.GradeAnswer)
-
-	social := api.Group("", authMiddleware)
-	social.POST("/users/:id/follow", container.SocialHandler.Follow)
-	social.DELETE("/users/:id/follow", container.SocialHandler.Unfollow)
-	social.POST("/posts/:id/like", container.SocialHandler.Like)
-	social.DELETE("/posts/:id/like", container.SocialHandler.Unlike)
-	social.POST("/posts/:id/repost", container.SocialHandler.Repost)
-	social.DELETE("/posts/:id/repost", container.SocialHandler.Unrepost)
-	social.POST("/posts/:id/comments", container.SocialHandler.CreateComment)
-	social.GET("/posts/:id/comments", container.SocialHandler.ListComments)
+	router.RegisterAPI(e, container)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 	e.Logger.Fatal(e.Start(":" + port))
+}
+
+func readinessHandler(db *sql.DB) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		ctx, cancel := context.WithTimeout(c.Request().Context(), readinessTimeout)
+		defer cancel()
+
+		if err := db.PingContext(ctx); err != nil {
+			log.Printf("readiness check failed: %v", err)
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		}
+
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	}
 }
 
 func allowedOrigins() []string {
