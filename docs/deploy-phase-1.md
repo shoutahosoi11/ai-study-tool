@@ -236,3 +236,9 @@ Add the deployed frontend domain to:
 - Signed uploads must send the exact `Content-Type` returned by `/api/storage/signed-urls/upload`.
 - For staging without Gemini cost, set `USE_GEMINI_MOCK=true`.
 - To test tighter generation budgets, set `QUESTION_SYNC_DAILY_LIMIT` and `QUESTION_SYNC_PER_TRIGGER_LIMIT` to small values.
+- Security deployment guardrails live under `docs/deployment/`:
+  - `cloud-run.md`
+  - `cloudflare.md`
+  - `storage-security-checklist.md`
+  - `budget-alert.md`
+  - `incident-runbook.md`

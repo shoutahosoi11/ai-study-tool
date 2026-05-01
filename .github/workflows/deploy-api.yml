@@ -112,6 +112,11 @@ jobs:
             --port=8080
             --allow-unauthenticated
             --service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
+            --max-instances=10
+            --concurrency=80
+            --cpu=1
+            --memory=512Mi
+            --timeout=60s
 
       - name: Check deployed health endpoint
         run: curl --fail --show-error --silent "${{ steps.deploy.outputs.url }}/health"
