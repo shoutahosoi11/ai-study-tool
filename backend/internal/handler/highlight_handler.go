@@ -23,6 +23,7 @@ type HighlightUsecase interface {
 	ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []usecase.ImportHighlightItem) (*usecase.ImportKindleResult, error)
 	ListExistingContentHashes(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error)
 	ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input usecase.ImportSharedHighlightInput) (*usecase.ImportSharedHighlightResult, error)
+	ImportPastedHighlight(ctx context.Context, userID uuid.UUID, input usecase.ImportPastedHighlightInput) (*usecase.ImportPastedHighlightResult, error)
 	ListKindleBooks(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error)
 	ListByASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error)
 	ListByBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error)
@@ -61,6 +62,9 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 
 	result, err := h.highlightUsecase.ImportKindleHighlights(c.Request().Context(), user.ID, items)
 	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
+		}
 		if errors.Is(err, domain.ErrAllCopyProtected) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "コピー制限によりハイライトを取得できませんでした")
 		}
@@ -126,7 +130,7 @@ func (h *HighlightHandler) ImportShared(c echo.Context) error {
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidInput) {
-			return echo.NewHTTPError(http.StatusBadRequest, "content is required")
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
 		}
 		log.Printf("highlight share import error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
@@ -141,6 +145,43 @@ func (h *HighlightHandler) ImportShared(c echo.Context) error {
 		Saved:     result.Saved,
 		Duplicate: result.Duplicate,
 		Highlight: responseHighlight,
+	})
+}
+
+func (h *HighlightHandler) ImportPaste(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	req := new(dto.ImportPastedHighlightRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	result, err := h.highlightUsecase.ImportPastedHighlight(c.Request().Context(), user.ID, usecase.ImportPastedHighlightInput{
+		BookTitle:  req.BookTitle,
+		BookAuthor: req.BookAuthor,
+		Content:    req.Content,
+		SourceApp:  req.SourceApp,
+		SourceURL:  req.SourceURL,
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
+		}
+		log.Printf("highlight paste import error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	status := http.StatusCreated
+	if result.Duplicate {
+		status = http.StatusOK
+	}
+
+	return c.JSON(status, dto.ImportPastedHighlightResponse{
+		ID:        result.ID.String(),
+		Duplicate: result.Duplicate,
 	})
 }
 

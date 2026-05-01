@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/shout/ai-study-tool/backend/internal/handler"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
@@ -16,15 +18,16 @@ import (
 )
 
 type Container struct {
-	UserHandler        *handler.UserHandler
-	PostHandler        *handler.PostHandler
-	QuestionHandler    *handler.QuestionHandler
-	AnswerHandler      *handler.AnswerHandler
-	SocialHandler      *handler.SocialHandler
-	HighlightHandler   *handler.HighlightHandler
-	StorageHandler     *handler.StorageHandler
-	FirebaseMiddleware *middleware.FirebaseMiddleware
-	closeLLMClient     gemini.ClientCloser
+	UserHandler         *handler.UserHandler
+	PostHandler         *handler.PostHandler
+	QuestionHandler     *handler.QuestionHandler
+	AnswerHandler       *handler.AnswerHandler
+	SocialHandler       *handler.SocialHandler
+	HighlightHandler    *handler.HighlightHandler
+	StorageHandler      *handler.StorageHandler
+	FirebaseMiddleware  *middleware.FirebaseMiddleware
+	RateLimitMiddleware *middleware.RateLimitMiddleware
+	closeLLMClient      gemini.ClientCloser
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
@@ -68,6 +71,12 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	answerRepo := persistence.NewAnswerRepository(db)
 	socialRepo := persistence.NewSocialRepository(db)
 	highlightRepo := persistence.NewHighlightRepository(db)
+	rateLimitRepo := persistence.NewRateLimitRepository(db)
+
+	rateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
+	if err != nil {
+		return nil, err
+	}
 
 	userUsecase := usecase.NewUserUsecase(userRepo)
 	postUsecase := usecase.NewPostUsecase(postRepo)
@@ -89,15 +98,16 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	storageHandler := handler.NewStorageHandler(storageUsecase, userUsecase)
 
 	return &Container{
-		UserHandler:        userHandler,
-		PostHandler:        postHandler,
-		QuestionHandler:    questionHandler,
-		AnswerHandler:      answerHandler,
-		SocialHandler:      socialHandler,
-		HighlightHandler:   highlightHandler,
-		StorageHandler:     storageHandler,
-		FirebaseMiddleware: firebaseMiddleware,
-		closeLLMClient:     closeLLMClient,
+		UserHandler:         userHandler,
+		PostHandler:         postHandler,
+		QuestionHandler:     questionHandler,
+		AnswerHandler:       answerHandler,
+		SocialHandler:       socialHandler,
+		HighlightHandler:    highlightHandler,
+		StorageHandler:      storageHandler,
+		FirebaseMiddleware:  firebaseMiddleware,
+		RateLimitMiddleware: rateLimitMiddleware,
+		closeLLMClient:      closeLLMClient,
 	}, nil
 }
 
@@ -106,4 +116,18 @@ func (c *Container) Close() {
 		return
 	}
 	c.closeLLMClient()
+}
+
+func readEnvInt64OrDefault(key string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+
+	return parsed
 }

@@ -194,7 +194,7 @@ INSERT INTO highlights (
     status,
     retry_count,
     processing_started_at
-) VALUES ($1, $2, $3, $4, $5, $6, 'kindle', $7, $8, $9)
+) VALUES ($1, $2, $3, $4, $5, $6, 'extension', $7, $8, $9)
 `, highlightID, userID, "Integration Book", "ASIN-"+highlightID.String()[:8], "integration highlight "+highlightID.String(), "hash-"+highlightID.String(), string(status), retryCount, processingStartedAt); err != nil {
 		t.Fatalf("insert highlight %s: %v", highlightID, err)
 	}

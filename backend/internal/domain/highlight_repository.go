@@ -10,6 +10,7 @@ import (
 type HighlightWriter interface {
 	BulkUpsert(ctx context.Context, highlights []*Highlight) (saved int, err error)
 	ListExistingContentHashesByUserID(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error)
+	FindByUserIDAndContentHash(ctx context.Context, userID uuid.UUID, contentHash string) (*Highlight, error)
 	UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*Highlight, error)
 }
 

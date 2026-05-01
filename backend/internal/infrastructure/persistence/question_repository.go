@@ -764,6 +764,7 @@ JOIN highlights h
 			highlightHash       sql.NullString
 			highlightLocation   sql.NullString
 			highlightedAt       sql.NullTime
+			highlightSource     sql.NullString
 			highlightSourceApp  sql.NullString
 			highlightSourceURL  sql.NullString
 			highlightStatus     sql.NullString
@@ -796,7 +797,7 @@ JOIN highlights h
 			&highlightHash,
 			&highlightLocation,
 			&highlightedAt,
-			&highlight.Source,
+			&highlightSource,
 			&highlightSourceApp,
 			&highlightSourceURL,
 			&highlightStatus,
@@ -820,6 +821,7 @@ JOIN highlights h
 		highlight.ContentHash = fromNullString(highlightHash)
 		highlight.Location = fromNullString(highlightLocation)
 		highlight.HighlightedAt = fromNullTime(highlightedAt)
+		highlight.Source = fromNullStringValue(highlightSource)
 		highlight.SourceApp = fromNullString(highlightSourceApp)
 		highlight.SourceURL = fromNullString(highlightSourceURL)
 		highlight.Status = domain.HighlightStatus(strings.TrimSpace(highlightStatus.String))
