@@ -1,0 +1,8 @@
+{
+  "name": "ai-study-tool",
+  "private": true,
+  "scripts": {
+    "build": "cd frontend && npm run build",
+    "deploy:cloudflare": "npx wrangler deploy"
+  }
+}

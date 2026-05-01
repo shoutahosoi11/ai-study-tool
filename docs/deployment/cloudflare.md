@@ -99,3 +99,14 @@ in Cloudflare Dashboard:
 The repository config serves the Vite `dist` directory as static assets and
 uses `single-page-application` routing so React Router paths return
 `index.html`.
+
+If the Cloudflare project is still configured with the repository root as its
+root directory, use:
+
+- Root directory: repository root
+- Build command: `cd frontend && npm ci && npm run build`
+- Deploy command: `npx wrangler deploy`
+- Wrangler config: `wrangler.toml`
+
+The root config forwards the build to `frontend` and serves
+`frontend/dist`.
