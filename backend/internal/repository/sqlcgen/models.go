@@ -68,7 +68,7 @@ type Highlight struct {
 	BookAuthor            sql.NullString `json:"book_author"`
 	Asin                  sql.NullString `json:"asin"`
 	HighlightedAt         sql.NullTime   `json:"highlighted_at"`
-	Source                string         `json:"source"`
+	Source                sql.NullString `json:"source"`
 	UpdatedAt             time.Time      `json:"updated_at"`
 	ContentHash           sql.NullString `json:"content_hash"`
 	Explanation           sql.NullString `json:"explanation"`
@@ -131,6 +131,8 @@ type Question struct {
 	UpdatedAt         time.Time             `json:"updated_at"`
 	GenerationID      uuid.NullUUID         `json:"generation_id"`
 	HighlightID       uuid.NullUUID         `json:"highlight_id"`
+	Perspective       string                `json:"perspective"`
+	Version           int32                 `json:"version"`
 }
 
 type QuestionGeneration struct {
@@ -141,6 +143,31 @@ type QuestionGeneration struct {
 	PromptUsed sql.NullString `json:"prompt_used"`
 	ModelUsed  sql.NullString `json:"model_used"`
 	CreatedAt  time.Time      `json:"created_at"`
+}
+
+type RateLimitCounter struct {
+	UserID    string    `json:"user_id"`
+	Bucket    string    `json:"bucket"`
+	Period    time.Time `json:"period"`
+	Count     int64     `json:"count"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type RegenerationQueue struct {
+	ID                      uuid.UUID      `json:"id"`
+	UserID                  uuid.UUID      `json:"user_id"`
+	HighlightID             uuid.UUID      `json:"highlight_id"`
+	RequestedFromQuestionID uuid.NullUUID  `json:"requested_from_question_id"`
+	Reason                  string         `json:"reason"`
+	Status                  string         `json:"status"`
+	RetryCount              int32          `json:"retry_count"`
+	RequestedAt             time.Time      `json:"requested_at"`
+	ProcessingStartedAt     sql.NullTime   `json:"processing_started_at"`
+	CompletedAt             sql.NullTime   `json:"completed_at"`
+	FailedAt                sql.NullTime   `json:"failed_at"`
+	LastError               sql.NullString `json:"last_error"`
+	CreatedAt               time.Time      `json:"created_at"`
+	UpdatedAt               time.Time      `json:"updated_at"`
 }
 
 type Repost struct {
@@ -178,6 +205,12 @@ type UserBook struct {
 	UserID    uuid.UUID `json:"user_id"`
 	BookID    uuid.UUID `json:"book_id"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserDailyGenerationCount struct {
+	UserID uuid.UUID `json:"user_id"`
+	Date   time.Time `json:"date"`
+	Count  int32     `json:"count"`
 }
 
 type UserInterest struct {

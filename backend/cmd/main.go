@@ -52,6 +52,7 @@ func main() {
 
 	api := e.Group("/api")
 	authMiddleware := container.FirebaseMiddleware.Authenticate
+	ingestRateLimit := container.RateLimitMiddleware.Limit
 
 	users := api.Group("/users")
 	users.POST("/signup", container.UserHandler.SignUp, authMiddleware)
@@ -68,8 +69,9 @@ func main() {
 
 	highlights := api.Group("/highlights", authMiddleware)
 	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes)
-	highlights.POST("/import", container.HighlightHandler.Import)
-	highlights.POST("/share", container.HighlightHandler.ImportShared)
+	highlights.POST("/import", container.HighlightHandler.Import, ingestRateLimit)
+	highlights.POST("/share", container.HighlightHandler.ImportShared, ingestRateLimit)
+	highlights.POST("/paste", container.HighlightHandler.ImportPaste, echomiddleware.BodyLimit("5K"), ingestRateLimit)
 	highlights.GET("/books", container.HighlightHandler.ListBooks)
 	highlights.GET("/books/search/items", container.HighlightHandler.ListByBookMetadata)
 	highlights.GET("/books/:asin/items", container.HighlightHandler.ListByASIN)

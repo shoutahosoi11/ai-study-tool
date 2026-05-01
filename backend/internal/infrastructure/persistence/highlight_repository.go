@@ -138,6 +138,29 @@ WHERE user_id = $1
 	return items, nil
 }
 
+func (r *highlightRepository) FindByUserIDAndContentHash(ctx context.Context, userID uuid.UUID, contentHash string) (*domain.Highlight, error) {
+	normalizedHash := strings.TrimSpace(contentHash)
+	if normalizedHash == "" {
+		return nil, domain.ErrInvalidInput
+	}
+
+	highlight, err := r.listOneHighlight(ctx, `
+SELECT id, user_id, book_id, book_title, book_author, asin, content, explanation, content_hash, location,
+       highlighted_at, source, source_app, source_url, status, retry_count, last_error,
+       generation_requested_at, processing_started_at, completed_at, failed_at, created_at, updated_at
+FROM highlights
+WHERE user_id = $1
+  AND content_hash = $2
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+`, userID, normalizedHash)
+	if err != nil {
+		return nil, fmt.Errorf("highlight repo: find by content hash: %w", err)
+	}
+
+	return highlight, nil
+}
+
 func (r *highlightRepository) ListByUserIDAndASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error) {
 	return r.listHighlights(ctx, `
 SELECT id, user_id, book_id, book_title, book_author, asin, content, explanation, content_hash, location,
@@ -148,7 +171,7 @@ WHERE user_id = $1
   AND asin = $2
   AND source = $3
 ORDER BY highlighted_at ASC NULLS LAST, created_at ASC
-`, userID, strings.TrimSpace(asin), domain.HighlightSourceKindle)
+`, userID, strings.TrimSpace(asin), domain.HighlightSourceExtension)
 }
 
 func (r *highlightRepository) ListByUserIDAndBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error) {
@@ -196,7 +219,7 @@ ORDER BY highlighted_at ASC NULLS LAST, created_at ASC
 func (r *highlightRepository) ListBooksWithHighlightsByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error) {
 	rows, err := r.queries.ListHighlightBooksByUserID(ctx, sqlcgen.ListHighlightBooksByUserIDParams{
 		UserID: userID,
-		Source: domain.HighlightSourceKindle,
+		Source: sql.NullString{String: domain.HighlightSourceExtension, Valid: true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("highlight repo: list books: %w", err)
@@ -213,7 +236,7 @@ func (r *highlightRepository) ListBooksWithHighlightsByUserID(ctx context.Contex
 			BookTitle:      strings.TrimSpace(row.BookTitle),
 			BookAuthor:     strings.TrimSpace(row.BookAuthor),
 			HighlightCount: int(row.HighlightCount),
-			Source:         row.Source,
+			Source:         fromNullStringValue(row.Source),
 		})
 	}
 
@@ -646,6 +669,19 @@ func (r *highlightRepository) listHighlights(ctx context.Context, query string, 
 	return highlights, nil
 }
 
+func (r *highlightRepository) listOneHighlight(ctx context.Context, query string, args ...any) (*domain.Highlight, error) {
+	row := r.db.QueryRowContext(ctx, query, args...)
+	highlight, err := scanHighlight(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+
+	return highlight, nil
+}
+
 type highlightScanner interface {
 	Scan(dest ...any) error
 }
@@ -663,6 +699,7 @@ func scanHighlight(scanner highlightScanner) (*domain.Highlight, error) {
 		highlightedAt sql.NullTime
 		sourceApp     sql.NullString
 		sourceURL     sql.NullString
+		source        sql.NullString
 		status        sql.NullString
 		lastError     sql.NullString
 		processingAt  sql.NullTime
@@ -683,7 +720,7 @@ func scanHighlight(scanner highlightScanner) (*domain.Highlight, error) {
 		&contentHash,
 		&location,
 		&highlightedAt,
-		&highlight.Source,
+		&source,
 		&sourceApp,
 		&sourceURL,
 		&status,
@@ -707,6 +744,7 @@ func scanHighlight(scanner highlightScanner) (*domain.Highlight, error) {
 	highlight.ContentHash = fromNullString(contentHash)
 	highlight.Location = fromNullString(location)
 	highlight.HighlightedAt = fromNullTime(highlightedAt)
+	highlight.Source = fromNullStringValue(source)
 	highlight.SourceApp = fromNullString(sourceApp)
 	highlight.SourceURL = fromNullString(sourceURL)
 	highlight.Status = domain.HighlightStatus(strings.TrimSpace(status.String))
@@ -745,7 +783,7 @@ func toDomainHighlight(item sqlcgen.Highlight) *domain.Highlight {
 		ContentHash:   fromNullString(item.ContentHash),
 		Location:      fromNullString(item.Location),
 		HighlightedAt: fromNullTime(item.HighlightedAt),
-		Source:        item.Source,
+		Source:        fromNullStringValue(item.Source),
 		SourceApp:     fromNullString(item.SourceApp),
 		SourceURL:     fromNullString(item.SourceUrl),
 		Status:        domain.HighlightStatus(strings.TrimSpace(item.Status)),
@@ -774,6 +812,14 @@ func fromNullString(value sql.NullString) *string {
 	}
 
 	return &value.String
+}
+
+func fromNullStringValue(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+
+	return value.String
 }
 
 func toNullTime(value *time.Time) sql.NullTime {
