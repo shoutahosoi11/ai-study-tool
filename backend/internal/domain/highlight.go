@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	HighlightSourceKindle      = "kindle"
-	HighlightSourceMobileShare = "mobile_share"
+	HighlightSourceExtension = "extension"
+	HighlightSourceShare     = "share"
+	HighlightSourcePaste     = "paste"
 )
 
 type HighlightStatus string

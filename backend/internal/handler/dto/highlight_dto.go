@@ -32,6 +32,14 @@ type ImportSharedHighlightRequest struct {
 	SharedAt   *time.Time `json:"shared_at"`
 }
 
+type ImportPastedHighlightRequest struct {
+	BookTitle  string `json:"book_title"`
+	BookAuthor string `json:"book_author"`
+	Content    string `json:"content"`
+	SourceApp  string `json:"source_app"`
+	SourceURL  string `json:"source_url"`
+}
+
 type UpdateHighlightExplanationRequest struct {
 	Explanation string `json:"explanation"`
 }
@@ -65,6 +73,11 @@ type ImportSharedHighlightResponse struct {
 	Saved     bool               `json:"saved"`
 	Duplicate bool               `json:"duplicate"`
 	Highlight *HighlightResponse `json:"highlight,omitempty"`
+}
+
+type ImportPastedHighlightResponse struct {
+	ID        string `json:"id"`
+	Duplicate bool   `json:"duplicated"`
 }
 
 type ListBookHighlightsResponse struct {

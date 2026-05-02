@@ -55,7 +55,7 @@ func TestBuildLegacyHighlightBulkUpsert(t *testing.T) {
 		{
 			UserID:      userID,
 			Content:     "hello",
-			Source:      domain.HighlightSourceMobileShare,
+			Source:      domain.HighlightSourceShare,
 			ContentHash: &contentHash,
 			SourceApp:   &sourceApp,
 			SourceURL:   &sourceURL,
