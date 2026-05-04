@@ -6,8 +6,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -18,7 +20,10 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/router"
 )
 
-const readinessTimeout = 2 * time.Second
+const (
+	readinessTimeout = 2 * time.Second
+	shutdownTimeout  = 10 * time.Second
+)
 
 func main() {
 	if err := godotenv.Load(); err != nil {
@@ -59,7 +64,27 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	e.Logger.Fatal(e.Start(":" + port))
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- e.Start(":" + port)
+	}()
+
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server failed: %v", err)
+		}
+	case <-signalCtx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := e.Shutdown(shutdownCtx); err != nil {
+			log.Printf("server shutdown error: %v", err)
+		}
+	}
 }
 
 func readinessHandler(db *sql.DB) echo.HandlerFunc {

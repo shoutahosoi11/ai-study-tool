@@ -7,12 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler"
-	"github.com/shout/ai-study-tool/backend/internal/infrastructure/cloudtasks"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gcs"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
+	"github.com/shout/ai-study-tool/backend/internal/infrastructure/inprocess"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
@@ -27,7 +26,7 @@ type Container struct {
 	SocialHandler       *handler.SocialHandler
 	HighlightHandler    *handler.HighlightHandler
 	StorageHandler      *handler.StorageHandler
-	TaskHandler         *handler.TaskHandler
+	QuestionDispatcher  *inprocess.QuestionGenerationDispatcher
 	FirebaseMiddleware  *middleware.FirebaseMiddleware
 	RateLimitMiddleware *middleware.RateLimitMiddleware
 	closeLLMClient      gemini.ClientCloser
@@ -87,11 +86,11 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
 	questionWorkerUsecase := usecase.NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, questionJobRepo, geminiClient)
-	questionTaskEnqueuer, err := newQuestionGenerationTaskEnqueuer(ctx)
-	if err != nil {
-		return nil, err
-	}
-	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionTaskEnqueuer)
+	questionDispatcher := inprocess.NewQuestionGenerationDispatcher(
+		questionWorkerUsecase,
+		readEnvIntOrDefault("QUESTION_DISPATCHER_MAX_CONCURRENT", 3),
+	)
+	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionDispatcher)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
@@ -104,7 +103,6 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
 	storageHandler := handler.NewStorageHandler(storageUsecase, userUsecase)
-	taskHandler := handler.NewTaskHandler(questionWorkerUsecase)
 
 	return &Container{
 		UserHandler:         userHandler,
@@ -114,29 +112,37 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		SocialHandler:       socialHandler,
 		HighlightHandler:    highlightHandler,
 		StorageHandler:      storageHandler,
-		TaskHandler:         taskHandler,
+		QuestionDispatcher:  questionDispatcher,
 		FirebaseMiddleware:  firebaseMiddleware,
 		RateLimitMiddleware: rateLimitMiddleware,
 		closeLLMClient:      closeLLMClient,
 	}, nil
 }
 
-func newQuestionGenerationTaskEnqueuer(ctx context.Context) (domain.QuestionGenerationTaskEnqueuer, error) {
-	projectID := strings.TrimSpace(os.Getenv("CLOUD_TASKS_PROJECT_ID"))
-	locationID := strings.TrimSpace(os.Getenv("CLOUD_TASKS_LOCATION_ID"))
-	queueID := strings.TrimSpace(os.Getenv("QUESTION_GENERATION_QUEUE_ID"))
-	targetURL := strings.TrimSpace(os.Getenv("QUESTION_GENERATION_TASK_URL"))
-	if projectID == "" || locationID == "" || queueID == "" || targetURL == "" {
-		return nil, nil
-	}
-	return cloudtasks.NewQuestionGenerationEnqueuer(ctx, projectID, locationID, queueID, targetURL)
-}
-
 func (c *Container) Close() {
-	if c == nil || c.closeLLMClient == nil {
+	if c == nil {
 		return
 	}
-	c.closeLLMClient()
+	if c.QuestionDispatcher != nil {
+		c.QuestionDispatcher.Wait()
+	}
+	if c.closeLLMClient != nil {
+		c.closeLLMClient()
+	}
+}
+
+func readEnvIntOrDefault(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+
+	return parsed
 }
 
 func readEnvInt64OrDefault(key string, fallback int64) int64 {
