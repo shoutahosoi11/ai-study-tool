@@ -25,6 +25,7 @@ type Container struct {
 	SocialHandler       *handler.SocialHandler
 	HighlightHandler    *handler.HighlightHandler
 	StorageHandler      *handler.StorageHandler
+	TaskHandler         *handler.TaskHandler
 	FirebaseMiddleware  *middleware.FirebaseMiddleware
 	RateLimitMiddleware *middleware.RateLimitMiddleware
 	closeLLMClient      gemini.ClientCloser
@@ -96,6 +97,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
 	storageHandler := handler.NewStorageHandler(storageUsecase, userUsecase)
+	taskHandler := handler.NewTaskHandler()
 
 	return &Container{
 		UserHandler:         userHandler,
@@ -105,6 +107,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		SocialHandler:       socialHandler,
 		HighlightHandler:    highlightHandler,
 		StorageHandler:      storageHandler,
+		TaskHandler:         taskHandler,
 		FirebaseMiddleware:  firebaseMiddleware,
 		RateLimitMiddleware: rateLimitMiddleware,
 		closeLLMClient:      closeLLMClient,

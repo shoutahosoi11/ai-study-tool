@@ -4,6 +4,7 @@ import (
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/di"
+	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
 )
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
@@ -17,6 +18,7 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	registerStorageRoutes(api, container, authMiddleware)
 	registerQuestionRoutes(api, container, authMiddleware)
 	registerSocialRoutes(api, container, authMiddleware)
+	registerInternalTaskRoutes(e, container)
 }
 
 func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
@@ -85,4 +87,11 @@ func registerSocialRoutes(api *echo.Group, container *di.Container, authMiddlewa
 	social.DELETE("/posts/:id/repost", container.SocialHandler.Unrepost)
 	social.POST("/posts/:id/comments", container.SocialHandler.CreateComment)
 	social.GET("/posts/:id/comments", container.SocialHandler.ListComments)
+}
+
+func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
+	internal := e.Group("/internal", appmiddleware.InternalOnly())
+	// TODO: Keep Cloud Run ingress set to internal-and-cloud-load-balancing before
+	// enabling Cloud Tasks traffic. OIDC verification will be added in a later phase.
+	internal.POST("/tasks/question-generation", container.TaskHandler.HandleQuestionGeneration)
 }
