@@ -18,7 +18,6 @@ import (
 
 type stubQuestionUsecase struct {
 	saveQuestion func(ctx context.Context, userID string, questionID string, note string) error
-	gradeAnswer  func(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error)
 }
 
 func (s *stubQuestionUsecase) ListQuestions(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error) {
@@ -42,13 +41,6 @@ func (s *stubQuestionUsecase) SaveQuestion(ctx context.Context, userID string, q
 		return nil
 	}
 	return s.saveQuestion(ctx, userID, questionID, note)
-}
-
-func (s *stubQuestionUsecase) GradeAnswer(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error) {
-	if s.gradeAnswer == nil {
-		return &domain.GradeResult{}, nil
-	}
-	return s.gradeAnswer(ctx, input, userPlan)
 }
 
 type stubQuestionSyncUsecase struct{}
@@ -101,33 +93,6 @@ func TestValidateQuestionSourceIDReturnsInvalidInputForEmptyID(t *testing.T) {
 	err := validateQuestionSource(domain.SourceTypeKindleBook, "  ")
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestGradeAnswerTrimsQuestionID(t *testing.T) {
-	e := echo.New()
-	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
-	var gotQuestionID string
-	handler := NewQuestionHandler(&stubQuestionUsecase{
-		gradeAnswer: func(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error) {
-			gotQuestionID = input.QuestionID
-			return &domain.GradeResult{IsCorrect: true, Score: 100, Feedback: "ok"}, nil
-		},
-	}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID))
-
-	req := httptest.NewRequest(http.MethodPost, "/questions/q-1/grade", strings.NewReader(`{"user_answer":"A"}`))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
-	c.SetParamNames("id")
-	c.SetParamValues("  q-1  ")
-
-	if err := handler.GradeAnswer(c); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gotQuestionID != "q-1" {
-		t.Fatalf("expected trimmed question id, got %q", gotQuestionID)
 	}
 }
 

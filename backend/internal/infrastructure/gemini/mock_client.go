@@ -43,11 +43,3 @@ func (c *MockClient) GenerateQuestions(ctx context.Context, points []domain.Extr
 
 	return questions, nil
 }
-
-func (c *MockClient) GradeAnswer(ctx context.Context, question *domain.Question, userAnswer string, model string) (*domain.GradeResult, error) {
-	return &domain.GradeResult{
-		IsCorrect: strings.TrimSpace(userAnswer) == strings.TrimSpace(question.CorrectAnswer),
-		Score:     100,
-		Feedback:  "[MOCK] Mock grading result.",
-	}, nil
-}

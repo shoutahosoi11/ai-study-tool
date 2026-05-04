@@ -17,5 +17,4 @@ type GeneratedQuestion struct {
 type LLMClient interface {
 	ModelForPlan(plan string) string
 	GenerateQuestions(ctx context.Context, points []ExtractedPoint, questionType QuestionType, customInstruction string, model string) ([]GeneratedQuestion, error)
-	GradeAnswer(ctx context.Context, question *Question, userAnswer string, model string) (*GradeResult, error)
 }

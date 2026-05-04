@@ -98,13 +98,3 @@ func ToIncorrectQuestionResponse(q *domain.IncorrectQuestion) IncorrectQuestionR
 		AnsweredAt:    q.AnsweredAt,
 	}
 }
-
-type GradeAnswerRequest struct {
-	UserAnswer string `json:"user_answer"`
-}
-
-type GradeAnswerResponse struct {
-	IsCorrect bool   `json:"is_correct"`
-	Score     int    `json:"score"`
-	Feedback  string `json:"feedback"`
-}

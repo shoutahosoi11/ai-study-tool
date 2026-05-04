@@ -91,7 +91,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		readEnvIntOrDefault("QUESTION_DISPATCHER_MAX_CONCURRENT", 3),
 	)
 	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionDispatcher)
-	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
+	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
 	storageUsecase := usecase.NewStorageUsecase(storageSigner)

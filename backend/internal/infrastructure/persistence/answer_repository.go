@@ -34,13 +34,10 @@ func (r *answerRepository) Upsert(ctx context.Context, input domain.AnswerUpsert
 	}
 
 	answer, err := r.queries.UpsertAnswer(ctx, sqlcgen.UpsertAnswerParams{
-		UserID:      userID,
-		QuestionID:  questionID,
-		UserAnswer:  input.UserAnswer,
-		IsCorrect:   input.IsCorrect,
-		Score:       toNullInt32(input.Score),
-		Feedback:    toNullString(input.Feedback),
-		GraderModel: toNullString(input.GraderModel),
+		UserID:     userID,
+		QuestionID: questionID,
+		UserAnswer: input.UserAnswer,
+		IsCorrect:  input.IsCorrect,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("answer repo: upsert: %w", err)
@@ -85,13 +82,10 @@ FOR UPDATE`, userID, inputQuestionID).Scan(&previousCorrect)
 	}
 
 	answer, err := txQueries.UpsertAnswer(ctx, sqlcgen.UpsertAnswerParams{
-		UserID:      userID,
-		QuestionID:  inputQuestionID,
-		UserAnswer:  input.UserAnswer,
-		IsCorrect:   input.IsCorrect,
-		Score:       toNullInt32(input.Score),
-		Feedback:    toNullString(input.Feedback),
-		GraderModel: toNullString(input.GraderModel),
+		UserID:     userID,
+		QuestionID: inputQuestionID,
+		UserAnswer: input.UserAnswer,
+		IsCorrect:  input.IsCorrect,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("answer repo: upsert: %w", err)

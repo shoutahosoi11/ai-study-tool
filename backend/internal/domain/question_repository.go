@@ -19,17 +19,6 @@ type GenerateQuestionsInput struct {
 	UserPlan          string
 }
 
-type GradeInput struct {
-	QuestionID string
-	UserAnswer string
-}
-
-type GradeResult struct {
-	IsCorrect bool
-	Score     int
-	Feedback  string
-}
-
 type QuestionCatalogReader interface {
 	Save(ctx context.Context, q *Question, meta *QuestionMeta) error
 	SupersedeActiveQuestionsForHighlight(ctx context.Context, userID uuid.UUID, highlightID uuid.UUID) error

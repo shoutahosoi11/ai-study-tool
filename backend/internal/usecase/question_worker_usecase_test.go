@@ -291,10 +291,6 @@ func (m *mockQuestionWorkerLLMClient) GenerateQuestions(ctx context.Context, poi
 	return questions, nil
 }
 
-func (m *mockQuestionWorkerLLMClient) GradeAnswer(ctx context.Context, question *domain.Question, userAnswer string, model string) (*domain.GradeResult, error) {
-	return &domain.GradeResult{}, nil
-}
-
 func TestProcessQuestionGenerationJobNoOpsWhenJobAlreadyClaimed(t *testing.T) {
 	jobID := uuid.New()
 	userID := uuid.New()

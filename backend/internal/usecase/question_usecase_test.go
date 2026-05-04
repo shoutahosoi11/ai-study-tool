@@ -13,7 +13,6 @@ import (
 
 type mockLLMClient struct {
 	generateQuestions func(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error)
-	gradeAnswer       func(ctx context.Context, question *domain.Question, userAnswer string, model string) (*domain.GradeResult, error)
 }
 
 func (m *mockLLMClient) ModelForPlan(plan string) string {
@@ -28,13 +27,6 @@ func (m *mockLLMClient) GenerateQuestions(ctx context.Context, points []domain.E
 		return nil, nil
 	}
 	return m.generateQuestions(ctx, points, questionType, customInstruction, model)
-}
-
-func (m *mockLLMClient) GradeAnswer(ctx context.Context, question *domain.Question, userAnswer string, model string) (*domain.GradeResult, error) {
-	if m.gradeAnswer == nil {
-		return nil, nil
-	}
-	return m.gradeAnswer(ctx, question, userAnswer, model)
 }
 
 type mockQuestionRepository struct {

@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,7 +30,6 @@ type QuestionUsecase interface {
 	ListIncorrectQuestions(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error)
 	ListPreparedQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
 	SaveQuestion(ctx context.Context, userID string, questionID string, note string) error
-	GradeAnswer(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error)
 }
 
 type QuestionSyncUsecase interface {
@@ -243,47 +241,6 @@ func validateQuestionSource(sourceType domain.SourceType, sourceID string) error
 	default:
 		return domain.ErrInvalidSourceType
 	}
-}
-
-func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
-	user, err := h.currentUser(c)
-	if err != nil {
-		return err
-	}
-
-	questionID := strings.TrimSpace(c.Param("id"))
-	if questionID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
-	}
-
-	req := new(dto.GradeAnswerRequest)
-	if err := c.Bind(req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-
-	gradeInput := domain.GradeInput{
-		QuestionID: questionID,
-		UserAnswer: req.UserAnswer,
-	}
-
-	result, err := h.questionUsecase.GradeAnswer(c.Request().Context(), gradeInput, user.Plan)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "question not found")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
-	}
-	if h.questionSyncUsecase != nil {
-		if err := h.questionSyncUsecase.EvaluateBookAfterAnswer(c.Request().Context(), user, questionID); err != nil {
-			log.Printf("question answer sync trigger error: %v", err)
-		}
-	}
-
-	return c.JSON(http.StatusOK, dto.GradeAnswerResponse{
-		IsCorrect: result.IsCorrect,
-		Score:     result.Score,
-		Feedback:  result.Feedback,
-	})
 }
 
 func (h *QuestionHandler) currentUser(c echo.Context) (*domain.User, error) {

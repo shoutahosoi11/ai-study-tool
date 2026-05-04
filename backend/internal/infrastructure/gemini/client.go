@@ -94,29 +94,6 @@ func (c *Client) GenerateQuestions(ctx context.Context, points []domain.Extracte
 	return questions, nil
 }
 
-func (c *Client) GradeAnswer(ctx context.Context, question *domain.Question, userAnswer string, model string) (*domain.GradeResult, error) {
-	prompt := BuildGraderPrompt(question, userAnswer)
-	resp, err := c.generate(ctx, model, prompt)
-	if err != nil {
-		return nil, fmt.Errorf("gemini: grade answer failed: %w", err)
-	}
-
-	var result struct {
-		IsCorrect bool   `json:"is_correct"`
-		Score     int    `json:"score"`
-		Feedback  string `json:"feedback"`
-	}
-	if err := parseJSON(resp, &result); err != nil {
-		return nil, fmt.Errorf("gemini: failed to parse grade answer response: %w", err)
-	}
-
-	return &domain.GradeResult{
-		IsCorrect: result.IsCorrect,
-		Score:     result.Score,
-		Feedback:  result.Feedback,
-	}, nil
-}
-
 func (c *Client) generate(ctx context.Context, model string, prompt string) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {

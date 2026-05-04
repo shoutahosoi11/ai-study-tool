@@ -71,7 +71,7 @@ func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddle
 	questions.POST("/sync", container.QuestionHandler.SyncStock)
 	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
 	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)
-	questions.POST("/:id/grade", container.QuestionHandler.GradeAnswer)
+	questions.POST("/:id/grade", container.AnswerHandler.SubmitAnswer)
 }
 
 func registerSocialRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {

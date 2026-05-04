@@ -36,7 +36,7 @@ func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
 		return err
 	}
 
-	questionID := c.Param("id")
+	questionID := strings.TrimSpace(c.Param("id"))
 	if questionID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
 	}
@@ -62,9 +62,6 @@ func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
-		if strings.HasPrefix(err.Error(), "llm_error:") {
-			return echo.NewHTTPError(http.StatusBadGateway, "AI grading failed")
-		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 	if h.questionSyncUsecase != nil {
@@ -77,7 +74,5 @@ func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
 		IsCorrect:     result.IsCorrect,
 		CorrectAnswer: result.CorrectAnswer,
 		Explanation:   result.Explanation,
-		Score:         result.Score,
-		Feedback:      result.Feedback,
 	})
 }
