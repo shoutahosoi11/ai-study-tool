@@ -2,9 +2,9 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -14,25 +14,19 @@ import (
 )
 
 const (
-	defaultQuestionSyncPerTriggerLimit = 30
-	defaultQuestionSyncDailyLimit      = 100
-	defaultQuestionSyncStaleTimeout    = 10 * time.Minute
-	defaultQuestionSyncWorkerTimeout   = 2 * time.Minute
+	defaultQuestionSyncDailyLimit         = 100
+	defaultQuestionSyncStaleTimeout       = 10 * time.Minute
+	defaultQuestionSyncEnqueueFailedLimit = 20
 )
 
 type QuestionSyncUsecase struct {
 	highlightRepo          domain.QuestionSyncHighlightRepository
 	questionRepo           domain.QuestionSyncQuestionRepository
-	worker                 QueuedQuestionWorker
+	jobRepo                domain.QuestionGenerationJobRepository
+	taskEnqueuer           domain.QuestionGenerationTaskEnqueuer
 	now                    func() time.Time
-	perTriggerLimit        int
 	dailyLimit             int
 	staleProcessingTimeout time.Duration
-	workerTimeout          time.Duration
-}
-
-type QueuedQuestionWorker interface {
-	TriggerQueuedHighlights(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error
 }
 
 type QuestionStockBook struct {
@@ -50,39 +44,20 @@ type SyncQuestionStockResult struct {
 	SkippedDueToDailyLimit bool
 }
 
-type questionSyncCandidate struct {
-	highlight *domain.Highlight
-	remaining int
-}
-
-type questionSyncSelection struct {
-	highlightIDs  []uuid.UUID
-	questionCount int
-	countByID     map[uuid.UUID]int
-}
-
-type questionSyncPlan struct {
-	highlightIDs               []uuid.UUID
-	questionCount              int
-	queuedPerBook              map[string]int
-	bookKeyByHighlightID       map[uuid.UUID]string
-	questionCountByHighlightID map[uuid.UUID]int
-}
-
 func NewQuestionSyncUsecase(
 	highlightRepo domain.QuestionSyncHighlightRepository,
 	questionRepo domain.QuestionSyncQuestionRepository,
-	worker QueuedQuestionWorker,
+	jobRepo domain.QuestionGenerationJobRepository,
+	taskEnqueuer domain.QuestionGenerationTaskEnqueuer,
 ) *QuestionSyncUsecase {
 	return &QuestionSyncUsecase{
 		highlightRepo:          highlightRepo,
 		questionRepo:           questionRepo,
-		worker:                 worker,
+		jobRepo:                jobRepo,
+		taskEnqueuer:           taskEnqueuer,
 		now:                    time.Now,
-		perTriggerLimit:        readEnvIntOrDefault("QUESTION_SYNC_PER_TRIGGER_LIMIT", defaultQuestionSyncPerTriggerLimit),
 		dailyLimit:             readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit),
 		staleProcessingTimeout: readEnvDurationSecondsOrDefault("QUESTION_SYNC_STALE_PROCESSING_SECONDS", defaultQuestionSyncStaleTimeout),
-		workerTimeout:          readEnvDurationSecondsOrDefault("QUESTION_SYNC_WORKER_TIMEOUT_SECONDS", defaultQuestionSyncWorkerTimeout),
 	}
 }
 
@@ -91,413 +66,248 @@ func (u *QuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domai
 		return nil, domain.ErrNotFound
 	}
 
-	if err := u.requeueStaleProcessing(ctx, user.ID); err != nil {
+	if err := u.requeueStaleJobs(ctx); err != nil {
 		return nil, err
 	}
 
-	target := resolveQuestionStockTarget(user.DefaultQuestionCount)
-	result, bookStatusByKey, understockBooks, err := u.buildQuestionStockResult(ctx, user.ID, target)
-	if err != nil {
+	result := &SyncQuestionStockResult{}
+	if skipped, err := u.skipIfDailyLimitReached(ctx, user.ID); err != nil {
 		return nil, err
-	}
-	if len(understockBooks) == 0 {
-		return result, nil
-	}
-
-	currentDay, remainingBudget, skipped, err := u.remainingQuestionSyncBudget(ctx, user.ID)
-	if err != nil {
-		return nil, err
-	}
-	if skipped {
+	} else if skipped {
 		result.SkippedDueToDailyLimit = true
 		return result, nil
 	}
 
-	sortUnderstockBooks(understockBooks)
-	plan, err := u.planQuestionSync(ctx, user, understockBooks, target, remainingBudget)
-	if err != nil {
+	if err := u.reenqueueFailedJobs(ctx, user.ID, result); err != nil {
 		return nil, err
 	}
-	if plan.questionCount == 0 {
-		return result, nil
-	}
 
-	actualQueuedCount, actualQueuedPerBook, actualQueuedHighlightIDs, skipped, err := u.reserveAndQueueQuestionSync(
-		ctx,
-		user.ID,
-		currentDay,
-		plan,
-	)
+	lastSyncAt, err := u.questionRepo.GetUserLastQuestionSyncAt(ctx, user.ID)
 	if err != nil {
-		return nil, err
-	}
-	if skipped {
-		result.SkippedDueToDailyLimit = true
-		return result, nil
+		return nil, fmt.Errorf("question sync usecase: get last sync at: %w", err)
 	}
 
-	result.QueuedCount = actualQueuedCount
-	if result.QueuedCount == 0 {
-		return result, nil
+	candidates, err := u.highlightRepo.ListQuestionGenerationCandidates(ctx, user.ID, lastSyncAt)
+	if err != nil {
+		return nil, fmt.Errorf("question sync usecase: list generation candidates: %w", err)
 	}
+	sortQuestionGenerationCandidates(candidates)
 
-	for bookKey, queuedCount := range actualQueuedPerBook {
-		if status := bookStatusByKey[bookKey]; status != nil {
-			status.Preparing += queuedCount
+	result.Books = buildQuestionSyncBookResponse(candidates)
+	for _, candidate := range candidates {
+		created, err := u.createJobIfNeeded(ctx, user.ID, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if created {
+			result.QueuedCount++
 		}
 	}
 
-	log.Printf(
-		"question_sync_event=queued user_id=%s queued_count=%d highlight_count=%d expected_gemini_calls_le=%d daily_limit=%d per_trigger_limit=%d",
-		user.ID.String(),
-		result.QueuedCount,
-		len(actualQueuedHighlightIDs),
-		(result.QueuedCount+defaultWorkerMaxQuestionsPerCall-1)/defaultWorkerMaxQuestionsPerCall,
-		u.dailyLimit,
-		u.perTriggerLimit,
-	)
-
-	u.triggerQueuedWorker(user.ID, actualQueuedHighlightIDs)
+	if err := u.questionRepo.UpdateUserLastQuestionSyncAt(ctx, user.ID, u.now().UTC()); err != nil {
+		return nil, fmt.Errorf("question sync usecase: update last sync at: %w", err)
+	}
 
 	return result, nil
 }
 
-func (u *QuestionSyncUsecase) requeueStaleProcessing(ctx context.Context, userID uuid.UUID) error {
-	if u.staleProcessingTimeout <= 0 {
+func (u *QuestionSyncUsecase) EvaluateBookAfterAnswer(ctx context.Context, user *domain.User, questionID string) error {
+	if user == nil {
+		return domain.ErrNotFound
+	}
+
+	parsedQuestionID, err := uuid.Parse(strings.TrimSpace(questionID))
+	if err != nil {
+		return fmt.Errorf("question sync usecase: parse answered question id: %w", err)
+	}
+
+	question, meta, _, err := u.questionRepo.FindByID(ctx, parsedQuestionID.String())
+	if err != nil {
+		return fmt.Errorf("question sync usecase: find answered question: %w", err)
+	}
+	if question == nil || meta == nil || strings.TrimSpace(meta.HighlightID) == "" {
 		return nil
 	}
 
-	requeued, err := u.highlightRepo.RequeueStaleProcessingByUserID(ctx, userID, u.now().UTC().Add(-u.staleProcessingTimeout))
+	highlightID, err := uuid.Parse(strings.TrimSpace(meta.HighlightID))
 	if err != nil {
-		return fmt.Errorf("question sync usecase: requeue stale processing: %w", err)
+		return fmt.Errorf("question sync usecase: parse answered highlight id: %w", err)
+	}
+
+	if err := u.questionRepo.SupersedeActiveQuestionsForHighlight(ctx, user.ID, highlightID); err != nil {
+		return fmt.Errorf("question sync usecase: supersede active question: %w", err)
+	}
+
+	bookKey, err := u.highlightRepo.MarkHighlightPendingForQuestion(ctx, user.ID, parsedQuestionID)
+	if err != nil {
+		return fmt.Errorf("question sync usecase: mark answered highlight pending: %w", err)
+	}
+	if strings.TrimSpace(bookKey) == "" {
+		return nil
+	}
+
+	candidates, err := u.highlightRepo.ListQuestionGenerationCandidates(ctx, user.ID, nil)
+	if err != nil {
+		return fmt.Errorf("question sync usecase: list candidates after answer: %w", err)
+	}
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.BookKey) != strings.TrimSpace(bookKey) {
+			continue
+		}
+		_, err := u.createJobIfNeeded(ctx, user.ID, candidate)
+		return err
+	}
+
+	return nil
+}
+
+func (u *QuestionSyncUsecase) requeueStaleJobs(ctx context.Context) error {
+	if u.jobRepo == nil || u.staleProcessingTimeout <= 0 {
+		return nil
+	}
+
+	requeued, err := u.jobRepo.RequeueStaleProcessing(ctx, u.now().UTC().Add(-u.staleProcessingTimeout))
+	if err != nil {
+		return fmt.Errorf("question sync usecase: requeue stale jobs: %w", err)
 	}
 	if requeued > 0 {
-		log.Printf("question_sync_event=stale_processing_requeued user_id=%s count=%d", userID.String(), requeued)
+		log.Printf("question_generation_event=stale_jobs_requeued count=%d", requeued)
 	}
 	return nil
 }
 
-func (u *QuestionSyncUsecase) buildQuestionStockResult(
-	ctx context.Context,
-	userID uuid.UUID,
-	target int,
-) (*SyncQuestionStockResult, map[string]*QuestionStockBook, []domain.BookStock, error) {
-	bookStocks, err := u.highlightRepo.ListBookStockByUserID(ctx, userID)
+func (u *QuestionSyncUsecase) skipIfDailyLimitReached(ctx context.Context, userID uuid.UUID) (bool, error) {
+	dailyCount, err := u.questionRepo.GetDailyGeneratedCount(ctx, userID, questionSyncDay(u.now()))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("question sync usecase: list book stock: %w", err)
+		return false, fmt.Errorf("question sync usecase: get daily generated count: %w", err)
 	}
-
-	result := &SyncQuestionStockResult{
-		Books: make([]QuestionStockBook, 0, len(bookStocks)),
-	}
-	bookStatusByKey := make(map[string]*QuestionStockBook, len(bookStocks))
-	understockBooks := make([]domain.BookStock, 0, len(bookStocks))
-
-	for _, book := range bookStocks {
-		bookStatus := QuestionStockBook{
-			BookKey:    strings.TrimSpace(book.BookKey),
-			BookTitle:  strings.TrimSpace(book.BookTitle),
-			BookAuthor: strings.TrimSpace(book.BookAuthor),
-			Stock:      max(book.Stock, 0),
-			Target:     target,
-			Preparing:  max(book.Preparing, 0),
-		}
-		result.Books = append(result.Books, bookStatus)
-		bookStatusByKey[bookStatus.BookKey] = &result.Books[len(result.Books)-1]
-
-		if bookStatus.BookKey == "" {
-			continue
-		}
-		if bookStatus.Stock+bookStatus.Preparing < target {
-			understockBooks = append(understockBooks, domain.BookStock{
-				BookKey:           bookStatus.BookKey,
-				BookTitle:         bookStatus.BookTitle,
-				BookAuthor:        bookStatus.BookAuthor,
-				Stock:             bookStatus.Stock,
-				Preparing:         bookStatus.Preparing,
-				LatestHighlightAt: book.LatestHighlightAt,
-			})
-		}
-	}
-
-	return result, bookStatusByKey, understockBooks, nil
+	return dailyCount >= u.dailyLimit, nil
 }
 
-func (u *QuestionSyncUsecase) remainingQuestionSyncBudget(ctx context.Context, userID uuid.UUID) (time.Time, int, bool, error) {
-	currentDay := questionSyncDay(u.now())
-	dailyCount, err := u.questionRepo.GetDailyGeneratedCount(ctx, userID, currentDay)
+func (u *QuestionSyncUsecase) reenqueueFailedJobs(ctx context.Context, userID uuid.UUID, result *SyncQuestionStockResult) error {
+	if u.jobRepo == nil {
+		return nil
+	}
+
+	jobs, err := u.jobRepo.ListEnqueueFailedByUserID(ctx, userID, defaultQuestionSyncEnqueueFailedLimit)
 	if err != nil {
-		return currentDay, 0, false, fmt.Errorf("question sync usecase: get daily generated count: %w", err)
+		return fmt.Errorf("question sync usecase: list enqueue failed jobs: %w", err)
 	}
 
-	remainingDailyBudget := u.dailyLimit - dailyCount
-	if remainingDailyBudget <= 0 {
-		return currentDay, 0, true, nil
-	}
-
-	return currentDay, min(u.perTriggerLimit, remainingDailyBudget), false, nil
-}
-
-func (u *QuestionSyncUsecase) planQuestionSync(
-	ctx context.Context,
-	user *domain.User,
-	understockBooks []domain.BookStock,
-	target int,
-	remainingBudget int,
-) (questionSyncPlan, error) {
-	plan := questionSyncPlan{
-		highlightIDs:               make([]uuid.UUID, 0),
-		queuedPerBook:              make(map[string]int, len(understockBooks)),
-		bookKeyByHighlightID:       make(map[uuid.UUID]string),
-		questionCountByHighlightID: make(map[uuid.UUID]int),
-	}
-
-	for _, book := range understockBooks {
-		if remainingBudget <= 0 {
-			break
-		}
-
-		bookKey := book.BookKey
-		if bookKey == "" {
+	for _, job := range jobs {
+		if job == nil {
 			continue
 		}
-
-		currentPreparing := max(book.Preparing, 0) + plan.queuedPerBook[bookKey]
-		currentStock := max(book.Stock, 0)
-		missingCount := target - (currentStock + currentPreparing)
-		if missingCount <= 0 {
-			continue
-		}
-
-		selection, err := u.selectHighlightsForBook(ctx, user, bookKey, missingCount, remainingBudget)
-		if err != nil {
-			return questionSyncPlan{}, fmt.Errorf("question sync usecase: select highlights for book %s: %w", bookKey, err)
-		}
-		if selection.questionCount == 0 || len(selection.highlightIDs) == 0 {
-			continue
-		}
-
-		plan.queuedPerBook[bookKey] += selection.questionCount
-		plan.highlightIDs = append(plan.highlightIDs, selection.highlightIDs...)
-		for highlightID, questionCount := range selection.countByID {
-			plan.bookKeyByHighlightID[highlightID] = bookKey
-			plan.questionCountByHighlightID[highlightID] = questionCount
-		}
-		remainingBudget -= selection.questionCount
-		plan.questionCount += selection.questionCount
-	}
-
-	return plan, nil
-}
-
-func (u *QuestionSyncUsecase) reserveAndQueueQuestionSync(
-	ctx context.Context,
-	userID uuid.UUID,
-	currentDay time.Time,
-	plan questionSyncPlan,
-) (int, map[string]int, []uuid.UUID, bool, error) {
-	requestedAt := u.now().UTC()
-	actualQueuedHighlightIDs, reserved, err := u.questionRepo.QueueHighlightsWithinDailyLimit(
-		ctx,
-		userID,
-		currentDay,
-		u.dailyLimit,
-		plan.highlightIDs,
-		plan.questionCountByHighlightID,
-		requestedAt,
-	)
-	if err != nil {
-		return 0, nil, nil, false, fmt.Errorf("question sync usecase: queue highlights within daily limit: %w", err)
-	}
-	if !reserved {
-		return 0, nil, nil, true, nil
-	}
-
-	actualQueuedPerBook := make(map[string]int, len(plan.queuedPerBook))
-	actualQueuedCount := 0
-	for _, highlightID := range actualQueuedHighlightIDs {
-		questionCount := plan.questionCountByHighlightID[highlightID]
-		if questionCount <= 0 {
-			continue
-		}
-		actualQueuedCount += questionCount
-		if bookKey := plan.bookKeyByHighlightID[highlightID]; bookKey != "" {
-			actualQueuedPerBook[bookKey] += questionCount
-		}
-	}
-
-	return actualQueuedCount, actualQueuedPerBook, actualQueuedHighlightIDs, false, nil
-}
-
-func (u *QuestionSyncUsecase) triggerQueuedWorker(userID uuid.UUID, actualQueuedHighlightIDs []uuid.UUID) {
-	if u.worker != nil {
-		highlightIDs := slices.Clone(actualQueuedHighlightIDs)
-		workerTimeout := u.workerTimeout
-		if workerTimeout <= 0 {
-			workerTimeout = defaultQuestionSyncWorkerTimeout
-		}
-		go func() {
-			backgroundCtx, cancel := context.WithTimeout(context.Background(), workerTimeout)
-			defer cancel()
-
-			if err := u.worker.TriggerQueuedHighlights(backgroundCtx, userID, highlightIDs); err != nil {
-				log.Printf("question sync: trigger queued highlights error: %v", err)
-			}
-		}()
-	}
-}
-
-func (u *QuestionSyncUsecase) selectHighlightsForBook(
-	ctx context.Context,
-	user *domain.User,
-	bookKey string,
-	needed int,
-	remainingBudget int,
-) (questionSyncSelection, error) {
-	selection := questionSyncSelection{
-		highlightIDs: make([]uuid.UUID, 0),
-		countByID:    make(map[uuid.UUID]int),
-	}
-	softTarget := min(needed, remainingBudget)
-	seen := make(map[uuid.UUID]struct{})
-
-	unusedHighlights, err := u.highlightRepo.ListUnusedHighlightsByBook(ctx, user.ID, bookKey, remainingBudget)
-	if err != nil {
-		return selection, err
-	}
-
-	unusedCandidates, err := u.buildSyncCandidates(ctx, user.ID.String(), unusedHighlights)
-	if err != nil {
-		return selection, err
-	}
-	appendQuestionSyncCandidates(&selection, unusedCandidates, softTarget, remainingBudget, seen)
-	if selection.questionCount >= softTarget {
-		return selection, nil
-	}
-
-	usedHighlights, err := u.highlightRepo.ListUsedHighlightsWithUncoveredPerspectives(ctx, user.ID, bookKey, remainingBudget)
-	if err != nil {
-		return selection, err
-	}
-
-	usedCandidates, err := u.buildSyncCandidates(ctx, user.ID.String(), usedHighlights)
-	if err != nil {
-		return selection, err
-	}
-	appendQuestionSyncCandidates(&selection, usedCandidates, softTarget, remainingBudget, seen)
-
-	return selection, nil
-}
-
-func (u *QuestionSyncUsecase) buildSyncCandidates(
-	ctx context.Context,
-	userID string,
-	highlights []*domain.Highlight,
-) ([]questionSyncCandidate, error) {
-	candidates := make([]questionSyncCandidate, 0, len(highlights))
-	for _, highlight := range highlights {
-		if highlight == nil || strings.TrimSpace(highlight.Content) == "" {
-			continue
-		}
-
-		usedPerspectives, err := u.questionRepo.ListPerspectivesByHighlightID(ctx, userID, highlight.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		remaining := remainingQuestionCapacity(highlight.Content, len(usedPerspectives))
-		if remaining <= 0 {
-			continue
-		}
-
-		candidates = append(candidates, questionSyncCandidate{
-			highlight: highlight,
-			remaining: remaining,
-		})
-	}
-
-	return candidates, nil
-}
-
-func appendQuestionSyncCandidates(
-	selection *questionSyncSelection,
-	candidates []questionSyncCandidate,
-	softTarget int,
-	hardBudget int,
-	seen map[uuid.UUID]struct{},
-) {
-	if hardBudget <= selection.questionCount {
-		return
-	}
-
-	var fallback *questionSyncCandidate
-	for _, candidate := range candidates {
-		if candidate.highlight == nil {
-			continue
-		}
-		if _, ok := seen[candidate.highlight.ID]; ok {
-			continue
-		}
-		if candidate.remaining <= 0 {
-			continue
-		}
-		if selection.questionCount+candidate.remaining > hardBudget {
-			continue
-		}
-
-		remainingNeed := softTarget - selection.questionCount
-		if remainingNeed <= 0 {
-			continue
-		}
-		if candidate.remaining > remainingNeed {
-			if fallback == nil || candidate.remaining < fallback.remaining {
-				candidateCopy := candidate
-				fallback = &candidateCopy
+		if err := u.enqueueJob(ctx, job); err != nil {
+			if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, job.UserID, err.Error()); markErr != nil {
+				return fmt.Errorf("question sync usecase: mark enqueue failed retry: %w", markErr)
 			}
 			continue
 		}
-
-		selection.highlightIDs = append(selection.highlightIDs, candidate.highlight.ID)
-		selection.questionCount += candidate.remaining
-		selection.countByID[candidate.highlight.ID] = candidate.remaining
-		seen[candidate.highlight.ID] = struct{}{}
+		if err := u.jobRepo.MarkQueued(ctx, job.ID, job.UserID); err != nil {
+			return fmt.Errorf("question sync usecase: mark recovered job queued: %w", err)
+		}
+		result.QueuedCount++
 	}
 
-	if fallback == nil || selection.questionCount > 0 {
-		return
-	}
-	if selection.questionCount+fallback.remaining > hardBudget {
-		return
-	}
-	if _, ok := seen[fallback.highlight.ID]; ok {
-		return
-	}
-
-	selection.highlightIDs = append(selection.highlightIDs, fallback.highlight.ID)
-	selection.questionCount += fallback.remaining
-	selection.countByID[fallback.highlight.ID] = fallback.remaining
-	seen[fallback.highlight.ID] = struct{}{}
+	return nil
 }
 
-func sortUnderstockBooks(books []domain.BookStock) {
-	sort.SliceStable(books, func(left, right int) bool {
-		leftZero := max(books[left].Stock, 0) == 0
-		rightZero := max(books[right].Stock, 0) == 0
-		if leftZero != rightZero {
-			return leftZero
+func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid.UUID, candidate domain.QuestionGenerationBookCandidate) (bool, error) {
+	reason, ok := questionGenerationReason(candidate)
+	if !ok {
+		return false, nil
+	}
+
+	pendingHighlights, err := u.highlightRepo.ListPendingHighlightsByBook(ctx, userID, candidate.BookKey, domain.MaxHighlightsPerJob)
+	if err != nil {
+		return false, fmt.Errorf("question sync usecase: list pending highlights by book: %w", err)
+	}
+	if len(pendingHighlights) == 0 {
+		return false, nil
+	}
+
+	highlightIDs := make([]uuid.UUID, 0, len(pendingHighlights))
+	for _, highlight := range pendingHighlights {
+		if highlight != nil {
+			highlightIDs = append(highlightIDs, highlight.ID)
 		}
-		return books[left].LatestHighlightAt.After(books[right].LatestHighlightAt)
+	}
+	if len(highlightIDs) == 0 {
+		return false, nil
+	}
+
+	job, err := u.jobRepo.Create(ctx, domain.CreateQuestionGenerationJobInput{
+		UserID:       userID,
+		BookKey:      candidate.BookKey,
+		Reason:       reason,
+		HighlightIDs: highlightIDs,
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrAlreadyExists) {
+			return false, nil
+		}
+		return false, fmt.Errorf("question sync usecase: create generation job: %w", err)
+	}
+
+	if err := u.highlightRepo.MarkHighlightsProcessing(ctx, userID, highlightIDs); err != nil {
+		return false, fmt.Errorf("question sync usecase: mark highlights processing: %w", err)
+	}
+
+	if err := u.enqueueJob(ctx, job); err != nil {
+		if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, job.UserID, err.Error()); markErr != nil {
+			return false, fmt.Errorf("question sync usecase: mark enqueue failed: %w", markErr)
+		}
+		log.Printf("question_generation_event=enqueue_failed user_id=%s job_id=%s book_key=%s error=%q", userID.String(), job.ID.String(), job.BookKey, err.Error())
+		return true, nil
+	}
+
+	log.Printf("question_generation_event=job_created user_id=%s job_id=%s book_key=%s highlight_count=%d reason=%s", userID.String(), job.ID.String(), job.BookKey, len(highlightIDs), job.Reason)
+	return true, nil
+}
+
+func (u *QuestionSyncUsecase) enqueueJob(ctx context.Context, job *domain.QuestionGenerationJob) error {
+	if job == nil {
+		return domain.ErrInvalidInput
+	}
+	if u.taskEnqueuer == nil {
+		return fmt.Errorf("question generation task enqueuer is not configured")
+	}
+	return u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID)
+}
+
+func questionGenerationReason(candidate domain.QuestionGenerationBookCandidate) (domain.QuestionGenerationJobReason, bool) {
+	pending := max(candidate.PendingHighlightCount, 0)
+	unanswered := max(candidate.UnansweredQuestionCount, 0)
+	switch {
+	case pending >= domain.HighlightBatchThreshold:
+		return domain.JobReasonHighlightBatchThreshold, true
+	case pending >= domain.MinHighlightsForRefresh && pending < domain.HighlightBatchThreshold && unanswered == 0:
+		return domain.JobReasonAllUnansweredConsumed, true
+	default:
+		return "", false
+	}
+}
+
+func sortQuestionGenerationCandidates(candidates []domain.QuestionGenerationBookCandidate) {
+	sort.SliceStable(candidates, func(left, right int) bool {
+		return candidates[left].LatestHighlightAt.After(candidates[right].LatestHighlightAt)
 	})
 }
 
-func resolveQuestionStockTarget(defaultQuestionCount int16) int {
-	if defaultQuestionCount == domain.DefaultQuestionCountAll {
-		return maxQuestionCountForAll
+func buildQuestionSyncBookResponse(candidates []domain.QuestionGenerationBookCandidate) []QuestionStockBook {
+	books := make([]QuestionStockBook, 0, len(candidates))
+	for _, candidate := range candidates {
+		books = append(books, QuestionStockBook{
+			BookKey:    strings.TrimSpace(candidate.BookKey),
+			BookTitle:  strings.TrimSpace(candidate.BookTitle),
+			BookAuthor: strings.TrimSpace(candidate.BookAuthor),
+			Stock:      max(candidate.UnansweredQuestionCount, 0),
+			Target:     domain.HighlightBatchThreshold,
+			Preparing:  max(candidate.PendingHighlightCount, 0),
+		})
 	}
-	if defaultQuestionCount <= 0 {
-		return int(domain.DefaultQuestionCountDefault)
-	}
-	return int(defaultQuestionCount)
+	return books
 }
 
 func questionSyncDay(now time.Time) time.Time {

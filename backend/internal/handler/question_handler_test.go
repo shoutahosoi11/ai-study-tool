@@ -17,9 +17,8 @@ import (
 )
 
 type stubQuestionUsecase struct {
-	generateQuestions func(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
-	saveQuestion      func(ctx context.Context, userID string, questionID string, note string) error
-	gradeAnswer       func(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error)
+	saveQuestion func(ctx context.Context, userID string, questionID string, note string) error
+	gradeAnswer  func(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error)
 }
 
 func (s *stubQuestionUsecase) ListQuestions(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error) {
@@ -32,13 +31,6 @@ func (s *stubQuestionUsecase) ListSavedQuestions(ctx context.Context, userID str
 
 func (s *stubQuestionUsecase) ListIncorrectQuestions(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error) {
 	return nil, nil
-}
-
-func (s *stubQuestionUsecase) GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
-	if s.generateQuestions == nil {
-		return nil, nil
-	}
-	return s.generateQuestions(ctx, input)
 }
 
 func (s *stubQuestionUsecase) ListPreparedQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
@@ -63,6 +55,10 @@ type stubQuestionSyncUsecase struct{}
 
 func (s *stubQuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error) {
 	return &usecase.SyncQuestionStockResult{}, nil
+}
+
+func (s *stubQuestionSyncUsecase) EvaluateBookAfterAnswer(ctx context.Context, user *domain.User, questionID string) error {
+	return nil
 }
 
 func TestSaveQuestionTrimsNoteBeforeSaving(t *testing.T) {
@@ -132,35 +128,6 @@ func TestGradeAnswerTrimsQuestionID(t *testing.T) {
 	}
 	if gotQuestionID != "q-1" {
 		t.Fatalf("expected trimmed question id, got %q", gotQuestionID)
-	}
-}
-
-func TestGenerateQuestionsDoesNotExposeInternalError(t *testing.T) {
-	e := echo.New()
-	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
-	handler := NewQuestionHandler(&stubQuestionUsecase{
-		generateQuestions: func(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
-			return nil, errors.New("database password leaked")
-		},
-	}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID))
-
-	reqBody := `{"source_type":"kindle_book","source_id":"book-1","question_count":1}`
-	req := httptest.NewRequest(http.MethodPost, "/questions", strings.NewReader(reqBody))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
-
-	err := handler.GenerateQuestions(c)
-	httpErr, ok := err.(*echo.HTTPError)
-	if !ok {
-		t.Fatalf("expected echo.HTTPError, got %T", err)
-	}
-	if httpErr.Code != http.StatusBadGateway {
-		t.Fatalf("unexpected status: %d", httpErr.Code)
-	}
-	if httpErr.Message != "question generation failed" {
-		t.Fatalf("unexpected error message: %v", httpErr.Message)
 	}
 }
 

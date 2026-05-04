@@ -6,15 +6,6 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
-type GenerateQuestionRequest struct {
-	SourceType        string `json:"source_type"`
-	SourceID          string `json:"source_id"`
-	BookTitle         string `json:"book_title"`
-	BookAuthor        string `json:"book_author"`
-	QuestionCount     int    `json:"question_count"`
-	CustomInstruction string `json:"custom_instruction"`
-}
-
 type SyncQuestionStockBookResponse struct {
 	BookKey    string `json:"book_key"`
 	BookTitle  string `json:"book_title"`

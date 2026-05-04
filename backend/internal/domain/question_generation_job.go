@@ -56,7 +56,9 @@ type CreateQuestionGenerationJobInput struct {
 type QuestionGenerationJobRepository interface {
 	Create(ctx context.Context, input CreateQuestionGenerationJobInput) (*QuestionGenerationJob, error)
 	Get(ctx context.Context, jobID, userID uuid.UUID) (*QuestionGenerationJob, error)
+	ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*QuestionGenerationJob, bool, error)
+	RequeueStaleProcessing(ctx context.Context, cutoff time.Time) (int, error)
 	MarkQueued(ctx context.Context, jobID, userID uuid.UUID) error
 	MarkCompleted(ctx context.Context, jobID, userID uuid.UUID) error
 	MarkEnqueueFailed(ctx context.Context, jobID, userID uuid.UUID, lastError string) error

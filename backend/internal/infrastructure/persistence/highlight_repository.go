@@ -21,6 +21,7 @@ type highlightRepository struct {
 
 const bookKeyExpressionSQL = `
 CASE
+    WHEN NULLIF(trim(coalesce(h.book_key, '')), '') IS NOT NULL THEN trim(h.book_key)
     WHEN NULLIF(trim(coalesce(h.asin, '')), '') IS NOT NULL THEN trim(h.asin)
     ELSE concat('metadata:', trim(coalesce(h.book_title, '')), ':', trim(coalesce(h.book_author, '')))
 END
@@ -323,6 +324,193 @@ func (r *highlightRepository) ListUnusedHighlightsByBook(ctx context.Context, us
 
 func (r *highlightRepository) ListUsedHighlightsWithUncoveredPerspectives(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
 	return r.listQuestionSourceHighlights(ctx, userID, bookKey, limit, false)
+}
+
+func (r *highlightRepository) ListQuestionGenerationCandidates(ctx context.Context, userID uuid.UUID, changedSince *time.Time) ([]domain.QuestionGenerationBookCandidate, error) {
+	changedFilter := ""
+	args := []any{userID}
+	if changedSince != nil {
+		changedFilter = "AND h.updated_at > $2"
+		args = append(args, changedSince.UTC())
+	}
+
+	query := `
+WITH changed_books AS (
+    SELECT DISTINCT ` + bookKeyExpressionSQL + ` AS book_key
+    FROM highlights h
+    WHERE h.user_id = $1
+      ` + changedFilter + `
+      AND (
+        NULLIF(trim(coalesce(h.book_key, '')), '') IS NOT NULL
+        OR NULLIF(trim(coalesce(h.asin, '')), '') IS NOT NULL
+        OR NULLIF(trim(coalesce(h.book_title, '')), '') IS NOT NULL
+      )
+),
+book_highlights AS (
+    SELECT
+        h.id,
+        ` + bookKeyExpressionSQL + ` AS book_key,
+        trim(coalesce(h.book_title, '')) AS book_title,
+        trim(coalesce(h.book_author, '')) AS book_author,
+        h.status,
+        h.created_at,
+        h.highlighted_at
+    FROM highlights h
+    JOIN changed_books cb
+      ON cb.book_key = ` + bookKeyExpressionSQL + `
+    WHERE h.user_id = $1
+),
+active_questions AS (
+    SELECT q.id, q.highlight_id
+    FROM questions q
+    WHERE q.user_id = $1
+      AND q.highlight_id IS NOT NULL
+      AND q.superseded_at IS NULL
+),
+unanswered_questions AS (
+    SELECT aq.highlight_id, COUNT(*)::int AS unanswered_count
+    FROM active_questions aq
+    LEFT JOIN answers a
+      ON a.question_id = aq.id
+     AND a.user_id = $1
+    WHERE a.question_id IS NULL
+    GROUP BY aq.highlight_id
+)
+SELECT
+    bh.book_key,
+    MAX(bh.book_title) AS book_title,
+    MAX(bh.book_author) AS book_author,
+    COUNT(*) FILTER (WHERE bh.status = 'pending')::int AS pending_highlight_count,
+    COALESCE(SUM(uq.unanswered_count), 0)::int AS unanswered_question_count,
+    MAX(COALESCE(bh.highlighted_at, bh.created_at)) AS latest_highlight_at
+FROM book_highlights bh
+LEFT JOIN unanswered_questions uq
+  ON uq.highlight_id = bh.id
+GROUP BY bh.book_key
+ORDER BY MAX(COALESCE(bh.highlighted_at, bh.created_at)) DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("highlight repo: list question generation candidates: %w", err)
+	}
+	defer rows.Close()
+
+	candidates := make([]domain.QuestionGenerationBookCandidate, 0)
+	for rows.Next() {
+		var candidate domain.QuestionGenerationBookCandidate
+		if err := rows.Scan(
+			&candidate.BookKey,
+			&candidate.BookTitle,
+			&candidate.BookAuthor,
+			&candidate.PendingHighlightCount,
+			&candidate.UnansweredQuestionCount,
+			&candidate.LatestHighlightAt,
+		); err != nil {
+			return nil, fmt.Errorf("highlight repo: scan question generation candidate: %w", err)
+		}
+		candidate.BookKey = strings.TrimSpace(candidate.BookKey)
+		candidate.BookTitle = strings.TrimSpace(candidate.BookTitle)
+		candidate.BookAuthor = strings.TrimSpace(candidate.BookAuthor)
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("highlight repo: rows question generation candidates: %w", err)
+	}
+
+	return candidates, nil
+}
+
+func (r *highlightRepository) ListPendingHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
+	if limit <= 0 {
+		limit = domain.MaxHighlightsPerJob
+	}
+
+	query := `
+SELECT
+    h.id, h.user_id, h.book_id, h.book_title, h.book_author, h.asin, h.content, h.explanation,
+    h.content_hash, h.location, h.highlighted_at, h.source, h.source_app, h.source_url, h.status,
+    h.retry_count, h.last_error, h.generation_requested_at, h.processing_started_at, h.completed_at,
+    h.failed_at, h.created_at, h.updated_at
+FROM highlights h
+WHERE h.user_id = $1
+  AND ` + bookKeyExpressionSQL + ` = $2
+  AND h.status = 'pending'
+  AND char_length(trim(coalesce(h.content, ''))) > 0
+ORDER BY COALESCE(h.highlighted_at, h.created_at) ASC, h.created_at ASC
+LIMIT $3`
+
+	highlights, err := r.listHighlights(ctx, query, userID, strings.TrimSpace(bookKey), limit)
+	if err != nil {
+		return nil, fmt.Errorf("highlight repo: list pending highlights by book: %w", err)
+	}
+	return highlights, nil
+}
+
+func (r *highlightRepository) ListByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
+	if len(highlightIDs) == 0 {
+		return make([]*domain.Highlight, 0), nil
+	}
+
+	query := `
+SELECT
+    h.id, h.user_id, h.book_id, h.book_title, h.book_author, h.asin, h.content, h.explanation,
+    h.content_hash, h.location, h.highlighted_at, h.source, h.source_app, h.source_url, h.status,
+    h.retry_count, h.last_error, h.generation_requested_at, h.processing_started_at, h.completed_at,
+    h.failed_at, h.created_at, h.updated_at
+FROM highlights h
+WHERE h.user_id = $1
+  AND h.id::text = ANY($2)
+ORDER BY h.created_at ASC`
+
+	highlights, err := r.listHighlights(ctx, query, userID, pq.Array(uuidStrings(highlightIDs)))
+	if err != nil {
+		return nil, fmt.Errorf("highlight repo: list by ids: %w", err)
+	}
+	return highlights, nil
+}
+
+func (r *highlightRepository) MarkHighlightsProcessing(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error {
+	if len(highlightIDs) == 0 {
+		return nil
+	}
+
+	_, err := r.db.ExecContext(ctx, `
+UPDATE highlights
+SET status = 'processing',
+    processing_started_at = NOW(),
+    updated_at = NOW()
+WHERE user_id = $1
+  AND id::text = ANY($2)
+  AND status = 'pending'
+`, userID, pq.Array(uuidStrings(highlightIDs)))
+	if err != nil {
+		return fmt.Errorf("highlight repo: mark highlights processing: %w", err)
+	}
+	return nil
+}
+
+func (r *highlightRepository) MarkHighlightPendingForQuestion(ctx context.Context, userID uuid.UUID, questionID uuid.UUID) (string, error) {
+	var bookKey string
+	err := r.db.QueryRowContext(ctx, `
+UPDATE highlights h
+SET status = 'pending',
+    retry_count = 0,
+    generation_requested_at = NOW(),
+    processing_started_at = NULL,
+    completed_at = NULL,
+    failed_at = NULL,
+    last_error = NULL,
+    updated_at = NOW()
+FROM questions q
+WHERE q.id = $2
+  AND q.user_id = $1
+  AND q.highlight_id = h.id
+  AND h.user_id = $1
+RETURNING `+bookKeyExpressionSQL, userID, questionID).Scan(&bookKey)
+	if err != nil {
+		return "", wrapHighlightError("mark highlight pending for question", err)
+	}
+	return strings.TrimSpace(bookKey), nil
 }
 
 func (r *highlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {

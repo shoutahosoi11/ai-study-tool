@@ -84,6 +84,21 @@ INSERT INTO questions (
 	return nil
 }
 
+func (r *questionRepository) SupersedeActiveQuestionsForHighlight(ctx context.Context, userID uuid.UUID, highlightID uuid.UUID) error {
+	_, err := r.db.ExecContext(ctx, `
+UPDATE questions
+SET superseded_at = NOW(),
+    updated_at = NOW()
+WHERE user_id = $1
+  AND highlight_id = $2
+  AND superseded_at IS NULL
+`, userID, highlightID)
+	if err != nil {
+		return fmt.Errorf("question repo: supersede active questions for highlight: %w", err)
+	}
+	return nil
+}
+
 func (r *questionRepository) ListByCreatorID(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error) {
 	userID, err := uuid.Parse(creatorID)
 	if err != nil {
@@ -265,6 +280,7 @@ LEFT JOIN answers a
   ON a.question_id = q.id
  AND a.user_id = $1
 WHERE q.user_id = $1
+  AND q.superseded_at IS NULL
   AND q.highlight_id::text = ANY($2)
 ORDER BY CASE WHEN a.question_id IS NULL THEN 0 ELSE 1 END ASC, q.created_at DESC
 LIMIT $3`
@@ -558,6 +574,44 @@ RETURNING count`
 	}
 
 	return true, nil
+}
+
+func (r *questionRepository) GetUserLastQuestionSyncAt(ctx context.Context, userID uuid.UUID) (*time.Time, error) {
+	var lastSync sql.NullTime
+	if err := r.db.QueryRowContext(ctx, `
+SELECT last_sync_at
+FROM users
+WHERE id = $1
+`, userID).Scan(&lastSync); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("question repo: get user last question sync at: %w", err)
+	}
+	if !lastSync.Valid {
+		return nil, nil
+	}
+	return &lastSync.Time, nil
+}
+
+func (r *questionRepository) UpdateUserLastQuestionSyncAt(ctx context.Context, userID uuid.UUID, syncedAt time.Time) error {
+	result, err := r.db.ExecContext(ctx, `
+UPDATE users
+SET last_sync_at = $2,
+    updated_at = NOW()
+WHERE id = $1
+`, userID, syncedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("question repo: update user last question sync at: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("question repo: update user last question sync rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (r *questionRepository) QueueHighlightsWithinDailyLimit(

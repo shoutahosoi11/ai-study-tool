@@ -55,6 +55,10 @@ func (m *mockQuestionRepository) Save(ctx context.Context, q *domain.Question, m
 	return m.save(ctx, q, meta)
 }
 
+func (m *mockQuestionRepository) SupersedeActiveQuestionsForHighlight(ctx context.Context, userID uuid.UUID, highlightID uuid.UUID) error {
+	return nil
+}
+
 func (m *mockQuestionRepository) ListByCreatorID(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error) {
 	if m.listByCreatorID == nil {
 		return make([]*domain.Question, 0), nil

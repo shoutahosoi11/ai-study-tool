@@ -71,7 +71,6 @@ func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddle
 	questions.GET("/saved", container.QuestionHandler.ListSaved)
 	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
 	questions.POST("/sync", container.QuestionHandler.SyncStock)
-	questions.POST("", container.QuestionHandler.GenerateQuestions)
 	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
 	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)
 	questions.POST("/:id/grade", container.QuestionHandler.GradeAnswer)

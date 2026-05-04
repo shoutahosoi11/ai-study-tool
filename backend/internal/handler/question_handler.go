@@ -29,7 +29,6 @@ type QuestionUsecase interface {
 	ListQuestions(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error)
 	ListSavedQuestions(ctx context.Context, userID string, limit int) ([]*domain.SavedQuestion, error)
 	ListIncorrectQuestions(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error)
-	GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
 	ListPreparedQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
 	SaveQuestion(ctx context.Context, userID string, questionID string, note string) error
 	GradeAnswer(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error)
@@ -37,6 +36,7 @@ type QuestionUsecase interface {
 
 type QuestionSyncUsecase interface {
 	SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
+	EvaluateBookAfterAnswer(ctx context.Context, user *domain.User, questionID string) error
 }
 
 func NewQuestionHandler(
@@ -106,62 +106,6 @@ func (h *QuestionHandler) ListIncorrect(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, responses)
-}
-
-func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
-	user, err := h.currentUser(c)
-	if err != nil {
-		return err
-	}
-
-	req := new(dto.GenerateQuestionRequest)
-	if err := c.Bind(req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-
-	if strings.TrimSpace(req.SourceID) == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "source_id is required")
-	}
-	if err := validateQuestionSource(domain.SourceType(req.SourceType), req.SourceID); err != nil {
-		if errors.Is(err, domain.ErrInvalidSourceType) {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
-		}
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid source id")
-	}
-
-	input := domain.GenerateQuestionsInput{
-		CreatorID:         user.ID.String(),
-		SourceType:        domain.SourceType(req.SourceType),
-		SourceID:          req.SourceID,
-		BookTitle:         req.BookTitle,
-		BookAuthor:        req.BookAuthor,
-		QuestionCount:     req.QuestionCount,
-		QuestionType:      domain.QuestionTypeMultipleChoice,
-		CustomInstruction: req.CustomInstruction,
-		UserPlan:          user.Plan,
-	}
-
-	questions, err := h.questionUsecase.GenerateQuestions(c.Request().Context(), input)
-	if err != nil {
-		if errors.Is(err, domain.ErrInvalidSourceType) {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
-		}
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "source not found")
-		}
-		if errors.Is(err, domain.ErrSourceTextUnavailable) {
-			return echo.NewHTTPError(http.StatusUnprocessableEntity, "source text is unavailable")
-		}
-		log.Printf("question generation error: %v", err)
-		return echo.NewHTTPError(http.StatusBadGateway, "question generation failed")
-	}
-
-	responses := make([]dto.QuestionResponse, 0, len(questions))
-	for _, q := range questions {
-		responses = append(responses, dto.ToQuestionResponse(q))
-	}
-
-	return c.JSON(http.StatusCreated, responses)
 }
 
 func (h *QuestionHandler) ListPrepared(c echo.Context) error {
@@ -328,6 +272,11 @@ func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+	if h.questionSyncUsecase != nil {
+		if err := h.questionSyncUsecase.EvaluateBookAfterAnswer(c.Request().Context(), user, questionID); err != nil {
+			log.Printf("question answer sync trigger error: %v", err)
+		}
 	}
 
 	return c.JSON(http.StatusOK, dto.GradeAnswerResponse{

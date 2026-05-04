@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler"
+	"github.com/shout/ai-study-tool/backend/internal/infrastructure/cloudtasks"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gcs"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
@@ -73,6 +75,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	socialRepo := persistence.NewSocialRepository(db)
 	highlightRepo := persistence.NewHighlightRepository(db)
 	rateLimitRepo := persistence.NewRateLimitRepository(db)
+	questionJobRepo := persistence.NewQuestionGenerationJobRepository(db)
 
 	rateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
 	if err != nil {
@@ -83,8 +86,12 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	postUsecase := usecase.NewPostUsecase(postRepo)
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
-	questionWorkerUsecase := usecase.NewQuestionWorkerUsecase(highlightRepo, questionRepo, geminiClient)
-	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionWorkerUsecase)
+	questionWorkerUsecase := usecase.NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, questionJobRepo, geminiClient)
+	questionTaskEnqueuer, err := newQuestionGenerationTaskEnqueuer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionTaskEnqueuer)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
@@ -93,11 +100,11 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	userHandler := handler.NewUserHandler(userUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
 	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase)
-	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase)
+	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase, questionSyncUsecase)
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
 	storageHandler := handler.NewStorageHandler(storageUsecase, userUsecase)
-	taskHandler := handler.NewTaskHandler()
+	taskHandler := handler.NewTaskHandler(questionWorkerUsecase)
 
 	return &Container{
 		UserHandler:         userHandler,
@@ -112,6 +119,17 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		RateLimitMiddleware: rateLimitMiddleware,
 		closeLLMClient:      closeLLMClient,
 	}, nil
+}
+
+func newQuestionGenerationTaskEnqueuer(ctx context.Context) (domain.QuestionGenerationTaskEnqueuer, error) {
+	projectID := strings.TrimSpace(os.Getenv("CLOUD_TASKS_PROJECT_ID"))
+	locationID := strings.TrimSpace(os.Getenv("CLOUD_TASKS_LOCATION_ID"))
+	queueID := strings.TrimSpace(os.Getenv("QUESTION_GENERATION_QUEUE_ID"))
+	targetURL := strings.TrimSpace(os.Getenv("QUESTION_GENERATION_TASK_URL"))
+	if projectID == "" || locationID == "" || queueID == "" || targetURL == "" {
+		return nil, nil
+	}
+	return cloudtasks.NewQuestionGenerationEnqueuer(ctx, projectID, locationID, queueID, targetURL)
 }
 
 func (c *Container) Close() {

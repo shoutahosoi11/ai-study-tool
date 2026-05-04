@@ -13,16 +13,21 @@ import (
 )
 
 type AnswerHandler struct {
-	answerUsecase AnswerUsecase
-	userUsecase   usecase.UserUsecaseInterface
+	answerUsecase       AnswerUsecase
+	userUsecase         usecase.UserUsecaseInterface
+	questionSyncUsecase QuestionSyncUsecase
 }
 
 type AnswerUsecase interface {
 	SubmitAnswer(ctx context.Context, input usecase.SubmitAnswerInput) (*usecase.SubmitAnswerResult, error)
 }
 
-func NewAnswerHandler(au AnswerUsecase, userUsecase usecase.UserUsecaseInterface) *AnswerHandler {
-	return &AnswerHandler{answerUsecase: au, userUsecase: userUsecase}
+func NewAnswerHandler(au AnswerUsecase, userUsecase usecase.UserUsecaseInterface, questionSyncUsecase QuestionSyncUsecase) *AnswerHandler {
+	return &AnswerHandler{
+		answerUsecase:       au,
+		userUsecase:         userUsecase,
+		questionSyncUsecase: questionSyncUsecase,
+	}
 }
 
 func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
@@ -61,6 +66,11 @@ func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadGateway, "AI grading failed")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+	if h.questionSyncUsecase != nil {
+		if err := h.questionSyncUsecase.EvaluateBookAfterAnswer(c.Request().Context(), user, questionID); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		}
 	}
 
 	return c.JSON(http.StatusOK, dto.SubmitAnswerResponse{
