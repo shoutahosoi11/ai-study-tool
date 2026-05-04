@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,11 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
+)
+
+const (
+	defaultQuestionListLimit    = 50
+	defaultQuestionHistoryLimit = 100
 )
 
 type QuestionHandler struct {
@@ -51,7 +57,7 @@ func (h *QuestionHandler) List(c echo.Context) error {
 		return err
 	}
 
-	questions, err := h.questionUsecase.ListQuestions(c.Request().Context(), user.ID.String(), 50)
+	questions, err := h.questionUsecase.ListQuestions(c.Request().Context(), user.ID.String(), defaultQuestionListLimit)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
@@ -70,7 +76,7 @@ func (h *QuestionHandler) ListSaved(c echo.Context) error {
 		return err
 	}
 
-	savedQuestions, err := h.questionUsecase.ListSavedQuestions(c.Request().Context(), user.ID.String(), 100)
+	savedQuestions, err := h.questionUsecase.ListSavedQuestions(c.Request().Context(), user.ID.String(), defaultQuestionHistoryLimit)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
@@ -89,7 +95,7 @@ func (h *QuestionHandler) ListIncorrect(c echo.Context) error {
 		return err
 	}
 
-	incorrectQuestions, err := h.questionUsecase.ListIncorrectQuestions(c.Request().Context(), user.ID.String(), 100)
+	incorrectQuestions, err := h.questionUsecase.ListIncorrectQuestions(c.Request().Context(), user.ID.String(), defaultQuestionHistoryLimit)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
@@ -116,7 +122,7 @@ func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
 	if strings.TrimSpace(req.SourceID) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "source_id is required")
 	}
-	if err := validateQuestionSourceID(domain.SourceType(req.SourceType), req.SourceID); err != nil {
+	if err := validateQuestionSource(domain.SourceType(req.SourceType), req.SourceID); err != nil {
 		if errors.Is(err, domain.ErrInvalidSourceType) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
 		}
@@ -130,7 +136,7 @@ func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
 		BookTitle:         req.BookTitle,
 		BookAuthor:        req.BookAuthor,
 		QuestionCount:     req.QuestionCount,
-		QuestionType:      questionTypeOrDefault(req.QuestionType),
+		QuestionType:      domain.QuestionTypeMultipleChoice,
 		CustomInstruction: req.CustomInstruction,
 		UserPlan:          user.Plan,
 	}
@@ -146,7 +152,8 @@ func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
 		if errors.Is(err, domain.ErrSourceTextUnavailable) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "source text is unavailable")
 		}
-		return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+		log.Printf("question generation error: %v", err)
+		return echo.NewHTTPError(http.StatusBadGateway, "question generation failed")
 	}
 
 	responses := make([]dto.QuestionResponse, 0, len(questions))
@@ -168,7 +175,7 @@ func (h *QuestionHandler) ListPrepared(c echo.Context) error {
 	if sourceID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "source_id is required")
 	}
-	if err := validateQuestionSourceID(sourceType, sourceID); err != nil {
+	if err := validateQuestionSource(sourceType, sourceID); err != nil {
 		if errors.Is(err, domain.ErrInvalidSourceType) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
 		}
@@ -177,9 +184,11 @@ func (h *QuestionHandler) ListPrepared(c echo.Context) error {
 
 	questionCount := 0
 	if rawLimit := strings.TrimSpace(c.QueryParam("question_count")); rawLimit != "" {
-		if parsedLimit, parseErr := strconv.Atoi(rawLimit); parseErr == nil {
-			questionCount = parsedLimit
+		parsedLimit, parseErr := strconv.Atoi(rawLimit)
+		if parseErr != nil || parsedLimit < 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid question_count")
 		}
+		questionCount = parsedLimit
 	}
 
 	input := domain.GenerateQuestionsInput{
@@ -265,7 +274,8 @@ func (h *QuestionHandler) SaveQuestion(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	if err := h.questionUsecase.SaveQuestion(c.Request().Context(), user.ID.String(), questionID, req.Note); err != nil {
+	note := strings.TrimSpace(req.Note)
+	if err := h.questionUsecase.SaveQuestion(c.Request().Context(), user.ID.String(), questionID, note); err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
@@ -274,27 +284,16 @@ func (h *QuestionHandler) SaveQuestion(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, dto.SaveQuestionResponse{
 		QuestionID: questionID,
-		Note:       strings.TrimSpace(req.Note),
+		Note:       note,
 		Saved:      true,
 	})
 }
 
-func questionTypeOrDefault(questionType string) domain.QuestionType {
-	switch domain.QuestionType(strings.TrimSpace(questionType)) {
-	case domain.QuestionTypeDescriptive:
-		return domain.QuestionTypeDescriptive
-	case domain.QuestionTypeMultipleChoice:
-		return domain.QuestionTypeMultipleChoice
-	default:
-		return domain.QuestionTypeMultipleChoice
-	}
-}
-
-func validateQuestionSourceID(sourceType domain.SourceType, sourceID string) error {
+func validateQuestionSource(sourceType domain.SourceType, sourceID string) error {
 	switch sourceType {
 	case domain.SourceTypeKindleBook:
 		if strings.TrimSpace(sourceID) == "" {
-			return domain.ErrInvalidSourceType
+			return domain.ErrInvalidInput
 		}
 		return nil
 	default:
@@ -308,7 +307,7 @@ func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
 		return err
 	}
 
-	questionID := c.Param("id")
+	questionID := strings.TrimSpace(c.Param("id"))
 	if questionID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
 	}

@@ -116,6 +116,7 @@ export default function App() {
   const [lastSaved, setLastSaved] = useState<ImportSharedHighlightResponse | null>(null)
   const [lastShareSignature, setLastShareSignature] = useState('')
   const [activeTab, setActiveTab] = useState<AppTab>('timeline')
+  const mainScrollRef = useRef<ScrollView | null>(null)
 
   const [savedHighlights, setSavedHighlights] = useState<HighlightResponse[]>([])
   const [syncedKindleBooks, setSyncedKindleBooks] = useState<KindleBook[]>([])
@@ -189,7 +190,8 @@ export default function App() {
   const storageUserKey = authUser?.uid ?? ''
   const configMissing = !mobileConfigStatus.ready
   const canSave = Boolean(profile) && !saveBusy && draft.content.trim().length > 0
-  const isLoggedIn = Boolean(authUser && profile)
+  const isLoggedIn = Boolean(authUser)
+  const showAuthForm = !authUser || (!profileLoading && !profile)
   const shareSignature = useMemo(
     () => buildShareIntentSignature(shareIntent),
     [shareIntent.files, shareIntent.meta, shareIntent.text, shareIntent.type, shareIntent.webUrl]
@@ -417,6 +419,10 @@ export default function App() {
       linkingSubscription.remove()
     }
   }, [authUser, isReady, loadQuestionStock, loadSyncedKindleBooks, requestPendingShareIntent])
+
+  useEffect(() => {
+    mainScrollRef.current?.scrollTo({ y: 0, animated: false })
+  }, [activeTab])
 
   useEffect(() => {
     if (!authUser || !isFirebaseConfigured()) {
@@ -1169,7 +1175,11 @@ export default function App() {
               <Text style={styles.subtitle}>{tabConfig.subtitle}</Text>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              ref={mainScrollRef}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
               {activeTab === 'timeline' ? (
                 <>
                   {!isLoggedIn ? (
@@ -1495,8 +1505,13 @@ export default function App() {
 
               {activeTab === 'profile' ? (
                 <>
-                  {!authUser ? (
+                  {showAuthForm ? (
                     <View style={styles.card}>
+                      {authUser && !profile ? (
+                        <Text style={styles.muted}>
+                          プロフィールを読み込めなかったため、ログイン情報を再入力してください。
+                        </Text>
+                      ) : null}
                       <View style={styles.segmented}>
                         <SegmentButton label="ログイン" active={authMode === 'login'} onPress={() => setAuthMode('login')} />
                         <SegmentButton label="新規登録" active={authMode === 'signup'} onPress={() => setAuthMode('signup')} />

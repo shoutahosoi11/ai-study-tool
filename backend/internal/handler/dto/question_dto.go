@@ -12,7 +12,6 @@ type GenerateQuestionRequest struct {
 	BookTitle         string `json:"book_title"`
 	BookAuthor        string `json:"book_author"`
 	QuestionCount     int    `json:"question_count"`
-	QuestionType      string `json:"question_type"`
 	CustomInstruction string `json:"custom_instruction"`
 }
 
