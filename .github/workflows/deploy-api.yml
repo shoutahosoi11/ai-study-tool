@@ -111,6 +111,8 @@ jobs:
           image: ${{ steps.image.outputs.image }}
           env_vars: |-
             CORS_ALLOWED_ORIGINS=${{ vars.CORS_ALLOWED_ORIGINS }}
+            GCS_BUCKET_NAME=${{ vars.GCS_BUCKET_NAME }}
+            GCS_SIGNING_SERVICE_ACCOUNT=${{ vars.GCS_SIGNING_SERVICE_ACCOUNT }}
             APP_ENV=${{ vars.APP_ENV }}
             STRIPE_PRICE_ID_MONTHLY=${{ vars.STRIPE_PRICE_ID_MONTHLY }}
             STRIPE_SUCCESS_URL=${{ vars.STRIPE_SUCCESS_URL }}
