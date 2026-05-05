@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -171,7 +171,7 @@ func (u *QuestionSyncUsecase) requeueStaleJobs(ctx context.Context) error {
 		return fmt.Errorf("question sync usecase: requeue stale jobs: %w", err)
 	}
 	if requeued > 0 {
-		log.Printf("question_generation_event=stale_jobs_requeued count=%d", requeued)
+		slog.Info("question_generation_event=stale_jobs_requeued", "count", requeued)
 	}
 	return nil
 }
@@ -258,11 +258,22 @@ func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid
 		if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, job.UserID, err.Error()); markErr != nil {
 			return false, fmt.Errorf("question sync usecase: mark enqueue failed: %w", markErr)
 		}
-		log.Printf("question_generation_event=enqueue_failed user_id=%s job_id=%s book_key=%s error=%q", userID.String(), job.ID.String(), job.BookKey, err.Error())
+		slog.Error("question_generation_event=enqueue_failed",
+			"user_id", userID.String(),
+			"job_id", job.ID.String(),
+			"book_key", job.BookKey,
+			"error", err.Error(),
+		)
 		return true, nil
 	}
 
-	log.Printf("question_generation_event=job_created user_id=%s job_id=%s book_key=%s highlight_count=%d reason=%s", userID.String(), job.ID.String(), job.BookKey, len(highlightIDs), job.Reason)
+	slog.Info("question_generation_event=job_created",
+		"user_id", userID.String(),
+		"job_id", job.ID.String(),
+		"book_key", job.BookKey,
+		"highlight_count", len(highlightIDs),
+		"reason", job.Reason,
+	)
 	return true, nil
 }
 

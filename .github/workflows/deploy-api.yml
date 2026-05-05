@@ -44,6 +44,14 @@ jobs:
             echo "Missing GitHub Actions variable: CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"
             exit 1
           fi
+          if [ -z "${{ vars.GCS_BUCKET_NAME }}" ]; then
+            echo "Missing GitHub Actions variable: GCS_BUCKET_NAME"
+            exit 1
+          fi
+          if [ -z "${{ vars.GCS_SIGNING_SERVICE_ACCOUNT }}" ]; then
+            echo "Missing GitHub Actions variable: GCS_SIGNING_SERVICE_ACCOUNT"
+            exit 1
+          fi
           if [ -z "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]; then
             echo "Missing GitHub Actions secret: GCP_WORKLOAD_IDENTITY_PROVIDER"
             exit 1

@@ -15,8 +15,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
-	dbinfra "github.com/shout/ai-study-tool/backend/internal/infrastructure/db"
 	"github.com/shout/ai-study-tool/backend/internal/di"
+	dbinfra "github.com/shout/ai-study-tool/backend/internal/infrastructure/db"
+	"github.com/shout/ai-study-tool/backend/internal/logging"
 	"github.com/shout/ai-study-tool/backend/internal/router"
 )
 
@@ -29,6 +30,8 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
+
+	logging.Setup(os.Getenv("APP_ENV"))
 
 	db, err := dbinfra.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
