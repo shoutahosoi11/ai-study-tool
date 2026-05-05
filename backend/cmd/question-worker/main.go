@@ -13,7 +13,6 @@ import (
 	"github.com/joho/godotenv"
 	dbinfra "github.com/shout/ai-study-tool/backend/internal/infrastructure/db"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
-	"github.com/shout/ai-study-tool/backend/internal/logging"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
 	"github.com/shout/ai-study-tool/backend/internal/logging"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
