@@ -15,6 +15,7 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
 	"github.com/shout/ai-study-tool/backend/internal/logging"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
+	"github.com/shout/ai-study-tool/backend/internal/logging"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
@@ -47,6 +48,7 @@ func main() {
 	highlightRepo := persistence.NewHighlightRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)
 	worker := usecase.NewQuestionWorkerUsecase(highlightRepo, questionRepo, llmClient)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
