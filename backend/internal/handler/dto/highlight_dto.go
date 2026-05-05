@@ -62,12 +62,18 @@ type HighlightResponse struct {
 }
 
 type ImportHighlightsResponse struct {
-	SavedCount         int                  `json:"saved_count"`
-	DuplicateCount     int                  `json:"duplicate_count"`
-	CopyProtectedCount int                  `json:"copy_protected_count"`
-	ResolvedASIN       string               `json:"resolved_asin"`
-	Highlights         []*HighlightResponse `json:"highlights"`
-	Warning            *string              `json:"warning,omitempty"`
+	// キューモード (Queued=true の時に設定される)
+	Queued      bool   `json:"queued"`
+	QueueID     string `json:"queue_id,omitempty"`
+	QueuedCount int    `json:"queued_count,omitempty"`
+	// 同期モード (Queued=false の時に設定される)
+	SavedCount     int                  `json:"saved_count,omitempty"`
+	DuplicateCount int                  `json:"duplicate_count,omitempty"`
+	Highlights     []*HighlightResponse `json:"highlights,omitempty"`
+	ResolvedASIN   string               `json:"resolved_asin,omitempty"`
+	// 共通
+	CopyProtectedCount int     `json:"copy_protected_count,omitempty"`
+	Warning            *string `json:"warning,omitempty"`
 }
 
 type ImportSharedHighlightResponse struct {
