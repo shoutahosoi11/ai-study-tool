@@ -45,19 +45,20 @@ type UpdateHighlightExplanationRequest struct {
 }
 
 type HighlightResponse struct {
-	ID            string     `json:"id"`
-	BookID        *string    `json:"book_id,omitempty"`
-	BookTitle     *string    `json:"book_title,omitempty"`
-	BookAuthor    *string    `json:"book_author,omitempty"`
-	ASIN          *string    `json:"asin,omitempty"`
-	Content       string     `json:"content"`
-	Explanation   *string    `json:"explanation,omitempty"`
-	Location      *string    `json:"location,omitempty"`
-	HighlightedAt *time.Time `json:"highlighted_at,omitempty"`
-	Source        string     `json:"source"`
-	SourceApp     *string    `json:"source_app,omitempty"`
-	SourceURL     *string    `json:"source_url,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID             string     `json:"id"`
+	BookID         *string    `json:"book_id,omitempty"`
+	BookTitle      *string    `json:"book_title,omitempty"`
+	BookAuthor     *string    `json:"book_author,omitempty"`
+	ASIN           *string    `json:"asin,omitempty"`
+	Content        string     `json:"content"`
+	Explanation    *string    `json:"explanation,omitempty"`
+	Location       *string    `json:"location,omitempty"`
+	HighlightedAt  *time.Time `json:"highlighted_at,omitempty"`
+	Source         string     `json:"source"`
+	SourceApp      *string    `json:"source_app,omitempty"`
+	SourceURL      *string    `json:"source_url,omitempty"`
+	BookOrderIndex *int       `json:"book_order_index,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type ImportHighlightsResponse struct {

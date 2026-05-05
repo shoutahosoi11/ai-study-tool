@@ -82,6 +82,42 @@ WHERE id = $1
 	return job, nil
 }
 
+func (r *QuestionGenerationJobRepository) ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, user_id, book_key, status, reason, retry_count, last_error, created_at,
+       processing_started_at, completed_at, failed_at
+FROM question_generation_jobs
+WHERE user_id = $1
+  AND status = $2
+ORDER BY created_at ASC
+LIMIT $3
+`, userID, string(domain.JobStatusEnqueueFailed), limit)
+	if err != nil {
+		return nil, wrapQuestionGenerationJobError("list enqueue failed", err)
+	}
+	defer rows.Close()
+
+	jobs := make([]*domain.QuestionGenerationJob, 0)
+	for rows.Next() {
+		job, err := scanQuestionGenerationJob(rows)
+		if err != nil {
+			return nil, wrapQuestionGenerationJobError("scan enqueue failed", err)
+		}
+		if err := r.loadHighlightIDs(ctx, job); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapQuestionGenerationJobError("rows enqueue failed", err)
+	}
+	return jobs, nil
+}
+
 func (r *QuestionGenerationJobRepository) ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*domain.QuestionGenerationJob, bool, error) {
 	job, err := scanQuestionGenerationJob(r.db.QueryRowContext(ctx, `
 UPDATE question_generation_jobs
@@ -106,6 +142,25 @@ RETURNING id, user_id, book_key, status, reason, retry_count, last_error, create
 	}
 
 	return job, true, nil
+}
+
+func (r *QuestionGenerationJobRepository) RequeueStaleProcessing(ctx context.Context, cutoff time.Time) (int, error) {
+	result, err := r.db.ExecContext(ctx, `
+UPDATE question_generation_jobs
+SET status = $1,
+    processing_started_at = NULL,
+    updated_at = NOW()
+WHERE status = $2
+  AND processing_started_at < $3
+`, string(domain.JobStatusQueued), string(domain.JobStatusProcessing), cutoff.UTC())
+	if err != nil {
+		return 0, wrapQuestionGenerationJobError("requeue stale processing", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("question generation job repo: requeue stale processing rows affected: %w", err)
+	}
+	return int(rowsAffected), nil
 }
 
 func (r *QuestionGenerationJobRepository) MarkQueued(ctx context.Context, jobID, userID uuid.UUID) error {

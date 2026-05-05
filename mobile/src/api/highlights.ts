@@ -21,6 +21,7 @@ export type HighlightResponse = {
   source: string
   source_app?: string
   source_url?: string
+  book_order_index?: number
   created_at: string
 }
 

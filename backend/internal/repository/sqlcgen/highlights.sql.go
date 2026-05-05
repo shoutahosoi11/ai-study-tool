@@ -34,7 +34,7 @@ RETURNING
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 `
 
 type CreateHighlightParams struct {
@@ -94,6 +94,7 @@ func (q *Queries) CreateHighlight(ctx context.Context, arg CreateHighlightParams
 		&i.CompletedAt,
 		&i.FailedAt,
 		&i.LastError,
+		&i.BookOrderIndex,
 	)
 	return i, err
 }
@@ -103,7 +104,7 @@ SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND content_hash = $2
@@ -143,6 +144,7 @@ func (q *Queries) GetHighlightByUserIDAndContentHash(ctx context.Context, arg Ge
 		&i.CompletedAt,
 		&i.FailedAt,
 		&i.LastError,
+		&i.BookOrderIndex,
 	)
 	return i, err
 }
@@ -209,7 +211,7 @@ SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND asin = $2
@@ -256,6 +258,7 @@ func (q *Queries) ListHighlightsByUserIDAndASIN(ctx context.Context, arg ListHig
 			&i.CompletedAt,
 			&i.FailedAt,
 			&i.LastError,
+			&i.BookOrderIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -275,7 +278,7 @@ SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND source = $2
@@ -329,6 +332,7 @@ func (q *Queries) ListHighlightsByUserIDAndBookMetadata(ctx context.Context, arg
 			&i.CompletedAt,
 			&i.FailedAt,
 			&i.LastError,
+			&i.BookOrderIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -348,7 +352,7 @@ SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND source = $2
@@ -395,6 +399,7 @@ func (q *Queries) ListHighlightsByUserIDAndBookTitle(ctx context.Context, arg Li
 			&i.CompletedAt,
 			&i.FailedAt,
 			&i.LastError,
+			&i.BookOrderIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -417,7 +422,7 @@ RETURNING
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 `
 
 type UpdateHighlightExplanationParams struct {
@@ -453,6 +458,7 @@ func (q *Queries) UpdateHighlightExplanation(ctx context.Context, arg UpdateHigh
 		&i.CompletedAt,
 		&i.FailedAt,
 		&i.LastError,
+		&i.BookOrderIndex,
 	)
 	return i, err
 }

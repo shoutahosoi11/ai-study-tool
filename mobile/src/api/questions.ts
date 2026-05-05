@@ -2,7 +2,7 @@ import { apiClient } from './client'
 
 export type Question = {
   id: string
-  question_type: 'multiple_choice' | 'descriptive'
+  question_type: 'multiple_choice'
   content: string
   options: string[]
   correct_answer: string
@@ -23,8 +23,6 @@ export type AnswerResult = {
   is_correct: boolean
   correct_answer: string
   explanation: string
-  score?: number
-  feedback?: string
 }
 
 export type SaveQuestionResult = {
@@ -49,11 +47,16 @@ export type QuestionStockSyncResponse = {
 }
 
 type GenerateQuestionsOptions = {
-  questionType?: 'multiple_choice' | 'descriptive'
   questionCount?: number
   bookTitle?: string
   bookAuthor?: string
   customInstruction?: string
+  highlightStartIndex?: number
+  highlightEndIndex?: number
+}
+
+export type ManualGenerateQuestionResponse = {
+  job_id: string
 }
 
 export async function listSavedQuestions(): Promise<SavedQuestion[]> {
@@ -92,6 +95,8 @@ export async function generateQuestions(
       question_count: options?.questionCount ?? 0,
       book_title: options?.bookTitle ?? '',
       book_author: options?.bookAuthor ?? '',
+      highlight_start_index: options?.highlightStartIndex ?? undefined,
+      highlight_end_index: options?.highlightEndIndex ?? undefined,
     },
   })
 
@@ -100,5 +105,13 @@ export async function generateQuestions(
 
 export async function syncQuestionStock(): Promise<QuestionStockSyncResponse> {
   const response = await apiClient.post<QuestionStockSyncResponse>('/questions/sync', {})
+  return response.data
+}
+
+export async function manualGenerateQuestions(bookKey: string, highlightIDs: string[]): Promise<ManualGenerateQuestionResponse> {
+  const response = await apiClient.post<ManualGenerateQuestionResponse>('/v1/questions/generate/manual', {
+    book_key: bookKey,
+    highlight_ids: highlightIDs,
+  })
   return response.data
 }

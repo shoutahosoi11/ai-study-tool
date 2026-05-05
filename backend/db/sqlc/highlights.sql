@@ -3,7 +3,7 @@ SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND asin = sqlc.arg(asin)
@@ -15,7 +15,7 @@ SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND source = sqlc.arg(source)
@@ -28,7 +28,7 @@ SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND source = sqlc.arg(source)
@@ -71,14 +71,14 @@ RETURNING
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error;
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index;
 
 -- name: GetHighlightByUserIDAndContentHash :one
 SELECT
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 FROM highlights
 WHERE user_id = $1
   AND content_hash = $2
@@ -93,4 +93,4 @@ RETURNING
     id, user_id, book_id, content, location, created_at,
     book_title, book_author, asin, highlighted_at, source, updated_at,
     content_hash, explanation, source_app, source_url, status, retry_count,
-    generation_requested_at, processing_started_at, completed_at, failed_at, last_error;
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index;

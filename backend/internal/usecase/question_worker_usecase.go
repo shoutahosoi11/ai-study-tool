@@ -29,6 +29,7 @@ const (
 type QuestionWorkerUsecase struct {
 	highlightRepo          domain.HighlightGenerationLifecycle
 	questionRepo           domain.QuestionWorkerRepository
+	jobRepo                domain.QuestionGenerationJobRepository
 	llmClient              domain.LLMClient
 	maxBatchSize           int
 	maxRetry               int
@@ -54,9 +55,19 @@ func NewQuestionWorkerUsecase(
 	questionRepo domain.QuestionWorkerRepository,
 	llmClient domain.LLMClient,
 ) *QuestionWorkerUsecase {
+	return NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, nil, llmClient)
+}
+
+func NewQuestionWorkerUsecaseWithJobRepository(
+	highlightRepo domain.HighlightGenerationLifecycle,
+	questionRepo domain.QuestionWorkerRepository,
+	jobRepo domain.QuestionGenerationJobRepository,
+	llmClient domain.LLMClient,
+) *QuestionWorkerUsecase {
 	return &QuestionWorkerUsecase{
 		highlightRepo:          highlightRepo,
 		questionRepo:           questionRepo,
+		jobRepo:                jobRepo,
 		llmClient:              llmClient,
 		maxBatchSize:           readEnvIntOrDefault("QUESTION_WORKER_BATCH_SIZE", defaultWorkerBatchSize),
 		maxRetry:               readEnvIntOrDefault("QUESTION_WORKER_MAX_RETRY", defaultWorkerMaxRetry),
@@ -67,6 +78,152 @@ func NewQuestionWorkerUsecase(
 		staleProcessingTimeout: readEnvDurationSecondsOrDefault("QUESTION_WORKER_STALE_PROCESSING_SECONDS", defaultQuestionSyncStaleTimeout),
 		now:                    time.Now,
 	}
+}
+
+func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context, jobID uuid.UUID, userID uuid.UUID) error {
+	if u.jobRepo == nil {
+		return fmt.Errorf("question worker: job repository is not configured")
+	}
+
+	job, claimed, err := u.jobRepo.ClaimQueued(ctx, jobID, userID)
+	if err != nil {
+		return fmt.Errorf("question worker: claim generation job: %w", err)
+	}
+	if !claimed || job == nil {
+		return nil
+	}
+
+	logQuestionWorkerEvent("job_processing_started", map[string]any{
+		"user_id": userID.String(),
+		"job_id":  jobID.String(),
+	})
+
+	highlightIDs := slices.Clone(job.HighlightIDs)
+	if len(highlightIDs) == 0 {
+		return u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID)
+	}
+
+	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, userID, questionSyncDay(u.now()), len(highlightIDs), readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
+	if err != nil {
+		return fmt.Errorf("question worker: reserve generation quota: %w", err)
+	}
+	if !reserved {
+		if err := u.jobRepo.MarkQueued(ctx, job.ID, job.UserID); err != nil {
+			return fmt.Errorf("question worker: return quota-limited job to queued: %w", err)
+		}
+		logQuestionWorkerEvent("job_quota_skipped", map[string]any{
+			"user_id": userID.String(),
+			"job_id":  jobID.String(),
+		})
+		return nil
+	}
+
+	highlights, err := u.highlightRepo.ListByIDs(ctx, userID, highlightIDs)
+	if err != nil {
+		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: list job highlights: %w", err))
+	}
+	if len(highlights) == 0 {
+		return u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID)
+	}
+
+	if err := u.waitForRateLimit(ctx); err != nil {
+		return u.recordJobFailure(ctx, job, err)
+	}
+
+	model := u.llmClient.ModelForPlan("free")
+	customInstruction := "各ハイライトから選択式問題を1問ずつ作成してください。"
+	generationID, err := u.questionRepo.SaveGeneration(ctx, userID.String(), "question_generation_job", job.ID.String(), customInstruction, model)
+	if err != nil {
+		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generation: %w", err))
+	}
+
+	materials := make([]domain.ExtractedPoint, 0, len(highlights))
+	materialHighlights := make([]*domain.Highlight, 0, len(highlights))
+	for _, highlight := range highlights {
+		if highlight == nil || strings.TrimSpace(highlight.Content) == "" {
+			continue
+		}
+		materialHighlights = append(materialHighlights, highlight)
+		materials = append(materials, domain.ExtractedPoint{
+			Point:   highlight.Content,
+			Context: buildPerspectiveContext(highlight, "definition"),
+		})
+	}
+	if len(materials) == 0 {
+		return u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID)
+	}
+
+	generatedQuestions, err := u.llmClient.GenerateQuestions(ctx, materials, domain.QuestionTypeMultipleChoice, customInstruction, model)
+	if err != nil {
+		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: generate questions: %w", err))
+	}
+	if len(generatedQuestions) < len(materials) {
+		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: generated questions count mismatch: expected %d, got %d", len(materials), len(generatedQuestions)))
+	}
+
+	for index, highlight := range materialHighlights {
+		generated := generatedQuestions[index]
+		if err := u.questionRepo.SupersedeActiveQuestionsForHighlight(ctx, userID, highlight.ID); err != nil {
+			return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: supersede active question: %w", err))
+		}
+
+		question := &domain.Question{
+			ID:            uuid.NewString(),
+			QuestionType:  domain.QuestionTypeMultipleChoice,
+			Content:       generated.Content,
+			Options:       generated.Options,
+			CorrectAnswer: generated.CorrectAnswer,
+			Explanation:   generated.Explanation,
+		}
+		meta := &domain.QuestionMeta{
+			QuestionID:    question.ID,
+			CreatorID:     userID.String(),
+			SourceType:    domain.SourceTypeKindleBook,
+			HighlightID:   highlight.ID.String(),
+			GenerationID:  generationID,
+			Perspective:   "definition",
+			Version:       1,
+			IsAIGenerated: true,
+		}
+		if err := u.questionRepo.Save(ctx, question, meta); err != nil {
+			return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generated question: %w", err))
+		}
+	}
+
+	if err := u.highlightRepo.MarkGenerationCompleted(ctx, highlightIDs); err != nil {
+		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: mark highlights completed: %w", err))
+	}
+	if err := u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID); err != nil {
+		return fmt.Errorf("question worker: mark job completed: %w", err)
+	}
+
+	logQuestionWorkerEvent("job_completed", map[string]any{
+		"user_id":         userID.String(),
+		"job_id":          jobID.String(),
+		"highlight_count": len(highlights),
+	})
+	return nil
+}
+
+func (u *QuestionWorkerUsecase) recordJobFailure(ctx context.Context, job *domain.QuestionGenerationJob, err error) error {
+	if job == nil || err == nil {
+		return err
+	}
+	updated, recordErr := u.jobRepo.RecordFailure(ctx, job.ID, job.UserID, err.Error(), domain.JobMaxRetryCount)
+	if recordErr != nil {
+		return fmt.Errorf("%w; additionally failed to record job failure: %v", err, recordErr)
+	}
+	if updated != nil && updated.Status == domain.JobStatusFailed {
+		if markErr := u.highlightRepo.MarkGenerationFailed(ctx, job.HighlightIDs, err.Error(), domain.JobMaxRetryCount); markErr != nil {
+			log.Printf("question worker: mark failed job highlights failed: %v", markErr)
+		}
+	}
+	logQuestionWorkerEvent("job_failed", map[string]any{
+		"user_id": job.UserID.String(),
+		"job_id":  job.ID.String(),
+		"error":   err.Error(),
+	})
+	return err
 }
 
 func (u *QuestionWorkerUsecase) RunOnce(ctx context.Context) error {

@@ -21,6 +21,7 @@ type highlightRepository struct {
 
 const bookKeyExpressionSQL = `
 CASE
+    WHEN NULLIF(trim(coalesce(h.book_key, '')), '') IS NOT NULL THEN trim(h.book_key)
     WHEN NULLIF(trim(coalesce(h.asin, '')), '') IS NOT NULL THEN trim(h.asin)
     ELSE concat('metadata:', trim(coalesce(h.book_title, '')), ':', trim(coalesce(h.book_author, '')))
 END
@@ -103,8 +104,46 @@ func (r *highlightRepository) executeBulkUpsertQuery(
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("highlight repo: bulk upsert rows: %w", err)
 	}
+	if saved > 0 {
+		if err := r.fillMissingBookOrderIndexes(ctx); err != nil {
+			return 0, err
+		}
+	}
 
 	return saved, nil
+}
+
+func (r *highlightRepository) fillMissingBookOrderIndexes(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+WITH missing AS (
+    SELECT id, user_id, book_key,
+           ROW_NUMBER() OVER (
+               PARTITION BY user_id, book_key
+               ORDER BY COALESCE(highlighted_at, created_at), created_at, id
+           ) AS rn
+    FROM highlights
+    WHERE book_order_index IS NULL
+      AND NULLIF(trim(coalesce(book_key, '')), '') IS NOT NULL
+),
+offsets AS (
+    SELECT user_id, book_key, COALESCE(MAX(book_order_index), 0) AS offset_value
+    FROM highlights
+    WHERE book_order_index IS NOT NULL
+      AND NULLIF(trim(coalesce(book_key, '')), '') IS NOT NULL
+    GROUP BY user_id, book_key
+)
+UPDATE highlights h
+SET book_order_index = missing.rn + COALESCE(offsets.offset_value, 0)
+FROM missing
+LEFT JOIN offsets
+  ON offsets.user_id = missing.user_id
+ AND offsets.book_key = missing.book_key
+WHERE h.id = missing.id
+`)
+	if err != nil {
+		return fmt.Errorf("highlight repo: fill missing book order indexes: %w", err)
+	}
+	return nil
 }
 
 func (r *highlightRepository) ListExistingContentHashesByUserID(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error) {
@@ -147,7 +186,7 @@ func (r *highlightRepository) FindByUserIDAndContentHash(ctx context.Context, us
 	highlight, err := r.listOneHighlight(ctx, `
 SELECT id, user_id, book_id, book_title, book_author, asin, content, explanation, content_hash, location,
        highlighted_at, source, source_app, source_url, status, retry_count, last_error,
-       generation_requested_at, processing_started_at, completed_at, failed_at, created_at, updated_at
+       generation_requested_at, processing_started_at, completed_at, failed_at, book_order_index, created_at, updated_at
 FROM highlights
 WHERE user_id = $1
   AND content_hash = $2
@@ -165,7 +204,7 @@ func (r *highlightRepository) ListByUserIDAndASIN(ctx context.Context, userID uu
 	return r.listHighlights(ctx, `
 SELECT id, user_id, book_id, book_title, book_author, asin, content, explanation, content_hash, location,
        highlighted_at, source, source_app, source_url, status, retry_count, last_error,
-       generation_requested_at, processing_started_at, completed_at, failed_at, created_at, updated_at
+       generation_requested_at, processing_started_at, completed_at, failed_at, book_order_index, created_at, updated_at
 FROM highlights
 WHERE user_id = $1
   AND asin = $2
@@ -185,7 +224,7 @@ func (r *highlightRepository) ListByUserIDAndBookMetadata(ctx context.Context, u
 		highlights, err := r.listHighlights(ctx, `
 SELECT id, user_id, book_id, book_title, book_author, asin, content, explanation, content_hash, location,
        highlighted_at, source, source_app, source_url, status, retry_count, last_error,
-       generation_requested_at, processing_started_at, completed_at, failed_at, created_at, updated_at
+       generation_requested_at, processing_started_at, completed_at, failed_at, book_order_index, created_at, updated_at
 FROM highlights
 WHERE user_id = $1
   AND lower(trim(coalesce(book_title, ''))) = lower(trim($2))
@@ -203,7 +242,7 @@ ORDER BY highlighted_at ASC NULLS LAST, created_at ASC
 	highlights, err := r.listHighlights(ctx, `
 SELECT id, user_id, book_id, book_title, book_author, asin, content, explanation, content_hash, location,
        highlighted_at, source, source_app, source_url, status, retry_count, last_error,
-       generation_requested_at, processing_started_at, completed_at, failed_at, created_at, updated_at
+       generation_requested_at, processing_started_at, completed_at, failed_at, book_order_index, created_at, updated_at
 FROM highlights
 WHERE user_id = $1
   AND lower(trim(coalesce(book_title, ''))) = lower(trim($2))
@@ -325,6 +364,193 @@ func (r *highlightRepository) ListUsedHighlightsWithUncoveredPerspectives(ctx co
 	return r.listQuestionSourceHighlights(ctx, userID, bookKey, limit, false)
 }
 
+func (r *highlightRepository) ListQuestionGenerationCandidates(ctx context.Context, userID uuid.UUID, changedSince *time.Time) ([]domain.QuestionGenerationBookCandidate, error) {
+	changedFilter := ""
+	args := []any{userID}
+	if changedSince != nil {
+		changedFilter = "AND h.updated_at > $2"
+		args = append(args, changedSince.UTC())
+	}
+
+	query := `
+WITH changed_books AS (
+    SELECT DISTINCT ` + bookKeyExpressionSQL + ` AS book_key
+    FROM highlights h
+    WHERE h.user_id = $1
+      ` + changedFilter + `
+      AND (
+        NULLIF(trim(coalesce(h.book_key, '')), '') IS NOT NULL
+        OR NULLIF(trim(coalesce(h.asin, '')), '') IS NOT NULL
+        OR NULLIF(trim(coalesce(h.book_title, '')), '') IS NOT NULL
+      )
+),
+book_highlights AS (
+    SELECT
+        h.id,
+        ` + bookKeyExpressionSQL + ` AS book_key,
+        trim(coalesce(h.book_title, '')) AS book_title,
+        trim(coalesce(h.book_author, '')) AS book_author,
+        h.status,
+        h.created_at,
+        h.highlighted_at
+    FROM highlights h
+    JOIN changed_books cb
+      ON cb.book_key = ` + bookKeyExpressionSQL + `
+    WHERE h.user_id = $1
+),
+active_questions AS (
+    SELECT q.id, q.highlight_id
+    FROM questions q
+    WHERE q.user_id = $1
+      AND q.highlight_id IS NOT NULL
+      AND q.superseded_at IS NULL
+),
+unanswered_questions AS (
+    SELECT aq.highlight_id, COUNT(*)::int AS unanswered_count
+    FROM active_questions aq
+    LEFT JOIN answers a
+      ON a.question_id = aq.id
+     AND a.user_id = $1
+    WHERE a.question_id IS NULL
+    GROUP BY aq.highlight_id
+)
+SELECT
+    bh.book_key,
+    MAX(bh.book_title) AS book_title,
+    MAX(bh.book_author) AS book_author,
+    COUNT(*) FILTER (WHERE bh.status = 'pending')::int AS pending_highlight_count,
+    COALESCE(SUM(uq.unanswered_count), 0)::int AS unanswered_question_count,
+    MAX(COALESCE(bh.highlighted_at, bh.created_at)) AS latest_highlight_at
+FROM book_highlights bh
+LEFT JOIN unanswered_questions uq
+  ON uq.highlight_id = bh.id
+GROUP BY bh.book_key
+ORDER BY MAX(COALESCE(bh.highlighted_at, bh.created_at)) DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("highlight repo: list question generation candidates: %w", err)
+	}
+	defer rows.Close()
+
+	candidates := make([]domain.QuestionGenerationBookCandidate, 0)
+	for rows.Next() {
+		var candidate domain.QuestionGenerationBookCandidate
+		if err := rows.Scan(
+			&candidate.BookKey,
+			&candidate.BookTitle,
+			&candidate.BookAuthor,
+			&candidate.PendingHighlightCount,
+			&candidate.UnansweredQuestionCount,
+			&candidate.LatestHighlightAt,
+		); err != nil {
+			return nil, fmt.Errorf("highlight repo: scan question generation candidate: %w", err)
+		}
+		candidate.BookKey = strings.TrimSpace(candidate.BookKey)
+		candidate.BookTitle = strings.TrimSpace(candidate.BookTitle)
+		candidate.BookAuthor = strings.TrimSpace(candidate.BookAuthor)
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("highlight repo: rows question generation candidates: %w", err)
+	}
+
+	return candidates, nil
+}
+
+func (r *highlightRepository) ListPendingHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
+	if limit <= 0 {
+		limit = domain.MaxHighlightsPerJob
+	}
+
+	query := `
+SELECT
+    h.id, h.user_id, h.book_id, h.book_title, h.book_author, h.asin, h.content, h.explanation,
+    h.content_hash, h.location, h.highlighted_at, h.source, h.source_app, h.source_url, h.status,
+    h.retry_count, h.last_error, h.generation_requested_at, h.processing_started_at, h.completed_at,
+    h.failed_at, h.book_order_index, h.created_at, h.updated_at
+FROM highlights h
+WHERE h.user_id = $1
+  AND ` + bookKeyExpressionSQL + ` = $2
+  AND h.status = 'pending'
+  AND char_length(trim(coalesce(h.content, ''))) > 0
+ORDER BY COALESCE(h.highlighted_at, h.created_at) ASC, h.created_at ASC
+LIMIT $3`
+
+	highlights, err := r.listHighlights(ctx, query, userID, strings.TrimSpace(bookKey), limit)
+	if err != nil {
+		return nil, fmt.Errorf("highlight repo: list pending highlights by book: %w", err)
+	}
+	return highlights, nil
+}
+
+func (r *highlightRepository) ListByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
+	if len(highlightIDs) == 0 {
+		return make([]*domain.Highlight, 0), nil
+	}
+
+	query := `
+SELECT
+    h.id, h.user_id, h.book_id, h.book_title, h.book_author, h.asin, h.content, h.explanation,
+    h.content_hash, h.location, h.highlighted_at, h.source, h.source_app, h.source_url, h.status,
+    h.retry_count, h.last_error, h.generation_requested_at, h.processing_started_at, h.completed_at,
+    h.failed_at, h.book_order_index, h.created_at, h.updated_at
+FROM highlights h
+WHERE h.user_id = $1
+  AND h.id::text = ANY($2)
+ORDER BY h.created_at ASC`
+
+	highlights, err := r.listHighlights(ctx, query, userID, pq.Array(uuidStrings(highlightIDs)))
+	if err != nil {
+		return nil, fmt.Errorf("highlight repo: list by ids: %w", err)
+	}
+	return highlights, nil
+}
+
+func (r *highlightRepository) MarkHighlightsProcessing(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error {
+	if len(highlightIDs) == 0 {
+		return nil
+	}
+
+	_, err := r.db.ExecContext(ctx, `
+UPDATE highlights
+SET status = 'processing',
+    processing_started_at = NOW(),
+    updated_at = NOW()
+WHERE user_id = $1
+  AND id::text = ANY($2)
+  AND status = 'pending'
+`, userID, pq.Array(uuidStrings(highlightIDs)))
+	if err != nil {
+		return fmt.Errorf("highlight repo: mark highlights processing: %w", err)
+	}
+	return nil
+}
+
+func (r *highlightRepository) MarkHighlightPendingForQuestion(ctx context.Context, userID uuid.UUID, questionID uuid.UUID) (string, error) {
+	var bookKey string
+	err := r.db.QueryRowContext(ctx, `
+UPDATE highlights h
+SET status = 'pending',
+    retry_count = 0,
+    generation_requested_at = NOW(),
+    processing_started_at = NULL,
+    completed_at = NULL,
+    failed_at = NULL,
+    last_error = NULL,
+    updated_at = NOW()
+FROM questions q
+WHERE q.id = $2
+  AND q.user_id = $1
+  AND q.highlight_id = h.id
+  AND h.user_id = $1
+RETURNING `+bookKeyExpressionSQL, userID, questionID).Scan(&bookKey)
+	if err != nil {
+		return "", wrapHighlightError("mark highlight pending for question", err)
+	}
+	return strings.TrimSpace(bookKey), nil
+}
+
 func (r *highlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {
 	query := `
 SELECT
@@ -393,7 +619,7 @@ RETURNING
     h.id, h.user_id, h.book_id, h.book_title, h.book_author, h.asin, h.content, h.explanation,
     h.content_hash, h.location, h.highlighted_at, h.source, h.source_app, h.source_url, h.status,
     h.retry_count, h.last_error, h.generation_requested_at, h.processing_started_at, h.completed_at,
-    h.failed_at, h.created_at, h.updated_at`
+    h.failed_at, h.book_order_index, h.created_at, h.updated_at`
 
 	rows, err := r.db.QueryContext(ctx, query, userID, limit)
 	if err != nil {
@@ -443,7 +669,7 @@ RETURNING
     h.id, h.user_id, h.book_id, h.book_title, h.book_author, h.asin, h.content, h.explanation,
     h.content_hash, h.location, h.highlighted_at, h.source, h.source_app, h.source_url, h.status,
     h.retry_count, h.last_error, h.generation_requested_at, h.processing_started_at, h.completed_at,
-    h.failed_at, h.created_at, h.updated_at`
+    h.failed_at, h.book_order_index, h.created_at, h.updated_at`
 
 	rows, err := r.db.QueryContext(ctx, query, userID, pq.Array(uuidStrings(highlightIDs)))
 	if err != nil {
@@ -615,7 +841,7 @@ SELECT
     h.id, h.user_id, h.book_id, h.book_title, h.book_author, h.asin, h.content, h.explanation,
     h.content_hash, h.location, h.highlighted_at, h.source, h.source_app, h.source_url, h.status,
     h.retry_count, h.last_error, h.generation_requested_at, h.processing_started_at, h.completed_at,
-    h.failed_at, h.created_at, h.updated_at
+    h.failed_at, h.book_order_index, h.created_at, h.updated_at
 FROM highlights h
 LEFT JOIN question_counts qc
   ON qc.highlight_id = h.id
@@ -688,24 +914,25 @@ type highlightScanner interface {
 
 func scanHighlight(scanner highlightScanner) (*domain.Highlight, error) {
 	var (
-		highlight     domain.Highlight
-		bookID        uuid.NullUUID
-		bookTitle     sql.NullString
-		bookAuthor    sql.NullString
-		asin          sql.NullString
-		explanation   sql.NullString
-		contentHash   sql.NullString
-		location      sql.NullString
-		highlightedAt sql.NullTime
-		sourceApp     sql.NullString
-		sourceURL     sql.NullString
-		source        sql.NullString
-		status        sql.NullString
-		lastError     sql.NullString
-		processingAt  sql.NullTime
-		completedAt   sql.NullTime
-		failedAt      sql.NullTime
-		requestedAt   sql.NullTime
+		highlight      domain.Highlight
+		bookID         uuid.NullUUID
+		bookTitle      sql.NullString
+		bookAuthor     sql.NullString
+		asin           sql.NullString
+		explanation    sql.NullString
+		contentHash    sql.NullString
+		location       sql.NullString
+		highlightedAt  sql.NullTime
+		sourceApp      sql.NullString
+		sourceURL      sql.NullString
+		source         sql.NullString
+		status         sql.NullString
+		lastError      sql.NullString
+		processingAt   sql.NullTime
+		completedAt    sql.NullTime
+		failedAt       sql.NullTime
+		requestedAt    sql.NullTime
+		bookOrderIndex sql.NullInt32
 	)
 
 	if err := scanner.Scan(
@@ -730,6 +957,7 @@ func scanHighlight(scanner highlightScanner) (*domain.Highlight, error) {
 		&processingAt,
 		&completedAt,
 		&failedAt,
+		&bookOrderIndex,
 		&highlight.CreatedAt,
 		&highlight.UpdatedAt,
 	); err != nil {
@@ -752,6 +980,7 @@ func scanHighlight(scanner highlightScanner) (*domain.Highlight, error) {
 	highlight.ProcessingAt = fromNullTime(processingAt)
 	highlight.CompletedAt = fromNullTime(completedAt)
 	highlight.FailedAt = fromNullTime(failedAt)
+	highlight.BookOrderIndex = fromNullInt32AsInt(bookOrderIndex)
 	if requestedAt.Valid {
 		highlight.RequestedAt = requestedAt.Time
 	} else {
@@ -772,29 +1001,30 @@ func toDomainHighlights(items []sqlcgen.Highlight) []*domain.Highlight {
 
 func toDomainHighlight(item sqlcgen.Highlight) *domain.Highlight {
 	return &domain.Highlight{
-		ID:            item.ID,
-		UserID:        item.UserID,
-		BookID:        fromNullUUID(item.BookID),
-		BookTitle:     fromNullString(item.BookTitle),
-		BookAuthor:    fromNullString(item.BookAuthor),
-		ASIN:          fromNullString(item.Asin),
-		Content:       item.Content,
-		Explanation:   fromNullString(item.Explanation),
-		ContentHash:   fromNullString(item.ContentHash),
-		Location:      fromNullString(item.Location),
-		HighlightedAt: fromNullTime(item.HighlightedAt),
-		Source:        fromNullStringValue(item.Source),
-		SourceApp:     fromNullString(item.SourceApp),
-		SourceURL:     fromNullString(item.SourceUrl),
-		Status:        domain.HighlightStatus(strings.TrimSpace(item.Status)),
-		RetryCount:    int(item.RetryCount),
-		LastError:     fromNullString(item.LastError),
-		RequestedAt:   item.GenerationRequestedAt,
-		ProcessingAt:  fromNullTime(item.ProcessingStartedAt),
-		CompletedAt:   fromNullTime(item.CompletedAt),
-		FailedAt:      fromNullTime(item.FailedAt),
-		CreatedAt:     item.CreatedAt,
-		UpdatedAt:     item.UpdatedAt,
+		ID:             item.ID,
+		UserID:         item.UserID,
+		BookID:         fromNullUUID(item.BookID),
+		BookTitle:      fromNullString(item.BookTitle),
+		BookAuthor:     fromNullString(item.BookAuthor),
+		ASIN:           fromNullString(item.Asin),
+		Content:        item.Content,
+		Explanation:    fromNullString(item.Explanation),
+		ContentHash:    fromNullString(item.ContentHash),
+		Location:       fromNullString(item.Location),
+		HighlightedAt:  fromNullTime(item.HighlightedAt),
+		Source:         fromNullStringValue(item.Source),
+		SourceApp:      fromNullString(item.SourceApp),
+		SourceURL:      fromNullString(item.SourceUrl),
+		BookOrderIndex: fromNullInt32AsInt(item.BookOrderIndex),
+		Status:         domain.HighlightStatus(strings.TrimSpace(item.Status)),
+		RetryCount:     int(item.RetryCount),
+		LastError:      fromNullString(item.LastError),
+		RequestedAt:    item.GenerationRequestedAt,
+		ProcessingAt:   fromNullTime(item.ProcessingStartedAt),
+		CompletedAt:    fromNullTime(item.CompletedAt),
+		FailedAt:       fromNullTime(item.FailedAt),
+		CreatedAt:      item.CreatedAt,
+		UpdatedAt:      item.UpdatedAt,
 	}
 }
 
@@ -820,6 +1050,14 @@ func fromNullStringValue(value sql.NullString) string {
 	}
 
 	return value.String
+}
+
+func fromNullInt32AsInt(value sql.NullInt32) *int {
+	if !value.Valid {
+		return nil
+	}
+	converted := int(value.Int32)
+	return &converted
 }
 
 func toNullTime(value *time.Time) sql.NullTime {

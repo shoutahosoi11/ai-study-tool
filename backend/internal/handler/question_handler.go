@@ -3,11 +3,11 @@ package handler
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
@@ -22,6 +22,7 @@ const (
 type QuestionHandler struct {
 	questionUsecase     QuestionUsecase
 	questionSyncUsecase QuestionSyncUsecase
+	manualUsecase       ManualGenerationUsecase
 	userUsecase         usecase.UserUsecaseInterface
 }
 
@@ -29,24 +30,33 @@ type QuestionUsecase interface {
 	ListQuestions(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error)
 	ListSavedQuestions(ctx context.Context, userID string, limit int) ([]*domain.SavedQuestion, error)
 	ListIncorrectQuestions(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error)
-	GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
 	ListPreparedQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error)
 	SaveQuestion(ctx context.Context, userID string, questionID string, note string) error
-	GradeAnswer(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error)
 }
 
 type QuestionSyncUsecase interface {
 	SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
+	EvaluateBookAfterAnswer(ctx context.Context, user *domain.User, questionID string) error
+}
+
+type ManualGenerationUsecase interface {
+	Generate(ctx context.Context, user *domain.User, bookKey string, highlightIDs []uuid.UUID) (*domain.QuestionGenerationJob, error)
 }
 
 func NewQuestionHandler(
 	qu QuestionUsecase,
 	questionSyncUsecase QuestionSyncUsecase,
 	userUsecase usecase.UserUsecaseInterface,
+	manualUsecases ...ManualGenerationUsecase,
 ) *QuestionHandler {
+	var manualUsecase ManualGenerationUsecase
+	if len(manualUsecases) > 0 {
+		manualUsecase = manualUsecases[0]
+	}
 	return &QuestionHandler{
 		questionUsecase:     qu,
 		questionSyncUsecase: questionSyncUsecase,
+		manualUsecase:       manualUsecase,
 		userUsecase:         userUsecase,
 	}
 }
@@ -108,62 +118,6 @@ func (h *QuestionHandler) ListIncorrect(c echo.Context) error {
 	return c.JSON(http.StatusOK, responses)
 }
 
-func (h *QuestionHandler) GenerateQuestions(c echo.Context) error {
-	user, err := h.currentUser(c)
-	if err != nil {
-		return err
-	}
-
-	req := new(dto.GenerateQuestionRequest)
-	if err := c.Bind(req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-
-	if strings.TrimSpace(req.SourceID) == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "source_id is required")
-	}
-	if err := validateQuestionSource(domain.SourceType(req.SourceType), req.SourceID); err != nil {
-		if errors.Is(err, domain.ErrInvalidSourceType) {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
-		}
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid source id")
-	}
-
-	input := domain.GenerateQuestionsInput{
-		CreatorID:         user.ID.String(),
-		SourceType:        domain.SourceType(req.SourceType),
-		SourceID:          req.SourceID,
-		BookTitle:         req.BookTitle,
-		BookAuthor:        req.BookAuthor,
-		QuestionCount:     req.QuestionCount,
-		QuestionType:      domain.QuestionTypeMultipleChoice,
-		CustomInstruction: req.CustomInstruction,
-		UserPlan:          user.Plan,
-	}
-
-	questions, err := h.questionUsecase.GenerateQuestions(c.Request().Context(), input)
-	if err != nil {
-		if errors.Is(err, domain.ErrInvalidSourceType) {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
-		}
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "source not found")
-		}
-		if errors.Is(err, domain.ErrSourceTextUnavailable) {
-			return echo.NewHTTPError(http.StatusUnprocessableEntity, "source text is unavailable")
-		}
-		log.Printf("question generation error: %v", err)
-		return echo.NewHTTPError(http.StatusBadGateway, "question generation failed")
-	}
-
-	responses := make([]dto.QuestionResponse, 0, len(questions))
-	for _, q := range questions {
-		responses = append(responses, dto.ToQuestionResponse(q))
-	}
-
-	return c.JSON(http.StatusCreated, responses)
-}
-
 func (h *QuestionHandler) ListPrepared(c echo.Context) error {
 	user, err := h.currentUser(c)
 	if err != nil {
@@ -190,14 +144,24 @@ func (h *QuestionHandler) ListPrepared(c echo.Context) error {
 		}
 		questionCount = parsedLimit
 	}
+	startIndex, err := parseOptionalNonNegativeInt(c.QueryParam("highlight_start_index"), "highlight_start_index")
+	if err != nil {
+		return err
+	}
+	endIndex, err := parseOptionalNonNegativeInt(c.QueryParam("highlight_end_index"), "highlight_end_index")
+	if err != nil {
+		return err
+	}
 
 	input := domain.GenerateQuestionsInput{
-		CreatorID:     user.ID.String(),
-		SourceType:    sourceType,
-		SourceID:      sourceID,
-		BookTitle:     strings.TrimSpace(c.QueryParam("book_title")),
-		BookAuthor:    strings.TrimSpace(c.QueryParam("book_author")),
-		QuestionCount: questionCount,
+		CreatorID:           user.ID.String(),
+		SourceType:          sourceType,
+		SourceID:            sourceID,
+		BookTitle:           strings.TrimSpace(c.QueryParam("book_title")),
+		BookAuthor:          strings.TrimSpace(c.QueryParam("book_author")),
+		QuestionCount:       questionCount,
+		HighlightStartIndex: startIndex,
+		HighlightEndIndex:   endIndex,
 	}
 
 	questions, err := h.questionUsecase.ListPreparedQuestions(c.Request().Context(), input)
@@ -258,6 +222,61 @@ func (h *QuestionHandler) SyncStock(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
+func (h *QuestionHandler) ManualGenerate(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+	if h.manualUsecase == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "manual generation is unavailable")
+	}
+
+	req := new(dto.ManualGenerateQuestionRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if len(req.HighlightIDs) < 5 {
+		return echo.NewHTTPError(http.StatusBadRequest, "minimum 5 highlights required")
+	}
+
+	highlightIDs := make([]uuid.UUID, 0, len(req.HighlightIDs))
+	for _, rawID := range req.HighlightIDs {
+		highlightID, parseErr := uuid.Parse(strings.TrimSpace(rawID))
+		if parseErr != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight id")
+		}
+		highlightIDs = append(highlightIDs, highlightID)
+	}
+
+	job, err := h.manualUsecase.Generate(c.Request().Context(), user, strings.TrimSpace(req.BookKey), highlightIDs)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+		}
+		if errors.Is(err, domain.ErrQuestionBudgetExceeded) {
+			return echo.NewHTTPError(http.StatusPaymentRequired, "question budget exceeded")
+		}
+		if errors.Is(err, domain.ErrAlreadyExists) {
+			return echo.NewHTTPError(http.StatusConflict, "generation job already exists")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusAccepted, dto.ManualGenerateQuestionResponse{JobID: job.ID.String()})
+}
+
+func parseOptionalNonNegativeInt(rawValue string, name string) (int, error) {
+	normalized := strings.TrimSpace(rawValue)
+	if normalized == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.Atoi(normalized)
+	if err != nil || parsed < 0 {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid "+name)
+	}
+	return parsed, nil
+}
+
 func (h *QuestionHandler) SaveQuestion(c echo.Context) error {
 	user, err := h.currentUser(c)
 	if err != nil {
@@ -299,42 +318,6 @@ func validateQuestionSource(sourceType domain.SourceType, sourceID string) error
 	default:
 		return domain.ErrInvalidSourceType
 	}
-}
-
-func (h *QuestionHandler) GradeAnswer(c echo.Context) error {
-	user, err := h.currentUser(c)
-	if err != nil {
-		return err
-	}
-
-	questionID := strings.TrimSpace(c.Param("id"))
-	if questionID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
-	}
-
-	req := new(dto.GradeAnswerRequest)
-	if err := c.Bind(req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-
-	gradeInput := domain.GradeInput{
-		QuestionID: questionID,
-		UserAnswer: req.UserAnswer,
-	}
-
-	result, err := h.questionUsecase.GradeAnswer(c.Request().Context(), gradeInput, user.Plan)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "question not found")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
-	}
-
-	return c.JSON(http.StatusOK, dto.GradeAnswerResponse{
-		IsCorrect: result.IsCorrect,
-		Score:     result.Score,
-		Feedback:  result.Feedback,
-	})
 }
 
 func (h *QuestionHandler) currentUser(c echo.Context) (*domain.User, error) {

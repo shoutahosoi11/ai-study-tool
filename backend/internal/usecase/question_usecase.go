@@ -86,6 +86,7 @@ func (u *QuestionUsecase) ListPreparedQuestions(ctx context.Context, input domai
 	}
 
 	candidates := filterNonEmptyHighlights(sourceHighlights)
+	candidates = filterHighlightsByBookOrderIndex(candidates, input.HighlightStartIndex, input.HighlightEndIndex)
 	if len(candidates) == 0 {
 		return nil, domain.ErrSourceTextUnavailable
 	}
@@ -119,6 +120,27 @@ func (u *QuestionUsecase) ListPreparedQuestions(ctx context.Context, input domai
 	}
 
 	return nil, domain.ErrSourceTextUnavailable
+}
+
+func filterHighlightsByBookOrderIndex(highlights []*domain.Highlight, startIndex int, endIndex int) []*domain.Highlight {
+	if startIndex == 0 && endIndex == 0 {
+		return highlights
+	}
+	filtered := make([]*domain.Highlight, 0, len(highlights))
+	for _, highlight := range highlights {
+		if highlight == nil || highlight.BookOrderIndex == nil {
+			continue
+		}
+		index := *highlight.BookOrderIndex
+		if startIndex > 0 && index < startIndex {
+			continue
+		}
+		if endIndex > 0 && index > endIndex {
+			continue
+		}
+		filtered = append(filtered, highlight)
+	}
+	return filtered
 }
 
 func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
@@ -248,49 +270,6 @@ func (u *QuestionUsecase) SaveQuestion(ctx context.Context, userID string, quest
 	}
 
 	return nil
-}
-
-func (u *QuestionUsecase) GradeAnswer(ctx context.Context, input domain.GradeInput, userPlan string) (*domain.GradeResult, error) {
-	model := u.llmClient.ModelForPlan(userPlan)
-
-	q, _, _, err := u.repo.FindByID(ctx, input.QuestionID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, fmt.Errorf("question usecase: question not found: %w", domain.ErrNotFound)
-		}
-		return nil, fmt.Errorf("question usecase: find question: %w", err)
-	}
-
-	if q.QuestionType == domain.QuestionTypeMultipleChoice {
-		isCorrect := q.IsCorrect(input.UserAnswer)
-		if err := u.repo.UpdateStats(ctx, input.QuestionID, isCorrect); err != nil {
-			return nil, fmt.Errorf("question usecase: update stats: %w", err)
-		}
-		feedback := "不正解です"
-		if isCorrect {
-			feedback = "正解です"
-		}
-		score := 0
-		if isCorrect {
-			score = 100
-		}
-		return &domain.GradeResult{
-			IsCorrect: isCorrect,
-			Score:     score,
-			Feedback:  feedback,
-		}, nil
-	}
-
-	gradeResult, err := u.llmClient.GradeAnswer(ctx, q, input.UserAnswer, model)
-	if err != nil {
-		return nil, fmt.Errorf("question usecase: grade answer: %w", err)
-	}
-
-	if err := u.repo.UpdateStats(ctx, input.QuestionID, gradeResult.IsCorrect); err != nil {
-		return nil, fmt.Errorf("question usecase: update stats: %w", err)
-	}
-
-	return gradeResult, nil
 }
 
 func isSupportedQuestionSourceType(sourceType domain.SourceType) bool {

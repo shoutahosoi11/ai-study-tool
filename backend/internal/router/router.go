@@ -4,21 +4,21 @@ import (
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/di"
-	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
 )
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
 	api := e.Group("/api")
+	apiV1 := e.Group("/api/v1")
 	authMiddleware := container.FirebaseMiddleware.Authenticate
 	ingestRateLimit := container.RateLimitMiddleware.Limit
 
 	registerUserRoutes(api, container, authMiddleware)
 	registerPostRoutes(api, container, authMiddleware)
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
-	registerStorageRoutes(api, container, authMiddleware)
 	registerQuestionRoutes(api, container, authMiddleware)
 	registerSocialRoutes(api, container, authMiddleware)
-	registerInternalTaskRoutes(e, container)
+	registerMonetizationRoutes(apiV1, container, authMiddleware)
+	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook)
 }
 
 func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
@@ -55,15 +55,6 @@ func registerHighlightRoutes(
 	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation)
 }
 
-func registerStorageRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
-	storage := api.Group("/storage", authMiddleware)
-	// TODO: Revisit whether uploads should proxy through the backend. Signed URLs
-	// keep API instances out of the data path, while backend uploads centralize
-	// validation and scanning at higher Cloud Run cost.
-	storage.POST("/signed-urls/upload", container.StorageHandler.CreateUploadSignedURL)
-	storage.POST("/signed-urls/download", container.StorageHandler.CreateDownloadSignedURL)
-}
-
 func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
 	questions := api.Group("/questions", authMiddleware)
 	questions.GET("", container.QuestionHandler.List)
@@ -71,10 +62,22 @@ func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddle
 	questions.GET("/saved", container.QuestionHandler.ListSaved)
 	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
 	questions.POST("/sync", container.QuestionHandler.SyncStock)
-	questions.POST("", container.QuestionHandler.GenerateQuestions)
+	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate)
 	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
 	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)
-	questions.POST("/:id/grade", container.QuestionHandler.GradeAnswer)
+	questions.POST("/:id/grade", container.AnswerHandler.SubmitAnswer)
+}
+
+func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
+	tokens := api.Group("/tokens", authMiddleware)
+	tokens.POST("/award", container.TokenHandler.Award)
+	tokens.GET("/balance", container.TokenHandler.Balance)
+
+	checkout := api.Group("/checkout", authMiddleware)
+	checkout.POST("/session", container.StripeHandler.CreateCheckoutSession)
+
+	questions := api.Group("/questions", authMiddleware)
+	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate)
 }
 
 func registerSocialRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
@@ -87,11 +90,4 @@ func registerSocialRoutes(api *echo.Group, container *di.Container, authMiddlewa
 	social.DELETE("/posts/:id/repost", container.SocialHandler.Unrepost)
 	social.POST("/posts/:id/comments", container.SocialHandler.CreateComment)
 	social.GET("/posts/:id/comments", container.SocialHandler.ListComments)
-}
-
-func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
-	internal := e.Group("/internal", appmiddleware.InternalOnly())
-	// TODO: Keep Cloud Run ingress set to internal-and-cloud-load-balancing before
-	// enabling Cloud Tasks traffic. OIDC verification will be added in a later phase.
-	internal.POST("/tasks/question-generation", container.TaskHandler.HandleQuestionGeneration)
 }

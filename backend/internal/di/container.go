@@ -9,9 +9,10 @@ import (
 
 	"github.com/shout/ai-study-tool/backend/internal/handler"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
-	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gcs"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
+	"github.com/shout/ai-study-tool/backend/internal/infrastructure/inprocess"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
+	infrastripes "github.com/shout/ai-study-tool/backend/internal/infrastructure/stripe"
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
@@ -24,8 +25,9 @@ type Container struct {
 	AnswerHandler       *handler.AnswerHandler
 	SocialHandler       *handler.SocialHandler
 	HighlightHandler    *handler.HighlightHandler
-	StorageHandler      *handler.StorageHandler
-	TaskHandler         *handler.TaskHandler
+	TokenHandler        *handler.TokenHandler
+	StripeHandler       *handler.StripeHandler
+	QuestionDispatcher  *inprocess.QuestionGenerationDispatcher
 	FirebaseMiddleware  *middleware.FirebaseMiddleware
 	RateLimitMiddleware *middleware.RateLimitMiddleware
 	closeLLMClient      gemini.ClientCloser
@@ -57,15 +59,6 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
-	storageSigner, err := gcs.NewSignedURLService(
-		ctx,
-		os.Getenv("GCS_BUCKET_NAME"),
-		os.Getenv("GCS_SIGNING_SERVICE_ACCOUNT"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	userRepo := postgresrepo.NewUserRepository(db)
 	postRepo := postgresrepo.NewPostRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)
@@ -73,6 +66,9 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	socialRepo := persistence.NewSocialRepository(db)
 	highlightRepo := persistence.NewHighlightRepository(db)
 	rateLimitRepo := persistence.NewRateLimitRepository(db)
+	questionJobRepo := persistence.NewQuestionGenerationJobRepository(db)
+	questionBudgetRepo := persistence.NewQuestionBudgetRepository(db)
+	billingRepo := persistence.NewBillingRepository(db)
 
 	rateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
 	if err != nil {
@@ -83,22 +79,30 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	postUsecase := usecase.NewPostUsecase(postRepo)
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
-	questionWorkerUsecase := usecase.NewQuestionWorkerUsecase(highlightRepo, questionRepo, geminiClient)
-	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionWorkerUsecase)
-	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo, geminiClient)
+	questionWorkerUsecase := usecase.NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, questionJobRepo, geminiClient)
+	questionDispatcher := inprocess.NewQuestionGenerationDispatcher(
+		questionWorkerUsecase,
+		readEnvIntOrDefault("QUESTION_DISPATCHER_MAX_CONCURRENT", 3),
+	)
+	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionDispatcher)
+	manualGenerationUsecase := usecase.NewManualGenerationUsecase(questionJobRepo, questionBudgetRepo, questionDispatcher)
+	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
-	storageUsecase := usecase.NewStorageUsecase(storageSigner)
-
+	tokenUsecase := usecase.NewTokenUsecase(questionBudgetRepo)
+	billingUsecase := usecase.NewBillingUsecase(
+		infrastripes.NewCheckoutClientFromEnv(),
+		infrastripes.NewWebhookValidatorFromEnv(),
+		billingRepo,
+	)
 	userHandler := handler.NewUserHandler(userUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
-	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase)
-	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase)
+	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)
+	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase, questionSyncUsecase)
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
-	storageHandler := handler.NewStorageHandler(storageUsecase, userUsecase)
-	taskHandler := handler.NewTaskHandler()
-
+	tokenHandler := handler.NewTokenHandler(tokenUsecase, userUsecase)
+	stripeHandler := handler.NewStripeHandler(billingUsecase, userUsecase)
 	return &Container{
 		UserHandler:         userHandler,
 		PostHandler:         postHandler,
@@ -106,8 +110,9 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		AnswerHandler:       answerHandler,
 		SocialHandler:       socialHandler,
 		HighlightHandler:    highlightHandler,
-		StorageHandler:      storageHandler,
-		TaskHandler:         taskHandler,
+		TokenHandler:        tokenHandler,
+		StripeHandler:       stripeHandler,
+		QuestionDispatcher:  questionDispatcher,
 		FirebaseMiddleware:  firebaseMiddleware,
 		RateLimitMiddleware: rateLimitMiddleware,
 		closeLLMClient:      closeLLMClient,
@@ -115,10 +120,29 @@ func NewContainer(db *sql.DB) (*Container, error) {
 }
 
 func (c *Container) Close() {
-	if c == nil || c.closeLLMClient == nil {
+	if c == nil {
 		return
 	}
-	c.closeLLMClient()
+	if c.QuestionDispatcher != nil {
+		c.QuestionDispatcher.Wait()
+	}
+	if c.closeLLMClient != nil {
+		c.closeLLMClient()
+	}
+}
+
+func readEnvIntOrDefault(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+
+	return parsed
 }
 
 func readEnvInt64OrDefault(key string, fallback int64) int64 {

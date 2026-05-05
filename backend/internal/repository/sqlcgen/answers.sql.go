@@ -7,7 +7,6 @@ package sqlcgen
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/google/uuid"
 )
@@ -17,31 +16,22 @@ INSERT INTO answers (
     user_id,
     question_id,
     user_answer,
-    is_correct,
-    score,
-    feedback,
-    grader_model
+    is_correct
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4
 )
 ON CONFLICT (user_id, question_id) DO UPDATE SET
     user_answer  = EXCLUDED.user_answer,
     is_correct   = EXCLUDED.is_correct,
-    score        = EXCLUDED.score,
-    feedback     = EXCLUDED.feedback,
-    grader_model = EXCLUDED.grader_model,
     updated_at   = NOW()
-RETURNING id, user_id, question_id, user_answer, is_correct, created_at, score, feedback, grader_model, updated_at
+RETURNING id, user_id, question_id, user_answer, is_correct, created_at, updated_at
 `
 
 type UpsertAnswerParams struct {
-	UserID      uuid.UUID      `json:"user_id"`
-	QuestionID  uuid.UUID      `json:"question_id"`
-	UserAnswer  string         `json:"user_answer"`
-	IsCorrect   bool           `json:"is_correct"`
-	Score       sql.NullInt32  `json:"score"`
-	Feedback    sql.NullString `json:"feedback"`
-	GraderModel sql.NullString `json:"grader_model"`
+	UserID     uuid.UUID `json:"user_id"`
+	QuestionID uuid.UUID `json:"question_id"`
+	UserAnswer string    `json:"user_answer"`
+	IsCorrect  bool      `json:"is_correct"`
 }
 
 func (q *Queries) UpsertAnswer(ctx context.Context, arg UpsertAnswerParams) (Answer, error) {
@@ -50,9 +40,6 @@ func (q *Queries) UpsertAnswer(ctx context.Context, arg UpsertAnswerParams) (Ans
 		arg.QuestionID,
 		arg.UserAnswer,
 		arg.IsCorrect,
-		arg.Score,
-		arg.Feedback,
-		arg.GraderModel,
 	)
 	var i Answer
 	err := row.Scan(
@@ -62,9 +49,6 @@ func (q *Queries) UpsertAnswer(ctx context.Context, arg UpsertAnswerParams) (Ans
 		&i.UserAnswer,
 		&i.IsCorrect,
 		&i.CreatedAt,
-		&i.Score,
-		&i.Feedback,
-		&i.GraderModel,
 		&i.UpdatedAt,
 	)
 	return i, err
