@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/shout/ai-study-tool/backend/internal/handler"
+	"github.com/shout/ai-study-tool/backend/internal/infrastructure/cloudrun"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/inprocess"
@@ -88,7 +89,9 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	manualGenerationUsecase := usecase.NewManualGenerationUsecase(questionJobRepo, questionBudgetRepo, questionDispatcher)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
-	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
+	importQueueRepo := persistence.NewHighlightImportQueueRepository(db)
+	highlightJobTrigger := cloudrun.NewHighlightImportJobTrigger()
+	highlightUsecase := usecase.NewHighlightUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
 	tokenUsecase := usecase.NewTokenUsecase(questionBudgetRepo)
 	billingUsecase := usecase.NewBillingUsecase(
 		infrastripes.NewCheckoutClientFromEnv(),

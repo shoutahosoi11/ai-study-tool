@@ -72,12 +72,23 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
+	if result.QueuedCount > 0 {
+		return c.JSON(http.StatusAccepted, dto.ImportHighlightsResponse{
+			Queued:             true,
+			QueueID:            result.QueueID.String(),
+			QueuedCount:        result.QueuedCount,
+			CopyProtectedCount: result.CopyProtectedCount,
+			Warning:            result.Warning,
+		})
+	}
+
 	responses := make([]*dto.HighlightResponse, 0, len(result.Highlights))
 	for _, highlight := range result.Highlights {
 		responses = append(responses, toHighlightResponse(highlight))
 	}
 
 	return c.JSON(http.StatusOK, dto.ImportHighlightsResponse{
+		Queued:             false,
 		SavedCount:         result.Saved,
 		DuplicateCount:     result.DuplicateCount,
 		CopyProtectedCount: result.CopyProtectedCount,

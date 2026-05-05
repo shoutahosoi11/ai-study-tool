@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -13,11 +15,25 @@ import (
 )
 
 type HighlightUsecase struct {
-	repo domain.HighlightImportRepository
+	repo        domain.HighlightImportRepository
+	importQueue domain.HighlightImportQueueRepository
+	jobTrigger  domain.HighlightImportJobTrigger
 }
 
 func NewHighlightUsecase(repo domain.HighlightImportRepository) *HighlightUsecase {
 	return &HighlightUsecase{repo: repo}
+}
+
+func NewHighlightUsecaseWithQueue(
+	repo domain.HighlightImportRepository,
+	importQueue domain.HighlightImportQueueRepository,
+	jobTrigger domain.HighlightImportJobTrigger,
+) *HighlightUsecase {
+	return &HighlightUsecase{
+		repo:        repo,
+		importQueue: importQueue,
+		jobTrigger:  jobTrigger,
+	}
 }
 
 type ImportHighlightItem struct {
@@ -47,12 +63,18 @@ type ImportPastedHighlightInput struct {
 }
 
 type ImportKindleResult struct {
-	Saved              int
-	DuplicateCount     int
+	// キューモード: QueueID と QueuedCount が設定される
+	QueueID     uuid.UUID
+	QueuedCount int
+	// 同期モード: Saved 以下が設定される
+	Saved          int
+	DuplicateCount int
+	// 共通
 	CopyProtectedCount int
 	ResolvedASIN       string
 	Highlights         []*domain.Highlight
 	Warning            *string
+	Queued             bool
 }
 
 type ImportSharedHighlightResult struct {
@@ -72,6 +94,55 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 		return nil, domain.ErrAllCopyProtected
 	}
 
+	// キューが設定されている場合は非同期処理に委譲する
+	if u.importQueue != nil {
+		return u.enqueueKindleImport(ctx, userID, items)
+	}
+
+	// キューなし（後方互換: NewHighlightUsecase 経由）
+	return u.importKindleHighlightsDirect(ctx, userID, items)
+}
+
+func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
+	// 既存の検証・正規化ロジックを使いコピープロテクトを除外する
+	highlights, copyProtectedCount, err := buildImportHighlights(userID, items)
+	if err != nil {
+		return nil, err
+	}
+	if len(highlights) == 0 {
+		return nil, domain.ErrAllCopyProtected
+	}
+
+	// 検証済み highlights を JSON にシリアライズしてキューに積む
+	payload, err := json.Marshal(highlights)
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: marshal kindle items: %w", err)
+	}
+
+	queueID, err := u.importQueue.Enqueue(ctx, userID, domain.ImportQueueSourceKindle, payload)
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: enqueue kindle import: %w", err)
+	}
+
+	if u.jobTrigger != nil {
+		if triggerErr := u.jobTrigger.TriggerHighlightImportJob(ctx); triggerErr != nil {
+			log.Printf("highlight import job trigger failed (queue_id=%s): %v", queueID, triggerErr)
+		}
+	}
+
+	result := &ImportKindleResult{
+		QueueID:            queueID,
+		QueuedCount:        len(highlights),
+		CopyProtectedCount: copyProtectedCount,
+	}
+	if copyProtectedCount > 0 {
+		warning := "コピー制限により一部のハイライトが読み込めませんでした"
+		result.Warning = &warning
+	}
+	return result, nil
+}
+
+func (u *HighlightUsecase) importKindleHighlightsDirect(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
 	highlights, copyProtectedCount, err := buildImportHighlights(userID, items)
 	if err != nil {
 		return nil, err
@@ -88,11 +159,9 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 		return nil, fmt.Errorf("highlight usecase: import kindle highlights: invalid saved count %d", saved)
 	}
 
-	duplicateCount := len(highlights) - saved
-
 	result := &ImportKindleResult{
 		Saved:              saved,
-		DuplicateCount:     duplicateCount,
+		DuplicateCount:     len(highlights) - saved,
 		CopyProtectedCount: copyProtectedCount,
 		ResolvedASIN:       resolveImportASIN(highlights),
 		Highlights:         collectPersistedHighlights(highlights),
@@ -101,7 +170,6 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 		warning := "コピー制限により一部のハイライトが読み込めませんでした"
 		result.Warning = &warning
 	}
-
 	return result, nil
 }
 
