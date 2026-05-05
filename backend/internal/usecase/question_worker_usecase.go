@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"maps"
 	"os"
 	"slices"
@@ -235,7 +236,7 @@ func (u *QuestionWorkerUsecase) RunOnce(ctx context.Context) error {
 			return fmt.Errorf("question worker: requeue stale processing: %w", err)
 		}
 		if requeued > 0 {
-			log.Printf("question_worker_event=stale_processing_requeued count=%d", requeued)
+			slog.Info("question_worker_event=stale_processing_requeued", "count", requeued)
 		}
 	}
 
@@ -398,7 +399,10 @@ func (u *QuestionWorkerUsecase) processHighlightGenerationChunks(
 		materials := buildPerspectiveGenerationMaterials(chunk)
 		expectedCount := countPlannedQuestions(chunk)
 		model := u.llmClient.ModelForPlan("free")
-		log.Printf("question worker: generating %d question(s) across %d highlight(s)", expectedCount, len(chunk))
+		slog.Info("question_worker_event=generating",
+			"expected_questions", expectedCount,
+			"highlight_count", len(chunk),
+		)
 		generationID, err := u.questionRepo.SaveGeneration(ctx, userID, "highlight_batch", "", customInstruction, model)
 		if err != nil {
 			for _, plan := range chunk {
@@ -861,7 +865,7 @@ func logQuestionWorkerEvent(event string, fields map[string]any) {
 	fields["event"] = event
 	payload, err := json.Marshal(fields)
 	if err != nil {
-		log.Printf("question_worker_event=%s log_marshal_error=%v", event, err)
+		slog.Error("question_worker_event=log_marshal_error", "event", event, "error", err)
 		return
 	}
 	log.Println(string(payload))
