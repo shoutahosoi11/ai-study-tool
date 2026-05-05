@@ -15,7 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
-	_ "github.com/lib/pq"
+	dbinfra "github.com/shout/ai-study-tool/backend/internal/infrastructure/db"
 	"github.com/shout/ai-study-tool/backend/internal/di"
 	"github.com/shout/ai-study-tool/backend/internal/router"
 )
@@ -30,7 +30,7 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
-	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	db, err := dbinfra.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
