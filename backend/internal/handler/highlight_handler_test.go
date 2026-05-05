@@ -52,48 +52,22 @@ func (s *stubHighlightRepository) ListExistingContentHashesByUserID(ctx context.
 	return s.existingHashes, nil
 }
 
+func (s *stubHighlightRepository) FindByUserIDAndContentHash(ctx context.Context, userID uuid.UUID, contentHash string) (*domain.Highlight, error) {
+	return &domain.Highlight{
+		ID:          uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		UserID:      userID,
+		Content:     "existing",
+		ContentHash: &contentHash,
+		Source:      domain.HighlightSourcePaste,
+	}, nil
+}
+
 func (s *stubHighlightRepository) ListByUserIDAndBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error) {
 	return nil, errors.New("not implemented")
 }
 
 func (s *stubHighlightRepository) ListBooksWithHighlightsByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error) {
 	return nil, errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ListBookStockByUserID(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error) {
-	return make([]domain.BookStock, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ListUnusedHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ListUsedHighlightsWithUncoveredPerspectives(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {
-	return make([]domain.PendingHighlightUserStat, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ClaimPendingByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) ClaimPendingByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) QueueHighlightsForGeneration(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-	return errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (s *stubHighlightRepository) MarkGenerationFailed(ctx context.Context, highlightIDs []uuid.UUID, lastError string, maxRetry int) error {
-	return errors.New("not implemented")
 }
 
 func (s *stubHighlightRepository) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*domain.Highlight, error) {
@@ -148,7 +122,7 @@ func TestImportSharedReturnsSavedHighlight(t *testing.T) {
 	if resp.Highlight == nil {
 		t.Fatal("expected highlight response")
 	}
-	if resp.Highlight.Source != domain.HighlightSourceMobileShare {
+	if resp.Highlight.Source != domain.HighlightSourceShare {
 		t.Fatalf("unexpected source: %s", resp.Highlight.Source)
 	}
 	if resp.Highlight.SourceApp == nil || *resp.Highlight.SourceApp != "kindle" {
@@ -174,6 +148,80 @@ func TestImportSharedReturnsBadRequestForEmptyContent(t *testing.T) {
 	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
 
 	err := handler.ImportShared(c)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("expected *echo.HTTPError, got %T", err)
+	}
+	if httpErr.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d", httpErr.Code)
+	}
+}
+
+func TestImportPasteReturnsCreatedID(t *testing.T) {
+	e := echo.New()
+	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	repo := &stubHighlightRepository{
+		bulkUpsertSaved: 1,
+		persistedAt:     time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
+	}
+	handler := NewHighlightHandler(usecase.NewHighlightUsecase(repo), &stubUserUsecase{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			return &domain.User{ID: userID, FirebaseUID: firebaseUID}, nil
+		},
+	})
+
+	reqBody := `{"content":"  Paste this idea.  ","book_title":"Notes","book_author":"Me","source_app":"web","source_url":"https://example.com/page"}`
+	req := httptest.NewRequest(http.MethodPost, "/highlights/paste", strings.NewReader(reqBody))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	if err := handler.ImportPaste(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+
+	var resp dto.ImportPastedHighlightResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.ID == "" {
+		t.Fatal("expected id")
+	}
+	if resp.Duplicate {
+		t.Fatal("expected duplicated=false")
+	}
+	if len(repo.bulkUpsertInput) != 1 {
+		t.Fatalf("expected one highlight to be persisted, got %d", len(repo.bulkUpsertInput))
+	}
+	if repo.bulkUpsertInput[0].Source != domain.HighlightSourcePaste {
+		t.Fatalf("unexpected source: %s", repo.bulkUpsertInput[0].Source)
+	}
+}
+
+func TestImportPasteReturnsBadRequestForInvalidSourceURL(t *testing.T) {
+	e := echo.New()
+	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/highlights/paste", strings.NewReader(`{"content":"hello","source_url":"javascript:alert(1)"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	err := handler.ImportPaste(c)
 	if err == nil {
 		t.Fatal("expected error")
 	}

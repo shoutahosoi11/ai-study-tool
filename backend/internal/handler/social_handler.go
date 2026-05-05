@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,31 +11,38 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
-	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type SocialHandler struct {
-	socialUsecase *usecase.SocialUsecase
-	postUsecase   *usecase.PostUsecase
+	socialUsecase SocialUsecase
+	postUsecase   SocialPostUsecase
 	userUsecase   usecase.UserUsecaseInterface
 }
 
-func NewSocialHandler(socialUsecase *usecase.SocialUsecase, postUsecase *usecase.PostUsecase, userUsecase usecase.UserUsecaseInterface) *SocialHandler {
+type SocialUsecase interface {
+	Follow(ctx context.Context, followerID, followingID string) error
+	Unfollow(ctx context.Context, followerID, followingID string) error
+	Like(ctx context.Context, userID, postID string) error
+	Unlike(ctx context.Context, userID, postID string) error
+	Repost(ctx context.Context, userID, postID string) error
+	Unrepost(ctx context.Context, userID, postID string) error
+	CreateComment(ctx context.Context, comment *domain.Comment) (*domain.Comment, error)
+	ListComments(ctx context.Context, postID string, limit, offset int) ([]*domain.Comment, error)
+}
+
+type SocialPostUsecase interface {
+	EnsureVisible(ctx context.Context, viewerID, postID uuid.UUID) error
+}
+
+func NewSocialHandler(socialUsecase SocialUsecase, postUsecase SocialPostUsecase, userUsecase usecase.UserUsecaseInterface) *SocialHandler {
 	return &SocialHandler{socialUsecase: socialUsecase, postUsecase: postUsecase, userUsecase: userUsecase}
 }
 
 func (h *SocialHandler) currentUserID(c echo.Context) (string, error) {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return "", echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	user, err := resolveCurrentUser(c, h.userUsecase, "social")
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return "", echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		return "", echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return "", err
 	}
 	return user.ID.String(), nil
 }
@@ -71,6 +79,9 @@ func (h *SocialHandler) Follow(c echo.Context) error {
 	if targetID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "user id is required")
 	}
+	if _, err := uuid.Parse(targetID); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
+	}
 	if err := h.socialUsecase.Follow(c.Request().Context(), userID, targetID); err != nil {
 		return h.socialError(err)
 	}
@@ -85,6 +96,9 @@ func (h *SocialHandler) Unfollow(c echo.Context) error {
 	targetID := c.Param("id")
 	if targetID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "user id is required")
+	}
+	if _, err := uuid.Parse(targetID); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
 	}
 	if err := h.socialUsecase.Unfollow(c.Request().Context(), userID, targetID); err != nil {
 		return h.socialError(err)
@@ -101,6 +115,9 @@ func (h *SocialHandler) Like(c echo.Context) error {
 	if postID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
+	if _, err := uuid.Parse(postID); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid post id")
+	}
 	if err := h.socialUsecase.Like(c.Request().Context(), userID, postID); err != nil {
 		return h.socialError(err)
 	}
@@ -115,6 +132,9 @@ func (h *SocialHandler) Unlike(c echo.Context) error {
 	postID := c.Param("id")
 	if postID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
+	}
+	if _, err := uuid.Parse(postID); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid post id")
 	}
 	if err := h.socialUsecase.Unlike(c.Request().Context(), userID, postID); err != nil {
 		return h.socialError(err)
@@ -131,6 +151,9 @@ func (h *SocialHandler) Repost(c echo.Context) error {
 	if postID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
 	}
+	if _, err := uuid.Parse(postID); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid post id")
+	}
 	if err := h.socialUsecase.Repost(c.Request().Context(), userID, postID); err != nil {
 		return h.socialError(err)
 	}
@@ -145,6 +168,9 @@ func (h *SocialHandler) Unrepost(c echo.Context) error {
 	postID := c.Param("id")
 	if postID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "post id is required")
+	}
+	if _, err := uuid.Parse(postID); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid post id")
 	}
 	if err := h.socialUsecase.Unrepost(c.Request().Context(), userID, postID); err != nil {
 		return h.socialError(err)

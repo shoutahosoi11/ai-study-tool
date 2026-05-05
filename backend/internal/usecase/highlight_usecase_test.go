@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -21,10 +19,6 @@ type mockImportHighlightRepository struct {
 	bulkUpsertCalled bool
 	bulkUpsertInput  []*domain.Highlight
 	bulkUpsertTime   time.Time
-}
-
-func (m *mockImportHighlightRepository) Create(ctx context.Context, h *domain.Highlight) (*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
 }
 
 func (m *mockImportHighlightRepository) BulkUpsert(ctx context.Context, highlights []*domain.Highlight) (int, error) {
@@ -46,12 +40,14 @@ func (m *mockImportHighlightRepository) ListExistingContentHashesByUserID(ctx co
 	return make([]string, 0), errors.New("not implemented")
 }
 
-func (m *mockImportHighlightRepository) GetByID(ctx context.Context, id, userID uuid.UUID) (*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int32) ([]*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
+func (m *mockImportHighlightRepository) FindByUserIDAndContentHash(ctx context.Context, userID uuid.UUID, contentHash string) (*domain.Highlight, error) {
+	return &domain.Highlight{
+		ID:          uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		UserID:      userID,
+		Content:     "existing",
+		ContentHash: &contentHash,
+		Source:      domain.HighlightSourcePaste,
+	}, nil
 }
 
 func (m *mockImportHighlightRepository) ListByUserIDAndASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error) {
@@ -66,52 +62,8 @@ func (m *mockImportHighlightRepository) ListBooksWithHighlightsByUserID(ctx cont
 	return make([]*domain.KindleBook, 0), errors.New("not implemented")
 }
 
-func (m *mockImportHighlightRepository) ListBookStockByUserID(ctx context.Context, userID uuid.UUID) ([]domain.BookStock, error) {
-	return make([]domain.BookStock, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListUnusedHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListUsedHighlightsWithUncoveredPerspectives(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ListPendingUserStats(ctx context.Context) ([]domain.PendingHighlightUserStat, error) {
-	return make([]domain.PendingHighlightUserStat, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ClaimPendingByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) ClaimPendingByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*domain.Highlight, error) {
-	return make([]*domain.Highlight, 0), errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) QueueHighlightsForGeneration(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, requestedAt time.Time) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) MarkGenerationFailed(ctx context.Context, highlightIDs []uuid.UUID, lastError string, maxRetry int) error {
-	return errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) CountByUserID(ctx context.Context, userID uuid.UUID) (int64, error) {
-	return 0, errors.New("not implemented")
-}
-
 func (m *mockImportHighlightRepository) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*domain.Highlight, error) {
 	return nil, errors.New("not implemented")
-}
-
-func (m *mockImportHighlightRepository) Delete(ctx context.Context, id, userID uuid.UUID) error {
-	return errors.New("not implemented")
 }
 
 func (m *mockImportHighlightRepository) markHighlightPersisted(highlight *domain.Highlight, offset int) {
@@ -182,10 +134,10 @@ func TestImportKindleHighlightsAllItemsSaved(t *testing.T) {
 	if first.Content != "First highlight" {
 		t.Fatalf("expected trimmed content, got %q", first.Content)
 	}
-	if first.Source != domain.HighlightSourceKindle {
-		t.Fatalf("expected kindle source, got %q", first.Source)
+	if first.Source != domain.HighlightSourceExtension {
+		t.Fatalf("expected extension source, got %q", first.Source)
 	}
-	expectedHash := computeExpectedContentHash("B001", "123-124", "First highlight")
+	expectedHash := computeExpectedContentHash("First highlight")
 	if first.ContentHash == nil || *first.ContentHash != expectedHash {
 		t.Fatalf("expected content hash %q, got %#v", expectedHash, first.ContentHash)
 	}
@@ -372,8 +324,8 @@ func TestImportSharedHighlightSavesMobileShareMetadata(t *testing.T) {
 	}
 
 	highlight := repo.bulkUpsertInput[0]
-	if highlight.Source != domain.HighlightSourceMobileShare {
-		t.Fatalf("expected mobile share source, got %q", highlight.Source)
+	if highlight.Source != domain.HighlightSourceShare {
+		t.Fatalf("expected share source, got %q", highlight.Source)
 	}
 	if highlight.SourceApp == nil || *highlight.SourceApp != "kindle" {
 		t.Fatalf("unexpected source app: %#v", highlight.SourceApp)
@@ -390,7 +342,7 @@ func TestImportSharedHighlightSavesMobileShareMetadata(t *testing.T) {
 	if highlight.Content != "Focus is a superpower." {
 		t.Fatalf("expected trimmed content, got %q", highlight.Content)
 	}
-	expectedHash := computeExpectedSharedContentHash("kindle", "https://read.amazon.com/notebook", "Deep Work", "Cal Newport", "Focus is a superpower.")
+	expectedHash := computeExpectedContentHash("Focus is a superpower.")
 	if highlight.ContentHash == nil || *highlight.ContentHash != expectedHash {
 		t.Fatalf("expected shared content hash %q, got %#v", expectedHash, highlight.ContentHash)
 	}
@@ -442,32 +394,65 @@ func TestImportSharedHighlightRejectsEmptyContent(t *testing.T) {
 	}
 }
 
-func computeExpectedContentHash(asin, location, content string) string {
-	key := fmt.Sprintf(
-		"source:%s:asin:%s:loc:%s:content:%s",
-		domain.HighlightSourceKindle,
-		strings.TrimSpace(asin),
-		strings.TrimSpace(location),
-		normalizeExpectedContent(content),
-	)
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
+func TestImportPastedHighlightSavesPasteSource(t *testing.T) {
+	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	repo := &mockImportHighlightRepository{
+		bulkUpsertSaved: 1,
+		bulkUpsertTime:  time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC),
+	}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	result, err := uc.ImportPastedHighlight(context.Background(), userID, usecase.ImportPastedHighlightInput{
+		BookTitle:  " Notes ",
+		BookAuthor: " Me ",
+		Content:    "  Paste this idea.  ",
+		SourceApp:  "web",
+		SourceURL:  "https://example.com/article",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Duplicate {
+		t.Fatal("expected duplicate=false")
+	}
+	if result.ID == uuid.Nil {
+		t.Fatal("expected result id")
+	}
+	if len(repo.bulkUpsertInput) != 1 {
+		t.Fatalf("expected one highlight to be upserted, got %d", len(repo.bulkUpsertInput))
+	}
+
+	highlight := repo.bulkUpsertInput[0]
+	if highlight.Source != domain.HighlightSourcePaste {
+		t.Fatalf("expected paste source, got %q", highlight.Source)
+	}
+	if highlight.Content != "Paste this idea." {
+		t.Fatalf("expected normalized content, got %q", highlight.Content)
+	}
+	if highlight.ContentHash == nil || *highlight.ContentHash != computeExpectedContentHash("Paste this idea.") {
+		t.Fatalf("unexpected content hash: %#v", highlight.ContentHash)
+	}
 }
 
-func computeExpectedSharedContentHash(sourceApp, sourceURL, bookTitle, bookAuthor, content string) string {
-	key := fmt.Sprintf(
-		"source:%s:app:%s:url:%s:title:%s:author:%s:content:%s",
-		domain.HighlightSourceMobileShare,
-		strings.TrimSpace(sourceApp),
-		strings.TrimSpace(sourceURL),
-		strings.TrimSpace(bookTitle),
-		strings.TrimSpace(bookAuthor),
-		normalizeExpectedContent(content),
-	)
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
+func TestImportPastedHighlightRejectsInvalidSourceApp(t *testing.T) {
+	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	repo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	_, err := uc.ImportPastedHighlight(context.Background(), userID, usecase.ImportPastedHighlightInput{
+		Content:   "Paste this idea.",
+		SourceApp: "mail",
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if repo.bulkUpsertCalled {
+		t.Fatal("expected BulkUpsert not to be called")
+	}
 }
 
-func normalizeExpectedContent(content string) string {
-	return strings.Join(strings.Fields(strings.ToLower(content)), " ")
+func computeExpectedContentHash(content string) string {
+	sum := sha256.Sum256([]byte(domain.NormalizeText(content)))
+	return hex.EncodeToString(sum[:])
 }

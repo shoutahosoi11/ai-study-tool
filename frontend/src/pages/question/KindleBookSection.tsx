@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
+import { getApiErrorMessage } from '../../api/errors'
 import { listBookHighlights, listBookHighlightsByMetadata, updateHighlightExplanation } from '../../api/highlights'
 import { listKindleBooks } from '../../api/kindle'
 import { createQuestionPost } from '../../api/posts'
@@ -31,24 +31,18 @@ function buildMetadataSourceID(bookTitle: string, bookAuthor: string) {
 }
 
 function getQuestionGenerationErrorMessage(error: unknown) {
-  if (axios.isAxiosError(error)) {
-    const responseMessage =
-      typeof error.response?.data?.message === 'string'
-        ? error.response.data.message.trim()
-        : ''
-
-    if (responseMessage === 'source text is unavailable') {
-      return 'この本の保存済みハイライトが見つかりませんでした'
-    }
-    if (responseMessage === 'questions are still preparing') {
-      return '問題はまだ準備中です。少し待ってからもう一度試してください'
-    }
-    if (responseMessage === 'question generation failed') {
-      return '問題生成に失敗しました。時間を置いてもう一度試してください'
-    }
-    if (responseMessage) {
-      return responseMessage
-    }
+  const responseMessage = getApiErrorMessage(error)
+  if (responseMessage === 'source text is unavailable') {
+    return 'この本の保存済みハイライトが見つかりませんでした'
+  }
+  if (responseMessage === 'questions are still preparing') {
+    return '問題はまだ準備中です。少し待ってからもう一度試してください'
+  }
+  if (responseMessage === 'question generation failed') {
+    return '問題生成に失敗しました。時間を置いてもう一度試してください'
+  }
+  if (responseMessage) {
+    return responseMessage
   }
 
   return '問題の取得に失敗しました'

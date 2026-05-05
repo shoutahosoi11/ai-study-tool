@@ -17,7 +17,6 @@ import {
 } from 'react-native'
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ShareIntentModule, useShareIntent } from 'expo-share-intent'
-import { isAxiosError } from 'axios'
 
 import {
   getCurrentUser,
@@ -27,6 +26,7 @@ import {
   signUpWithEmail,
   type MobileAuthUser,
 } from './src/api/auth'
+import { getApiErrorMessage, isApiError, isApiStatus, serializeApiDebugError } from './src/api/errors'
 import {
   importSharedHighlight,
   listBookHighlights,
@@ -40,6 +40,7 @@ import {
   generateQuestions,
   listIncorrectQuestions,
   listSavedQuestions,
+  manualGenerateQuestions,
   saveQuestion,
   syncQuestionStock,
   submitAnswer,
@@ -49,8 +50,10 @@ import {
   type QuestionStockBook,
   type SavedQuestion,
 } from './src/api/questions'
+import { createCheckoutSession } from './src/api/billing'
+import { awardAdTokens, fetchTokenBalance, type TokenBalance } from './src/api/tokens'
 import { getMe, signUpBackendUser, updateQuestionSettings, type MeResponse } from './src/api/users'
-import { apiBaseURL, isFirebaseConfigured, mobileConfigStatus } from './src/config'
+import { admobConfig, apiBaseURL, isFirebaseConfigured, mobileConfigStatus } from './src/config'
 import {
   createPostComment,
   createQuestionPost,
@@ -113,9 +116,14 @@ export default function App() {
   const [formError, setFormError] = useState<string | null>(null)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null)
+  const [tokenBalance, setTokenBalance] = useState<TokenBalance | null>(null)
+  const [tokenLoading, setTokenLoading] = useState(false)
+  const [tokenMessage, setTokenMessage] = useState('')
+  const [manualGenerating, setManualGenerating] = useState(false)
   const [lastSaved, setLastSaved] = useState<ImportSharedHighlightResponse | null>(null)
   const [lastShareSignature, setLastShareSignature] = useState('')
   const [activeTab, setActiveTab] = useState<AppTab>('timeline')
+  const mainScrollRef = useRef<ScrollView | null>(null)
 
   const [savedHighlights, setSavedHighlights] = useState<HighlightResponse[]>([])
   const [syncedKindleBooks, setSyncedKindleBooks] = useState<KindleBook[]>([])
@@ -189,7 +197,8 @@ export default function App() {
   const storageUserKey = authUser?.uid ?? ''
   const configMissing = !mobileConfigStatus.ready
   const canSave = Boolean(profile) && !saveBusy && draft.content.trim().length > 0
-  const isLoggedIn = Boolean(authUser && profile)
+  const isLoggedIn = Boolean(authUser)
+  const showAuthForm = !authUser || (!profileLoading && !profile)
   const shareSignature = useMemo(
     () => buildShareIntentSignature(shareIntent),
     [shareIntent.files, shareIntent.meta, shareIntent.text, shareIntent.type, shareIntent.webUrl]
@@ -310,7 +319,7 @@ export default function App() {
       setProfile(me)
       setDefaultQuestionCount(resolveDefaultQuestionCount(me.default_question_count))
     } catch (error) {
-      if (isAxiosError(error) && error.response?.status === 404) {
+      if (isApiStatus(error, 404)) {
         const fallbackUsername = createFallbackUsername(authUser.email)
         await signUpBackendUser({ username: fallbackUsername })
         const me = await getMe()
@@ -321,6 +330,22 @@ export default function App() {
       }
     } finally {
       setProfileLoading(false)
+    }
+  }, [authUser])
+
+  const loadTokenBalance = useCallback(async () => {
+    if (!isFirebaseConfigured() || !authUser) {
+      setTokenBalance(null)
+      return
+    }
+    setTokenLoading(true)
+    setTokenMessage('')
+    try {
+      setTokenBalance(await fetchTokenBalance())
+    } catch (error) {
+      setTokenMessage(toReadableError(error, 'トークン残高の取得に失敗しました'))
+    } finally {
+      setTokenLoading(false)
     }
   }, [authUser])
 
@@ -419,6 +444,10 @@ export default function App() {
   }, [authUser, isReady, loadQuestionStock, loadSyncedKindleBooks, requestPendingShareIntent])
 
   useEffect(() => {
+    mainScrollRef.current?.scrollTo({ y: 0, animated: false })
+  }, [activeTab])
+
+  useEffect(() => {
     if (!authUser || !isFirebaseConfigured()) {
       setProfile(null)
       setProfileLoading(false)
@@ -431,7 +460,8 @@ export default function App() {
       setProfileLoading(false)
       setFormError(toReadableError(error, 'プロフィールの読み込みに失敗しました'))
     })
-  }, [authUser, loadProfile])
+    void loadTokenBalance()
+  }, [authUser, loadProfile, loadTokenBalance])
 
   useEffect(() => {
     if (!hasShareIntent || !shareSignature || shareSignature === lastShareSignature) {
@@ -609,6 +639,8 @@ export default function App() {
       setQuestionStockSyncing(false)
       setQuestionStockMessage('')
       setQuestionStockError('')
+      setTokenBalance(null)
+      setTokenMessage('')
       setMobileKindleSyncStatus({ state: 'idle', message: '' })
       setSaveMessage(null)
       setSettingsMessage(null)
@@ -637,6 +669,57 @@ export default function App() {
       setSettingsMessage(toReadableError(error, '既定の出題数の保存に失敗しました'))
     } finally {
       setSettingsBusy(false)
+    }
+  }
+
+  async function handleAwardTokens() {
+    setTokenLoading(true)
+    setTokenMessage('')
+    try {
+      setTokenBalance(await awardAdTokens())
+      setTokenMessage(`広告視聴トークンを +${3}問分受け取りました`)
+    } catch (error) {
+      setTokenMessage(toReadableError(error, 'トークン付与に失敗しました'))
+    } finally {
+      setTokenLoading(false)
+    }
+  }
+
+  async function handleOpenCheckout() {
+    setTokenLoading(true)
+    setTokenMessage('')
+    try {
+      const session = await createCheckoutSession()
+      await Linking.openURL(session.url)
+    } catch (error) {
+      setTokenMessage(toReadableError(error, 'Checkout の開始に失敗しました'))
+    } finally {
+      setTokenLoading(false)
+    }
+  }
+
+  async function handleManualGenerateFromCurrentBook() {
+    if (!selectedQuestionSource) {
+      setTokenMessage('先に本のハイライト一覧を開いてください')
+      return
+    }
+    const candidates = bookHighlights.filter((highlight) => !highlight.explanation).slice(0, 5)
+    if (candidates.length < 5) {
+      setTokenMessage('手動生成には問題なしハイライトが5件以上必要です')
+      return
+    }
+
+    setManualGenerating(true)
+    setTokenMessage('')
+    try {
+      const bookKey = selectedQuestionSource.asin.trim() || buildMetadataSourceID(selectedQuestionSource.bookTitle, selectedQuestionSource.bookAuthor)
+      await manualGenerateQuestions(bookKey, candidates.map((highlight) => highlight.id))
+      setTokenMessage('問題生成ジョブを受け付けました')
+      void loadTokenBalance()
+    } catch (error) {
+      setTokenMessage(toReadableError(error, '問題生成の受付に失敗しました'))
+    } finally {
+      setManualGenerating(false)
     }
   }
 
@@ -909,7 +992,6 @@ export default function App() {
 
     try {
       const next = await generateQuestions('kindle_book', sourceID, {
-        questionType: 'multiple_choice',
         questionCount: defaultQuestionCount,
         bookTitle: source.bookTitle,
         bookAuthor: source.bookAuthor,
@@ -1169,7 +1251,11 @@ export default function App() {
               <Text style={styles.subtitle}>{tabConfig.subtitle}</Text>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              ref={mainScrollRef}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
               {activeTab === 'timeline' ? (
                 <>
                   {!isLoggedIn ? (
@@ -1495,8 +1581,13 @@ export default function App() {
 
               {activeTab === 'profile' ? (
                 <>
-                  {!authUser ? (
+                  {showAuthForm ? (
                     <View style={styles.card}>
+                      {authUser && !profile ? (
+                        <Text style={styles.muted}>
+                          プロフィールを読み込めなかったため、ログイン情報を再入力してください。
+                        </Text>
+                      ) : null}
                       <View style={styles.segmented}>
                         <SegmentButton label="ログイン" active={authMode === 'login'} onPress={() => setAuthMode('login')} />
                         <SegmentButton label="新規登録" active={authMode === 'signup'} onPress={() => setAuthMode('signup')} />
@@ -1564,6 +1655,63 @@ export default function App() {
                           <ProfileStat label="プラン" value={profile?.plan || 'free'} />
                           <ProfileStat label="既定の出題数" value={formatQuestionCountLabel(defaultQuestionCount)} />
                         </View>
+                      </View>
+
+                      <View style={styles.card}>
+                        <Text style={styles.cardTitle}>トークン管理</Text>
+                        <Text style={styles.muted}>
+                          今日の問題生成: {tokenBalance?.free_used_today ?? 0} / {tokenBalance?.free_limit ?? 10}問
+                        </Text>
+                        <Text style={styles.muted}>
+                          トークン残高: {tokenBalance?.available_tokens ?? 0}問分（今日の広告: {tokenBalance?.ad_views_today ?? 0} /{' '}
+                          {tokenBalance?.ad_views_limit ?? 3}回）
+                        </Text>
+                        <Text style={styles.helper}>Rewarded Ad unit: {admobConfig.rewardedAdUnitID}</Text>
+                        {tokenMessage ? (
+                          <Text style={tokenMessage.includes('失敗') || tokenMessage.includes('必要') ? styles.errorText : styles.successText}>
+                            {tokenMessage}
+                          </Text>
+                        ) : null}
+                        <View style={styles.buttonRow}>
+                          <PrimaryButton
+                            label={tokenLoading ? '処理中...' : '広告を見て +3問'}
+                            onPress={() => {
+                              void handleAwardTokens()
+                            }}
+                            disabled={tokenLoading}
+                          />
+                          <SecondaryButton
+                            label="残高更新"
+                            onPress={() => {
+                              void loadTokenBalance()
+                            }}
+                            disabled={tokenLoading}
+                          />
+                        </View>
+                      </View>
+
+                      <View style={styles.card}>
+                        <Text style={styles.cardTitle}>問題を生成する</Text>
+                        <Text style={styles.muted}>ハイライト一覧で開いている本から、問題なしの先頭5件を手動生成します。</Text>
+                        <PrimaryButton
+                          label={manualGenerating ? '受付中...' : '5問を生成する'}
+                          onPress={() => {
+                            void handleManualGenerateFromCurrentBook()
+                          }}
+                          disabled={manualGenerating}
+                        />
+                      </View>
+
+                      <View style={styles.card}>
+                        <Text style={styles.cardTitle}>プレミアムプラン</Text>
+                        <Text style={styles.muted}>月額 ¥600 で生成回数無制限</Text>
+                        <PrimaryButton
+                          label={tokenLoading ? '準備中...' : 'プランを確認する'}
+                          onPress={() => {
+                            void handleOpenCheckout()
+                          }}
+                          disabled={tokenLoading}
+                        />
                       </View>
 
                       <View style={styles.card}>
@@ -2655,7 +2803,6 @@ function QuizFlowModal({
                         <Text style={entry.result.is_correct ? styles.successText : styles.errorText}>
                           {entry.result.is_correct ? '正解' : `不正解 / 正解: ${entry.result.correct_answer}`}
                         </Text>
-                        {entry.result.feedback ? <Text style={styles.muted}>{entry.result.feedback}</Text> : null}
                         <Text style={styles.helper}>解説</Text>
                         <Text style={styles.muted}>{entry.result.explanation}</Text>
                         <Field
@@ -2814,12 +2961,15 @@ function toReadableAuthError(error: unknown): string {
 }
 
 function toReadableError(error: unknown, fallback: string): string {
-  if (isAxiosError(error)) {
-    const message = typeof error.response?.data?.message === 'string' ? error.response.data.message : null
+  const message = getApiErrorMessage(error)
+  if (message) {
     if (message === 'questions are still preparing') return '問題はまだ準備中です'
     if (message === 'question generation failed') return '問題の準備に失敗しました'
     if (message === 'source text is unavailable') return 'この本からはまだ問題を作れません'
-    return message ?? fallback
+    return message
+  }
+  if (isApiError(error)) {
+    return fallback
   }
   if (error instanceof Error && error.message) {
     return error.message
@@ -2828,14 +2978,9 @@ function toReadableError(error: unknown, fallback: string): string {
 }
 
 function serializeDebugError(error: unknown) {
-  if (isAxiosError(error)) {
-    return {
-      kind: 'axios',
-      message: error.message,
-      code: error.code,
-      status: error.response?.status,
-      data: error.response?.data,
-    }
+  const apiError = serializeApiDebugError(error)
+  if (apiError) {
+    return apiError
   }
   if (typeof error === 'object' && error !== null) {
     return {

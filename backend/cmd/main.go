@@ -1,16 +1,29 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
-	_ "github.com/lib/pq"
 	"github.com/shout/ai-study-tool/backend/internal/di"
+	dbinfra "github.com/shout/ai-study-tool/backend/internal/infrastructure/db"
+	"github.com/shout/ai-study-tool/backend/internal/logging"
+	"github.com/shout/ai-study-tool/backend/internal/router"
+)
+
+const (
+	readinessTimeout = 2 * time.Second
+	shutdownTimeout  = 10 * time.Second
 )
 
 func main() {
@@ -18,20 +31,21 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
-	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	logging.Setup(os.Getenv("APP_ENV"))
+
+	db, err := dbinfra.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer db.Close()
 
-	if err := db.Ping(); err != nil {
-		log.Printf("warning: database not reachable: %v", err)
-	}
+	configureDatabasePool(db)
 
 	container, err := di.NewContainer(db)
 	if err != nil {
 		log.Fatalf("failed to build DI container: %v", err)
 	}
+	defer container.Close()
 
 	e := echo.New()
 	e.Use(echomiddleware.Logger())
@@ -43,64 +57,51 @@ func main() {
 	}))
 
 	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(200, map[string]string{"status": "ok"})
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
+	e.GET("/ready", readinessHandler(db))
 
-	api := e.Group("/api")
-	authMiddleware := container.FirebaseMiddleware.Authenticate
-
-	users := api.Group("/users")
-	users.POST("/signup", container.UserHandler.SignUp, authMiddleware)
-	users.GET("/me", container.UserHandler.GetMe, authMiddleware)
-	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings, authMiddleware)
-	users.GET("/:id", container.UserHandler.GetUser, authMiddleware)
-	users.PUT("/me", container.UserHandler.UpdateProfile, authMiddleware)
-
-	posts := api.Group("/posts", authMiddleware)
-	posts.GET("/timeline", container.PostHandler.GetTimeline)
-	posts.GET("/:id/questions", container.PostHandler.ListQuestions)
-	posts.GET("/:id", container.PostHandler.GetPost)
-	posts.POST("", container.PostHandler.CreatePost)
-
-	highlights := api.Group("/highlights", authMiddleware)
-	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes)
-	highlights.POST("/import", container.HighlightHandler.Import)
-	highlights.POST("/share", container.HighlightHandler.ImportShared)
-	highlights.GET("/books", container.HighlightHandler.ListBooks)
-	highlights.GET("/books/search/items", container.HighlightHandler.ListByBookMetadata)
-	highlights.GET("/books/:asin/items", container.HighlightHandler.ListByASIN)
-	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation)
-
-	storage := api.Group("/storage", authMiddleware)
-	storage.POST("/signed-urls/upload", container.StorageHandler.CreateUploadSignedURL)
-	storage.POST("/signed-urls/download", container.StorageHandler.CreateDownloadSignedURL)
-
-	questions := api.Group("/questions", authMiddleware)
-	questions.GET("", container.QuestionHandler.List)
-	questions.GET("/prepared", container.QuestionHandler.ListPrepared)
-	questions.GET("/saved", container.QuestionHandler.ListSaved)
-	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
-	questions.POST("/sync", container.QuestionHandler.SyncStock)
-	questions.POST("", container.QuestionHandler.GenerateQuestions)
-	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
-	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)
-	questions.POST("/:id/grade", container.QuestionHandler.GradeAnswer)
-
-	social := api.Group("", authMiddleware)
-	social.POST("/users/:id/follow", container.SocialHandler.Follow)
-	social.DELETE("/users/:id/follow", container.SocialHandler.Unfollow)
-	social.POST("/posts/:id/like", container.SocialHandler.Like)
-	social.DELETE("/posts/:id/like", container.SocialHandler.Unlike)
-	social.POST("/posts/:id/repost", container.SocialHandler.Repost)
-	social.DELETE("/posts/:id/repost", container.SocialHandler.Unrepost)
-	social.POST("/posts/:id/comments", container.SocialHandler.CreateComment)
-	social.GET("/posts/:id/comments", container.SocialHandler.ListComments)
+	router.RegisterAPI(e, container)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	e.Logger.Fatal(e.Start(":" + port))
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- e.Start(":" + port)
+	}()
+
+	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	select {
+	case err := <-serverErr:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server failed: %v", err)
+		}
+	case <-signalCtx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := e.Shutdown(shutdownCtx); err != nil {
+			log.Printf("server shutdown error: %v", err)
+		}
+	}
+}
+
+func readinessHandler(db *sql.DB) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		ctx, cancel := context.WithTimeout(c.Request().Context(), readinessTimeout)
+		defer cancel()
+
+		if err := db.PingContext(ctx); err != nil {
+			log.Printf("readiness check failed: %v", err)
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+		}
+
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	}
 }
 
 func allowedOrigins() []string {
@@ -122,4 +123,23 @@ func allowedOrigins() []string {
 	}
 
 	return origins
+}
+
+func configureDatabasePool(db *sql.DB) {
+	db.SetMaxOpenConns(readEnvInt("DB_MAX_OPEN_CONNS", 10))
+	db.SetMaxIdleConns(readEnvInt("DB_MAX_IDLE_CONNS", 5))
+	db.SetConnMaxLifetime(time.Duration(readEnvInt("DB_CONN_MAX_LIFETIME_SECONDS", 1800)) * time.Second)
+	db.SetConnMaxIdleTime(time.Duration(readEnvInt("DB_CONN_MAX_IDLE_SECONDS", 300)) * time.Second)
+}
+
+func readEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
 }

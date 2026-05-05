@@ -21,6 +21,7 @@ export type HighlightResponse = {
   source: string
   source_app?: string
   source_url?: string
+  book_order_index?: number
   created_at: string
 }
 
@@ -48,11 +49,17 @@ export type ImportKindleHighlightsRequest = {
 }
 
 export type ImportKindleHighlightsResponse = {
-  saved_count: number
-  duplicate_count: number
-  copy_protected_count: number
-  resolved_asin: string
-  highlights: HighlightResponse[]
+  // キューモード
+  queued: boolean
+  queue_id?: string
+  queued_count?: number
+  // 同期モード
+  saved_count?: number
+  duplicate_count?: number
+  resolved_asin?: string
+  highlights?: HighlightResponse[]
+  // 共通
+  copy_protected_count?: number
   warning?: string
 }
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -10,16 +11,26 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
-	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type HighlightHandler struct {
-	highlightUsecase *usecase.HighlightUsecase
+	highlightUsecase HighlightUsecase
 	userUsecase      usecase.UserUsecaseInterface
 }
 
-func NewHighlightHandler(highlightUsecase *usecase.HighlightUsecase, userUsecase usecase.UserUsecaseInterface) *HighlightHandler {
+type HighlightUsecase interface {
+	ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []usecase.ImportHighlightItem) (*usecase.ImportKindleResult, error)
+	ListExistingContentHashes(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error)
+	ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input usecase.ImportSharedHighlightInput) (*usecase.ImportSharedHighlightResult, error)
+	ImportPastedHighlight(ctx context.Context, userID uuid.UUID, input usecase.ImportPastedHighlightInput) (*usecase.ImportPastedHighlightResult, error)
+	ListKindleBooks(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error)
+	ListByASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error)
+	ListByBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error)
+	UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation string) (*domain.Highlight, error)
+}
+
+func NewHighlightHandler(highlightUsecase HighlightUsecase, userUsecase usecase.UserUsecaseInterface) *HighlightHandler {
 	return &HighlightHandler{
 		highlightUsecase: highlightUsecase,
 		userUsecase:      userUsecase,
@@ -51,11 +62,24 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 
 	result, err := h.highlightUsecase.ImportKindleHighlights(c.Request().Context(), user.ID, items)
 	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
+		}
 		if errors.Is(err, domain.ErrAllCopyProtected) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "コピー制限によりハイライトを取得できませんでした")
 		}
 		log.Printf("highlight import error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	if result.QueuedCount > 0 {
+		return c.JSON(http.StatusAccepted, dto.ImportHighlightsResponse{
+			Queued:             true,
+			QueueID:            result.QueueID.String(),
+			QueuedCount:        result.QueuedCount,
+			CopyProtectedCount: result.CopyProtectedCount,
+			Warning:            result.Warning,
+		})
 	}
 
 	responses := make([]*dto.HighlightResponse, 0, len(result.Highlights))
@@ -64,6 +88,7 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, dto.ImportHighlightsResponse{
+		Queued:             false,
 		SavedCount:         result.Saved,
 		DuplicateCount:     result.DuplicateCount,
 		CopyProtectedCount: result.CopyProtectedCount,
@@ -116,7 +141,7 @@ func (h *HighlightHandler) ImportShared(c echo.Context) error {
 	})
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidInput) {
-			return echo.NewHTTPError(http.StatusBadRequest, "content is required")
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
 		}
 		log.Printf("highlight share import error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
@@ -131,6 +156,43 @@ func (h *HighlightHandler) ImportShared(c echo.Context) error {
 		Saved:     result.Saved,
 		Duplicate: result.Duplicate,
 		Highlight: responseHighlight,
+	})
+}
+
+func (h *HighlightHandler) ImportPaste(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	req := new(dto.ImportPastedHighlightRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	result, err := h.highlightUsecase.ImportPastedHighlight(c.Request().Context(), user.ID, usecase.ImportPastedHighlightInput{
+		BookTitle:  req.BookTitle,
+		BookAuthor: req.BookAuthor,
+		Content:    req.Content,
+		SourceApp:  req.SourceApp,
+		SourceURL:  req.SourceURL,
+	})
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
+		}
+		log.Printf("highlight paste import error: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	status := http.StatusCreated
+	if result.Duplicate {
+		status = http.StatusOK
+	}
+
+	return c.JSON(status, dto.ImportPastedHighlightResponse{
+		ID:        result.ID.String(),
+		Duplicate: result.Duplicate,
 	})
 }
 
@@ -240,21 +302,7 @@ func (h *HighlightHandler) UpdateExplanation(c echo.Context) error {
 }
 
 func (h *HighlightHandler) currentUser(c echo.Context) (*domain.User, error) {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
-	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		log.Printf("currentUser error: %v", err)
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
-	}
-
-	return user, nil
+	return resolveCurrentUser(c, h.userUsecase, "highlight")
 }
 
 func toHighlightResponse(h *domain.Highlight) *dto.HighlightResponse {
@@ -270,6 +318,7 @@ func toHighlightResponse(h *domain.Highlight) *dto.HighlightResponse {
 		Source:        h.Source,
 		SourceApp:     h.SourceApp,
 		SourceURL:     h.SourceURL,
+		BookOrderIndex: h.BookOrderIndex,
 		CreatedAt:     h.CreatedAt,
 	}
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -13,11 +15,25 @@ import (
 )
 
 type HighlightUsecase struct {
-	repo domain.HighlightRepository
+	repo        domain.HighlightImportRepository
+	importQueue domain.HighlightImportQueueRepository
+	jobTrigger  domain.HighlightImportJobTrigger
 }
 
-func NewHighlightUsecase(repo domain.HighlightRepository) *HighlightUsecase {
+func NewHighlightUsecase(repo domain.HighlightImportRepository) *HighlightUsecase {
 	return &HighlightUsecase{repo: repo}
+}
+
+func NewHighlightUsecaseWithQueue(
+	repo domain.HighlightImportRepository,
+	importQueue domain.HighlightImportQueueRepository,
+	jobTrigger domain.HighlightImportJobTrigger,
+) *HighlightUsecase {
+	return &HighlightUsecase{
+		repo:        repo,
+		importQueue: importQueue,
+		jobTrigger:  jobTrigger,
+	}
 }
 
 type ImportHighlightItem struct {
@@ -38,17 +54,37 @@ type ImportSharedHighlightInput struct {
 	SharedAt   *time.Time
 }
 
+type ImportPastedHighlightInput struct {
+	BookTitle  string
+	BookAuthor string
+	Content    string
+	SourceApp  string
+	SourceURL  string
+}
+
 type ImportKindleResult struct {
-	Saved              int
-	DuplicateCount     int
+	// キューモード: QueueID と QueuedCount が設定される
+	QueueID     uuid.UUID
+	QueuedCount int
+	// 同期モード: Saved 以下が設定される
+	Saved          int
+	DuplicateCount int
+	// 共通
 	CopyProtectedCount int
 	ResolvedASIN       string
 	Highlights         []*domain.Highlight
 	Warning            *string
+	Queued             bool
 }
 
 type ImportSharedHighlightResult struct {
 	Saved     bool
+	Duplicate bool
+	Highlight *domain.Highlight
+}
+
+type ImportPastedHighlightResult struct {
+	ID        uuid.UUID
 	Duplicate bool
 	Highlight *domain.Highlight
 }
@@ -58,7 +94,59 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 		return nil, domain.ErrAllCopyProtected
 	}
 
-	highlights, copyProtectedCount := buildImportHighlights(userID, items)
+	// キューが設定されている場合は非同期処理に委譲する
+	if u.importQueue != nil {
+		return u.enqueueKindleImport(ctx, userID, items)
+	}
+
+	// キューなし（後方互換: NewHighlightUsecase 経由）
+	return u.importKindleHighlightsDirect(ctx, userID, items)
+}
+
+func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
+	// 既存の検証・正規化ロジックを使いコピープロテクトを除外する
+	highlights, copyProtectedCount, err := buildImportHighlights(userID, items)
+	if err != nil {
+		return nil, err
+	}
+	if len(highlights) == 0 {
+		return nil, domain.ErrAllCopyProtected
+	}
+
+	// 検証済み highlights を JSON にシリアライズしてキューに積む
+	payload, err := json.Marshal(highlights)
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: marshal kindle items: %w", err)
+	}
+
+	queueID, err := u.importQueue.Enqueue(ctx, userID, domain.ImportQueueSourceKindle, payload)
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: enqueue kindle import: %w", err)
+	}
+
+	if u.jobTrigger != nil {
+		if triggerErr := u.jobTrigger.TriggerHighlightImportJob(ctx); triggerErr != nil {
+			log.Printf("highlight import job trigger failed (queue_id=%s): %v", queueID, triggerErr)
+		}
+	}
+
+	result := &ImportKindleResult{
+		QueueID:            queueID,
+		QueuedCount:        len(highlights),
+		CopyProtectedCount: copyProtectedCount,
+	}
+	if copyProtectedCount > 0 {
+		warning := "コピー制限により一部のハイライトが読み込めませんでした"
+		result.Warning = &warning
+	}
+	return result, nil
+}
+
+func (u *HighlightUsecase) importKindleHighlightsDirect(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
+	highlights, copyProtectedCount, err := buildImportHighlights(userID, items)
+	if err != nil {
+		return nil, err
+	}
 	if len(highlights) == 0 {
 		return nil, domain.ErrAllCopyProtected
 	}
@@ -71,11 +159,9 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 		return nil, fmt.Errorf("highlight usecase: import kindle highlights: invalid saved count %d", saved)
 	}
 
-	duplicateCount := len(highlights) - saved
-
 	result := &ImportKindleResult{
 		Saved:              saved,
-		DuplicateCount:     duplicateCount,
+		DuplicateCount:     len(highlights) - saved,
 		CopyProtectedCount: copyProtectedCount,
 		ResolvedASIN:       resolveImportASIN(highlights),
 		Highlights:         collectPersistedHighlights(highlights),
@@ -84,8 +170,40 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 		warning := "コピー制限により一部のハイライトが読み込めませんでした"
 		result.Warning = &warning
 	}
-
 	return result, nil
+}
+
+func (u *HighlightUsecase) ImportPastedHighlight(ctx context.Context, userID uuid.UUID, input ImportPastedHighlightInput) (*ImportPastedHighlightResult, error) {
+	highlight, err := newPastedHighlight(userID, input)
+	if err != nil {
+		return nil, err
+	}
+
+	saved, err := u.repo.BulkUpsert(ctx, []*domain.Highlight{highlight})
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: import pasted highlight: %w", err)
+	}
+	if saved < 0 || saved > 1 {
+		return nil, fmt.Errorf("highlight usecase: import pasted highlight: invalid saved count %d", saved)
+	}
+	if saved == 1 {
+		return &ImportPastedHighlightResult{
+			ID:        highlight.ID,
+			Duplicate: false,
+			Highlight: highlight,
+		}, nil
+	}
+
+	existing, err := u.repo.FindByUserIDAndContentHash(ctx, userID, *highlight.ContentHash)
+	if err != nil {
+		return nil, fmt.Errorf("highlight usecase: find pasted duplicate: %w", err)
+	}
+
+	return &ImportPastedHighlightResult{
+		ID:        existing.ID,
+		Duplicate: true,
+		Highlight: existing,
+	}, nil
 }
 
 func (u *HighlightUsecase) ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input ImportSharedHighlightInput) (*ImportSharedHighlightResult, error) {
@@ -181,12 +299,15 @@ func (u *HighlightUsecase) UpdateExplanation(ctx context.Context, id, userID uui
 	return highlight, nil
 }
 
-func buildImportHighlights(userID uuid.UUID, items []ImportHighlightItem) ([]*domain.Highlight, int) {
+func buildImportHighlights(userID uuid.UUID, items []ImportHighlightItem) ([]*domain.Highlight, int, error) {
 	highlights := make([]*domain.Highlight, 0, len(items))
 	copyProtectedCount := 0
 
 	for _, item := range items {
-		highlight, ok := newImportHighlight(userID, item)
+		highlight, ok, err := newImportHighlight(userID, item)
+		if err != nil {
+			return nil, copyProtectedCount, err
+		}
 		if !ok {
 			copyProtectedCount++
 			continue
@@ -195,33 +316,47 @@ func buildImportHighlights(userID uuid.UUID, items []ImportHighlightItem) ([]*do
 		highlights = append(highlights, highlight)
 	}
 
-	return highlights, copyProtectedCount
+	return highlights, copyProtectedCount, nil
 }
 
-func newImportHighlight(userID uuid.UUID, item ImportHighlightItem) (*domain.Highlight, bool) {
+func newImportHighlight(userID uuid.UUID, item ImportHighlightItem) (*domain.Highlight, bool, error) {
 	content := strings.TrimSpace(item.Content)
 	if content == "" {
-		return nil, false
+		return nil, false, nil
+	}
+
+	normalizedContent, err := normalizeAndValidateHighlightContent(content)
+	if err != nil {
+		return nil, false, err
+	}
+
+	bookTitle, err := normalizeAndValidateOptionalMetaText(item.BookTitle, 200)
+	if err != nil {
+		return nil, false, err
+	}
+	bookAuthor, err := normalizeAndValidateOptionalMetaText(item.BookAuthor, 100)
+	if err != nil {
+		return nil, false, err
 	}
 
 	asin := strings.TrimSpace(item.ASIN)
 	location := strings.TrimSpace(item.Location)
-	contentHash := computeKindleContentHash(asin, location, content)
+	contentHash := computeContentHash(normalizedContent)
 	highlightedAt := sanitizeHighlightedAt(item.HighlightedAt)
 
 	return &domain.Highlight{
 		UserID:        userID,
-		BookTitle:     optionalString(item.BookTitle),
-		BookAuthor:    optionalString(item.BookAuthor),
+		BookTitle:     bookTitle,
+		BookAuthor:    bookAuthor,
 		ASIN:          optionalString(asin),
-		Content:       content,
+		Content:       normalizedContent,
 		ContentHash:   &contentHash,
 		Location:      optionalString(location),
 		HighlightedAt: highlightedAt,
-		Source:        domain.HighlightSourceKindle,
+		Source:        domain.HighlightSourceExtension,
 		Status:        domain.HighlightStatusPending,
 		RequestedAt:   time.Now().UTC(),
-	}, true
+	}, true, nil
 }
 
 func newSharedHighlight(userID uuid.UUID, input ImportSharedHighlightInput) (*domain.Highlight, error) {
@@ -230,20 +365,37 @@ func newSharedHighlight(userID uuid.UUID, input ImportSharedHighlightInput) (*do
 		return nil, domain.ErrInvalidInput
 	}
 
+	normalizedContent, err := normalizeAndValidateHighlightContent(content)
+	if err != nil {
+		return nil, err
+	}
+
 	sourceApp := strings.TrimSpace(input.SourceApp)
 	sourceURL := strings.TrimSpace(input.SourceURL)
-	bookTitle := strings.TrimSpace(input.BookTitle)
-	bookAuthor := strings.TrimSpace(input.BookAuthor)
-	contentHash := computeMobileShareContentHash(sourceApp, sourceURL, bookTitle, bookAuthor, content)
+	if sourceURL != "" {
+		if err := domain.ValidateSourceURL(sourceURL); err != nil {
+			return nil, err
+		}
+	}
+
+	bookTitle, err := normalizeAndValidateOptionalMetaText(input.BookTitle, 200)
+	if err != nil {
+		return nil, err
+	}
+	bookAuthor, err := normalizeAndValidateOptionalMetaText(input.BookAuthor, 100)
+	if err != nil {
+		return nil, err
+	}
+	contentHash := computeContentHash(normalizedContent)
 
 	return &domain.Highlight{
 		UserID:        userID,
-		BookTitle:     optionalString(bookTitle),
-		BookAuthor:    optionalString(bookAuthor),
-		Content:       content,
+		BookTitle:     bookTitle,
+		BookAuthor:    bookAuthor,
+		Content:       normalizedContent,
 		ContentHash:   &contentHash,
 		HighlightedAt: sanitizeHighlightedAt(input.SharedAt),
-		Source:        domain.HighlightSourceMobileShare,
+		Source:        domain.HighlightSourceShare,
 		SourceApp:     optionalString(sourceApp),
 		SourceURL:     optionalString(sourceURL),
 		Status:        domain.HighlightStatusPending,
@@ -251,34 +403,110 @@ func newSharedHighlight(userID uuid.UUID, input ImportSharedHighlightInput) (*do
 	}, nil
 }
 
-func computeKindleContentHash(asin, location, content string) string {
-	key := fmt.Sprintf(
-		"source:%s:asin:%s:loc:%s:content:%s",
-		domain.HighlightSourceKindle,
-		strings.TrimSpace(asin),
-		strings.TrimSpace(location),
-		normalizeContent(content),
-	)
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
+func newPastedHighlight(userID uuid.UUID, input ImportPastedHighlightInput) (*domain.Highlight, error) {
+	content := strings.TrimSpace(input.Content)
+	if content == "" {
+		return nil, domain.ErrInvalidInput
+	}
+
+	normalizedContent, err := normalizeAndValidateHighlightContent(content)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceApp := strings.TrimSpace(input.SourceApp)
+	if sourceApp != "" && !isAllowedPasteSourceApp(sourceApp) {
+		return nil, domain.ErrInvalidInput
+	}
+	sourceApp = strings.ToLower(sourceApp)
+
+	sourceURL := strings.TrimSpace(input.SourceURL)
+	if sourceURL != "" {
+		if err := domain.ValidateSourceURL(sourceURL); err != nil {
+			return nil, err
+		}
+	}
+
+	bookTitle, err := normalizeAndValidateOptionalMetaText(input.BookTitle, 200)
+	if err != nil {
+		return nil, err
+	}
+	bookAuthor, err := normalizeAndValidateOptionalMetaText(input.BookAuthor, 100)
+	if err != nil {
+		return nil, err
+	}
+	contentHash := computeContentHash(normalizedContent)
+
+	return &domain.Highlight{
+		UserID:      userID,
+		BookTitle:   bookTitle,
+		BookAuthor:  bookAuthor,
+		Content:     normalizedContent,
+		ContentHash: &contentHash,
+		Source:      domain.HighlightSourcePaste,
+		SourceApp:   optionalString(sourceApp),
+		SourceURL:   optionalString(sourceURL),
+		Status:      domain.HighlightStatusPending,
+		RequestedAt: time.Now().UTC(),
+	}, nil
 }
 
-func computeMobileShareContentHash(sourceApp, sourceURL, bookTitle, bookAuthor, content string) string {
-	key := fmt.Sprintf(
-		"source:%s:app:%s:url:%s:title:%s:author:%s:content:%s",
-		domain.HighlightSourceMobileShare,
-		strings.TrimSpace(sourceApp),
-		strings.TrimSpace(sourceURL),
-		strings.TrimSpace(bookTitle),
-		strings.TrimSpace(bookAuthor),
-		normalizeContent(content),
-	)
-	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
+func normalizeAndValidateHighlightContent(content string) (string, error) {
+	if err := validateHighlightContent(content); err != nil {
+		return "", err
+	}
+
+	normalized := domain.NormalizeText(content)
+	if err := validateHighlightContent(normalized); err != nil {
+		return "", err
+	}
+
+	return normalized, nil
 }
 
-func normalizeContent(content string) string {
-	return strings.Join(strings.Fields(strings.ToLower(content)), " ")
+func validateHighlightContent(content string) error {
+	if err := domain.ValidateTextLength(content, 300); err != nil {
+		return err
+	}
+	if err := domain.ValidateLineCount(content, 20); err != nil {
+		return err
+	}
+	if err := domain.ValidateMaxLineLength(content, 300); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func normalizeAndValidateOptionalMetaText(value string, max int) (*string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if err := domain.ValidateTextLength(trimmed, max); err != nil {
+		return nil, err
+	}
+
+	normalized := domain.NormalizeMetaText(trimmed)
+	if err := domain.ValidateTextLength(normalized, max); err != nil {
+		return nil, err
+	}
+
+	return &normalized, nil
+}
+
+func isAllowedPasteSourceApp(sourceApp string) bool {
+	switch strings.ToLower(strings.TrimSpace(sourceApp)) {
+	case "kindle", "x", "web":
+		return true
+	default:
+		return false
+	}
+}
+
+func computeContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
 }
 
 func normalizeHashList(hashes []string) []string {

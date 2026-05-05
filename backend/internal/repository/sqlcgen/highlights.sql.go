@@ -12,6 +12,143 @@ import (
 	"github.com/google/uuid"
 )
 
+const createHighlight = `-- name: CreateHighlight :one
+INSERT INTO highlights (
+    user_id,
+    book_id,
+    book_title,
+    book_author,
+    asin,
+    content,
+    explanation,
+    location,
+    highlighted_at,
+    source,
+    content_hash,
+    source_app,
+    source_url
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+)
+RETURNING
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
+`
+
+type CreateHighlightParams struct {
+	UserID        uuid.UUID      `json:"user_id"`
+	BookID        uuid.NullUUID  `json:"book_id"`
+	BookTitle     sql.NullString `json:"book_title"`
+	BookAuthor    sql.NullString `json:"book_author"`
+	Asin          sql.NullString `json:"asin"`
+	Content       string         `json:"content"`
+	Explanation   sql.NullString `json:"explanation"`
+	Location      sql.NullString `json:"location"`
+	HighlightedAt sql.NullTime   `json:"highlighted_at"`
+	Source        sql.NullString `json:"source"`
+	ContentHash   sql.NullString `json:"content_hash"`
+	SourceApp     sql.NullString `json:"source_app"`
+	SourceUrl     sql.NullString `json:"source_url"`
+}
+
+func (q *Queries) CreateHighlight(ctx context.Context, arg CreateHighlightParams) (Highlight, error) {
+	row := q.db.QueryRowContext(ctx, createHighlight,
+		arg.UserID,
+		arg.BookID,
+		arg.BookTitle,
+		arg.BookAuthor,
+		arg.Asin,
+		arg.Content,
+		arg.Explanation,
+		arg.Location,
+		arg.HighlightedAt,
+		arg.Source,
+		arg.ContentHash,
+		arg.SourceApp,
+		arg.SourceUrl,
+	)
+	var i Highlight
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.BookID,
+		&i.Content,
+		&i.Location,
+		&i.CreatedAt,
+		&i.BookTitle,
+		&i.BookAuthor,
+		&i.Asin,
+		&i.HighlightedAt,
+		&i.Source,
+		&i.UpdatedAt,
+		&i.ContentHash,
+		&i.Explanation,
+		&i.SourceApp,
+		&i.SourceUrl,
+		&i.Status,
+		&i.RetryCount,
+		&i.GenerationRequestedAt,
+		&i.ProcessingStartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.LastError,
+		&i.BookOrderIndex,
+	)
+	return i, err
+}
+
+const getHighlightByUserIDAndContentHash = `-- name: GetHighlightByUserIDAndContentHash :one
+SELECT
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
+FROM highlights
+WHERE user_id = $1
+  AND content_hash = $2
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+`
+
+type GetHighlightByUserIDAndContentHashParams struct {
+	UserID      uuid.UUID      `json:"user_id"`
+	ContentHash sql.NullString `json:"content_hash"`
+}
+
+func (q *Queries) GetHighlightByUserIDAndContentHash(ctx context.Context, arg GetHighlightByUserIDAndContentHashParams) (Highlight, error) {
+	row := q.db.QueryRowContext(ctx, getHighlightByUserIDAndContentHash, arg.UserID, arg.ContentHash)
+	var i Highlight
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.BookID,
+		&i.Content,
+		&i.Location,
+		&i.CreatedAt,
+		&i.BookTitle,
+		&i.BookAuthor,
+		&i.Asin,
+		&i.HighlightedAt,
+		&i.Source,
+		&i.UpdatedAt,
+		&i.ContentHash,
+		&i.Explanation,
+		&i.SourceApp,
+		&i.SourceUrl,
+		&i.Status,
+		&i.RetryCount,
+		&i.GenerationRequestedAt,
+		&i.ProcessingStartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.LastError,
+		&i.BookOrderIndex,
+	)
+	return i, err
+}
+
 const listHighlightBooksByUserID = `-- name: ListHighlightBooksByUserID :many
 SELECT
     asin,
@@ -28,8 +165,8 @@ ORDER BY MAX(highlighted_at) DESC NULLS LAST, MAX(created_at) DESC
 `
 
 type ListHighlightBooksByUserIDParams struct {
-	UserID uuid.UUID `json:"user_id"`
-	Source string    `json:"source"`
+	UserID uuid.UUID      `json:"user_id"`
+	Source sql.NullString `json:"source"`
 }
 
 type ListHighlightBooksByUserIDRow struct {
@@ -37,7 +174,7 @@ type ListHighlightBooksByUserIDRow struct {
 	BookTitle      string         `json:"book_title"`
 	BookAuthor     string         `json:"book_author"`
 	HighlightCount int64          `json:"highlight_count"`
-	Source         string         `json:"source"`
+	Source         sql.NullString `json:"source"`
 }
 
 func (q *Queries) ListHighlightBooksByUserID(ctx context.Context, arg ListHighlightBooksByUserIDParams) ([]ListHighlightBooksByUserIDRow, error) {
@@ -70,7 +207,12 @@ func (q *Queries) ListHighlightBooksByUserID(ctx context.Context, arg ListHighli
 }
 
 const listHighlightsByUserIDAndASIN = `-- name: ListHighlightsByUserIDAndASIN :many
-SELECT id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation FROM highlights
+SELECT
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
+FROM highlights
 WHERE user_id = $1
   AND asin = $2
   AND source = $3
@@ -80,7 +222,7 @@ ORDER BY highlighted_at ASC NULLS LAST, created_at ASC
 type ListHighlightsByUserIDAndASINParams struct {
 	UserID uuid.UUID      `json:"user_id"`
 	Asin   sql.NullString `json:"asin"`
-	Source string         `json:"source"`
+	Source sql.NullString `json:"source"`
 }
 
 func (q *Queries) ListHighlightsByUserIDAndASIN(ctx context.Context, arg ListHighlightsByUserIDAndASINParams) ([]Highlight, error) {
@@ -107,6 +249,16 @@ func (q *Queries) ListHighlightsByUserIDAndASIN(ctx context.Context, arg ListHig
 			&i.UpdatedAt,
 			&i.ContentHash,
 			&i.Explanation,
+			&i.SourceApp,
+			&i.SourceUrl,
+			&i.Status,
+			&i.RetryCount,
+			&i.GenerationRequestedAt,
+			&i.ProcessingStartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.LastError,
+			&i.BookOrderIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -122,7 +274,12 @@ func (q *Queries) ListHighlightsByUserIDAndASIN(ctx context.Context, arg ListHig
 }
 
 const listHighlightsByUserIDAndBookMetadata = `-- name: ListHighlightsByUserIDAndBookMetadata :many
-SELECT id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation FROM highlights
+SELECT
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
+FROM highlights
 WHERE user_id = $1
   AND source = $2
   AND lower(trim(coalesce(book_title, ''))) = lower(trim($3))
@@ -131,10 +288,10 @@ ORDER BY highlighted_at ASC NULLS LAST, created_at ASC
 `
 
 type ListHighlightsByUserIDAndBookMetadataParams struct {
-	UserID     uuid.UUID `json:"user_id"`
-	Source     string    `json:"source"`
-	BookTitle  string    `json:"book_title"`
-	BookAuthor string    `json:"book_author"`
+	UserID     uuid.UUID      `json:"user_id"`
+	Source     sql.NullString `json:"source"`
+	BookTitle  string         `json:"book_title"`
+	BookAuthor string         `json:"book_author"`
 }
 
 func (q *Queries) ListHighlightsByUserIDAndBookMetadata(ctx context.Context, arg ListHighlightsByUserIDAndBookMetadataParams) ([]Highlight, error) {
@@ -166,6 +323,16 @@ func (q *Queries) ListHighlightsByUserIDAndBookMetadata(ctx context.Context, arg
 			&i.UpdatedAt,
 			&i.ContentHash,
 			&i.Explanation,
+			&i.SourceApp,
+			&i.SourceUrl,
+			&i.Status,
+			&i.RetryCount,
+			&i.GenerationRequestedAt,
+			&i.ProcessingStartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.LastError,
+			&i.BookOrderIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -181,7 +348,12 @@ func (q *Queries) ListHighlightsByUserIDAndBookMetadata(ctx context.Context, arg
 }
 
 const listHighlightsByUserIDAndBookTitle = `-- name: ListHighlightsByUserIDAndBookTitle :many
-SELECT id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation FROM highlights
+SELECT
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
+FROM highlights
 WHERE user_id = $1
   AND source = $2
   AND lower(trim(coalesce(book_title, ''))) = lower(trim($3))
@@ -189,9 +361,9 @@ ORDER BY highlighted_at ASC NULLS LAST, created_at ASC
 `
 
 type ListHighlightsByUserIDAndBookTitleParams struct {
-	UserID    uuid.UUID `json:"user_id"`
-	Source    string    `json:"source"`
-	BookTitle string    `json:"book_title"`
+	UserID    uuid.UUID      `json:"user_id"`
+	Source    sql.NullString `json:"source"`
+	BookTitle string         `json:"book_title"`
 }
 
 func (q *Queries) ListHighlightsByUserIDAndBookTitle(ctx context.Context, arg ListHighlightsByUserIDAndBookTitleParams) ([]Highlight, error) {
@@ -218,6 +390,16 @@ func (q *Queries) ListHighlightsByUserIDAndBookTitle(ctx context.Context, arg Li
 			&i.UpdatedAt,
 			&i.ContentHash,
 			&i.Explanation,
+			&i.SourceApp,
+			&i.SourceUrl,
+			&i.Status,
+			&i.RetryCount,
+			&i.GenerationRequestedAt,
+			&i.ProcessingStartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.LastError,
+			&i.BookOrderIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -236,7 +418,11 @@ const updateHighlightExplanation = `-- name: UpdateHighlightExplanation :one
 UPDATE highlights
 SET explanation = $3, updated_at = NOW()
 WHERE id = $1 AND user_id = $2
-RETURNING id, user_id, book_id, content, location, created_at, book_title, book_author, asin, highlighted_at, source, updated_at, content_hash, explanation
+RETURNING
+    id, user_id, book_id, content, location, created_at,
+    book_title, book_author, asin, highlighted_at, source, updated_at,
+    content_hash, explanation, source_app, source_url, status, retry_count,
+    generation_requested_at, processing_started_at, completed_at, failed_at, last_error, book_order_index
 `
 
 type UpdateHighlightExplanationParams struct {
@@ -263,6 +449,16 @@ func (q *Queries) UpdateHighlightExplanation(ctx context.Context, arg UpdateHigh
 		&i.UpdatedAt,
 		&i.ContentHash,
 		&i.Explanation,
+		&i.SourceApp,
+		&i.SourceUrl,
+		&i.Status,
+		&i.RetryCount,
+		&i.GenerationRequestedAt,
+		&i.ProcessingStartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.LastError,
+		&i.BookOrderIndex,
 	)
 	return i, err
 }

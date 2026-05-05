@@ -84,6 +84,21 @@ INSERT INTO questions (
 	return nil
 }
 
+func (r *questionRepository) SupersedeActiveQuestionsForHighlight(ctx context.Context, userID uuid.UUID, highlightID uuid.UUID) error {
+	_, err := r.db.ExecContext(ctx, `
+UPDATE questions
+SET superseded_at = NOW(),
+    updated_at = NOW()
+WHERE user_id = $1
+  AND highlight_id = $2
+  AND superseded_at IS NULL
+`, userID, highlightID)
+	if err != nil {
+		return fmt.Errorf("question repo: supersede active questions for highlight: %w", err)
+	}
+	return nil
+}
+
 func (r *questionRepository) ListByCreatorID(ctx context.Context, creatorID string, limit int) ([]*domain.Question, error) {
 	userID, err := uuid.Parse(creatorID)
 	if err != nil {
@@ -265,6 +280,7 @@ LEFT JOIN answers a
   ON a.question_id = q.id
  AND a.user_id = $1
 WHERE q.user_id = $1
+  AND q.superseded_at IS NULL
   AND q.highlight_id::text = ANY($2)
 ORDER BY CASE WHEN a.question_id IS NULL THEN 0 ELSE 1 END ASC, q.created_at DESC
 LIMIT $3`
@@ -531,9 +547,12 @@ WHERE user_id = $1
 	return count, nil
 }
 
-func (r *questionRepository) IncrementDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
+func (r *questionRepository) ReserveDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int, limit int) (bool, error) {
 	if delta <= 0 {
-		return nil
+		return true, nil
+	}
+	if limit <= 0 {
+		return false, nil
 	}
 
 	query := `
@@ -541,13 +560,151 @@ INSERT INTO user_daily_generation_counts (user_id, date, count)
 VALUES ($1, $2, $3)
 ON CONFLICT (user_id, date)
 DO UPDATE SET
-    count = user_daily_generation_counts.count + EXCLUDED.count`
+    count = user_daily_generation_counts.count + EXCLUDED.count
+WHERE user_daily_generation_counts.count + EXCLUDED.count <= $4
+RETURNING count`
 
-	if _, err := r.db.ExecContext(ctx, query, userID, day.Format("2006-01-02"), delta); err != nil {
-		return fmt.Errorf("question repo: increment daily generated count: %w", err)
+	var count int
+	err := r.db.QueryRowContext(ctx, query, userID, day.Format("2006-01-02"), delta, limit).Scan(&count)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("question repo: reserve daily generated count: %w", err)
 	}
 
+	return true, nil
+}
+
+func (r *questionRepository) GetUserLastQuestionSyncAt(ctx context.Context, userID uuid.UUID) (*time.Time, error) {
+	var lastSync sql.NullTime
+	if err := r.db.QueryRowContext(ctx, `
+SELECT last_sync_at
+FROM users
+WHERE id = $1
+`, userID).Scan(&lastSync); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("question repo: get user last question sync at: %w", err)
+	}
+	if !lastSync.Valid {
+		return nil, nil
+	}
+	return &lastSync.Time, nil
+}
+
+func (r *questionRepository) UpdateUserLastQuestionSyncAt(ctx context.Context, userID uuid.UUID, syncedAt time.Time) error {
+	result, err := r.db.ExecContext(ctx, `
+UPDATE users
+SET last_sync_at = $2,
+    updated_at = NOW()
+WHERE id = $1
+`, userID, syncedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("question repo: update user last question sync at: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("question repo: update user last question sync rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return domain.ErrNotFound
+	}
 	return nil
+}
+
+func (r *questionRepository) QueueHighlightsWithinDailyLimit(
+	ctx context.Context,
+	userID uuid.UUID,
+	day time.Time,
+	limit int,
+	highlightIDs []uuid.UUID,
+	questionCountByHighlightID map[uuid.UUID]int,
+	requestedAt time.Time,
+) ([]uuid.UUID, bool, error) {
+	if len(highlightIDs) == 0 || len(questionCountByHighlightID) == 0 {
+		return make([]uuid.UUID, 0), true, nil
+	}
+	if limit <= 0 {
+		return nil, false, nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("question repo: begin sync queue transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	queueQuery := `
+UPDATE highlights
+SET
+    status = 'pending',
+    retry_count = 0,
+    generation_requested_at = $3,
+    processing_started_at = NULL,
+    completed_at = NULL,
+    failed_at = NULL,
+    last_error = NULL,
+    updated_at = NOW()
+WHERE user_id = $1
+  AND id::text = ANY($2)
+  AND status NOT IN ('pending', 'processing')
+RETURNING id`
+
+	rows, err := tx.QueryContext(ctx, queueQuery, userID, pq.Array(uuidStrings(highlightIDs)), requestedAt.UTC())
+	if err != nil {
+		return nil, false, fmt.Errorf("question repo: queue sync highlights: %w", err)
+	}
+	defer rows.Close()
+
+	queuedIDs := make([]uuid.UUID, 0, len(highlightIDs))
+	queuedQuestionCount := 0
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, false, fmt.Errorf("question repo: scan sync queued highlight id: %w", err)
+		}
+		queuedIDs = append(queuedIDs, id)
+		queuedQuestionCount += questionCountByHighlightID[id]
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, fmt.Errorf("question repo: rows sync queued highlight ids: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, false, fmt.Errorf("question repo: close sync queued highlight rows: %w", err)
+	}
+
+	if queuedQuestionCount <= 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, false, fmt.Errorf("question repo: commit empty sync queue transaction: %w", err)
+		}
+		return queuedIDs, true, nil
+	}
+
+	reserveQuery := `
+INSERT INTO user_daily_generation_counts (user_id, date, count)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id, date)
+DO UPDATE SET
+    count = user_daily_generation_counts.count + EXCLUDED.count
+WHERE user_daily_generation_counts.count + EXCLUDED.count <= $4
+RETURNING count`
+
+	var count int
+	err = tx.QueryRowContext(ctx, reserveQuery, userID, day.Format("2006-01-02"), queuedQuestionCount, limit).Scan(&count)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("question repo: reserve sync daily generated count: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("question repo: commit sync queue transaction: %w", err)
+	}
+
+	return queuedIDs, true, nil
 }
 
 func (r *questionRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
@@ -585,6 +742,7 @@ WITH claimed AS (
     SELECT id
     FROM regeneration_queue
     WHERE status = 'pending'
+      AND requested_at <= NOW()
     ORDER BY requested_at ASC
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -660,6 +818,7 @@ JOIN highlights h
 			highlightHash       sql.NullString
 			highlightLocation   sql.NullString
 			highlightedAt       sql.NullTime
+			highlightSource     sql.NullString
 			highlightSourceApp  sql.NullString
 			highlightSourceURL  sql.NullString
 			highlightStatus     sql.NullString
@@ -692,7 +851,7 @@ JOIN highlights h
 			&highlightHash,
 			&highlightLocation,
 			&highlightedAt,
-			&highlight.Source,
+			&highlightSource,
 			&highlightSourceApp,
 			&highlightSourceURL,
 			&highlightStatus,
@@ -716,6 +875,7 @@ JOIN highlights h
 		highlight.ContentHash = fromNullString(highlightHash)
 		highlight.Location = fromNullString(highlightLocation)
 		highlight.HighlightedAt = fromNullTime(highlightedAt)
+		highlight.Source = fromNullStringValue(highlightSource)
 		highlight.SourceApp = fromNullString(highlightSourceApp)
 		highlight.SourceURL = fromNullString(highlightSourceURL)
 		highlight.Status = domain.HighlightStatus(strings.TrimSpace(highlightStatus.String))
@@ -742,6 +902,28 @@ JOIN highlights h
 	}
 
 	return tasks, nil
+}
+
+func (r *questionRepository) DeferRegenerationTasks(ctx context.Context, taskIDs []uuid.UUID, lastError string) error {
+	if len(taskIDs) == 0 {
+		return nil
+	}
+
+	query := `
+UPDATE regeneration_queue
+SET
+    status = 'pending',
+    requested_at = NOW() + INTERVAL '1 hour',
+    processing_started_at = NULL,
+    last_error = LEFT($2, 500),
+    updated_at = NOW()
+WHERE id::text = ANY($1)`
+
+	if _, err := r.db.ExecContext(ctx, query, pq.Array(uuidTextSlice(taskIDs)), strings.TrimSpace(lastError)); err != nil {
+		return fmt.Errorf("question repo: defer regeneration tasks: %w", err)
+	}
+
+	return nil
 }
 
 func (r *questionRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {

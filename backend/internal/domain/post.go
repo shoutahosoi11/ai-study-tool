@@ -7,57 +7,57 @@ import (
 )
 
 type Post struct {
-	ID            uuid.UUID  `json:"id"`
-	UserID        uuid.UUID  `json:"user_id"`
-	QuestionID    *uuid.UUID `json:"question_id,omitempty"`
-	BookID        *uuid.UUID `json:"book_id,omitempty"`
-	FieldID       *uuid.UUID `json:"field_id,omitempty"`
-	Body          *string    `json:"body,omitempty"`
-	BookTitle     *string    `json:"book_title,omitempty"`
-	QuestionCount int        `json:"question_count"`
-	Type          string     `json:"type"`
-	RepostCount   int        `json:"repost_count"`
-	LikeCount     int        `json:"like_count"`
-	CommentCount  int        `json:"comment_count"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	QuestionID    *uuid.UUID
+	BookID        *uuid.UUID
+	FieldID       *uuid.UUID
+	Body          *string
+	BookTitle     *string
+	QuestionCount int
+	Type          string
+	RepostCount   int
+	LikeCount     int
+	CommentCount  int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type TimelinePost struct {
 	Post
-	Score       int     `json:"score"`
-	Username    string  `json:"username"`
-	DisplayName string  `json:"display_name"`
-	AvatarURL   *string `json:"avatar_url,omitempty"`
-	FieldName   *string `json:"field_name,omitempty"`
+	Score       int
+	Username    string
+	DisplayName string
+	AvatarURL   *string
+	FieldName   *string
 }
 
 type PostQuestionItem struct {
-	QuestionID uuid.UUID `json:"question_id"`
-	SortOrder  int       `json:"sort_order"`
-	Note       string    `json:"note"`
+	QuestionID uuid.UUID
+	SortOrder  int
+	Note       string
 }
 
 type PostedQuestion struct {
 	Question
-	Note      string `json:"note"`
-	SortOrder int    `json:"sort_order"`
+	Note      string
+	SortOrder int
 }
 
 type CreatePostInput struct {
-	UserID        uuid.UUID          `json:"user_id"`
-	QuestionID    *uuid.UUID         `json:"question_id"`
-	BookID        *uuid.UUID         `json:"book_id"`
-	FieldID       *uuid.UUID         `json:"field_id"`
-	Body          string             `json:"body"`
-	BookTitle     string             `json:"book_title"`
-	QuestionCount int                `json:"question_count"`
-	Questions     []PostQuestionItem `json:"questions"`
-	Type          string             `json:"type"`
+	UserID        uuid.UUID
+	QuestionID    *uuid.UUID
+	BookID        *uuid.UUID
+	FieldID       *uuid.UUID
+	Body          string
+	BookTitle     string
+	QuestionCount int
+	Questions     []PostQuestionItem
+	Type          string
 }
 
 type TimelineParams struct {
-	UserID uuid.UUID `json:"user_id"`
-	Limit  int       `json:"limit"`
-	Offset int       `json:"offset"`
+	UserID uuid.UUID
+	Limit  int
+	Offset int
 }

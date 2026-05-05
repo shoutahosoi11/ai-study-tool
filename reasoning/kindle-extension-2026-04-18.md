@@ -1,96 +1,75 @@
-# Kindle ブラウザ拡張機能 + フロントエンド導線
+# Kindle ブラウザ同期設計メモ
 
-## 何を作ったか
+## 現在の役割
 
-`read.amazon.co.jp/kp/notebook` からハイライトを取得するブラウザ拡張機能（Chrome MV3）と、フロントエンドの「Kindle 本から問題を作る」導線を実装した。
+Chrome 拡張は「Kindle Notebook の現在見えている本一覧とハイライトを、ブラウザ版アプリ起動時に自動同期するための橋渡し」を担当する。手動で 1 冊ずつ問題を作るための補助ではなく、ハイライト取得レイヤーとして使う。
 
-### ファイル構成
+## 現在のフロー
 
-```
-extension/
-  manifest.json          MV3 manifest
-  background.js          メッセージハブ・API POST
-  content/
-    notebook.js          Amazon notebook ページのスクレイパー（2モード）
-    webapp.js            web app ↔ background のブリッジ
-  popup/
-    popup.html           拡張ステータス表示
+1. ブラウザ版アプリ起動
+2. `KindleSyncBootstrap` が拡張の有無を確認
+3. 拡張経由で Kindle Notebook の現在表示分の本一覧を取得
+4. 表示中の本を順番に同期
+5. `/api/highlights/import` で DB 保存
+6. その後に `POST /api/questions/sync` を 1 回呼び、問題ストック不足分だけをキュー投入
 
-frontend/src/
-  types/kindle.ts        KindleBook / ExtensionKindleBook 型
-  api/kindle.ts          listKindleBooks()
-  api/questions.ts       generateQuestions() 追加
-  hooks/useKindleSync.ts 拡張検出・本一覧取得・同期フロー
-  pages/question/
-    KindleBookSection.tsx  本一覧セクション（extension/backend 切替）
-    KindleBookCard.tsx     本カード（同期・問題生成ボタン）
-    QuestionPage.tsx       KindleBookSection を追加
-```
+## なぜこの設計にしたか
 
----
+### 自動同期をアプリ起動時に寄せた理由
 
-## なぜその設計にしたか
+- ユーザーは「同期してから別画面へ進む」より、開いた時点で反映されている方が自然
+- Kindle 側でハイライト追加後、ブラウザを開けばそのまま反映確認しやすい
+- 問題生成を highlight 保存と切り離しやすい
 
-### 2段階フロー（本一覧取得 → ハイライト同期）
+### 本一覧取得と本ごとの同期を分ける理由
 
-v1 は `?asin=X` を直接開く設計だったが、初回同期前はフロントエンドの `/api/highlights/books` が空になる問題があった。
+- まず「今 Notebook に何冊見えているか」を把握しないと、進捗表示が作れない
+- 書籍ごとに進めることで `1/3冊` のような状態を UI に出せる
+- 失敗しても該当本だけ失敗扱いにでき、全体停止を避けやすい
 
-v2 では:
-1. `LIST_BOOKS_REQUEST`: `read.amazon.co.jp/kp/notebook`（ASIN なし）を silent tab で開き、本一覧をスクレイプ
-2. `SYNC_BOOK_REQUEST`: 選択した本の `?asin=X` を silent tab で開き、ハイライトをスクレイプして backend に POST
+### 拡張 ID を固定しない理由
 
-これにより初回でも Kindle 本一覧を表示できる。
+`postMessage` と content script のブリッジを使うことで、フロントエンドに拡張 ID を埋め込まずに済む。ローカル開発や再読み込み時の扱いが軽い。
 
-### postMessage ブリッジ方式（extension ID 不要）
+## 現在のブラウザ側状態管理
 
-拡張機能 ID をフロントにハードコードしなくて済む。`content/webapp.js` が web app の `window` に接続し、postMessage を双方向にブリッジする。
+- `useKindleSync.ts` が拡張との通信、タイムアウト、進捗イベント解釈を担当
+- `lib/kindleAutoSync.ts` が localStorage 上の同期スナップショットを保持
+- `useKindleAutoSyncSnapshot.ts` が UI 表示用の購読フック
+- `KindleSyncBootstrap.tsx` が起動時自動同期の制御を担当
 
-### origin 制限 + requestId
+## 現在の進捗表示
 
-- 送信側: `window.postMessage(data, window.location.origin)` で origin を指定
-- 受信側: `event.origin !== window.location.origin` でチェック
-- `requestId = crypto.randomUUID()` を各リクエストに付与し、`pendingRef` で未完了リクエストを追跡。未知の requestId のレスポンスは無視（stale / spoofed 防止）
+同期中は以下を UI に出せるようにしている。
 
-### token 使い捨て
+- 対象冊数
+- 現在何冊目か
+- 成功冊数 / 失敗冊数
+- 現在の本タイトル
+- 現在の本で見つかったハイライト件数
+- ステージ文言
+  例: `Kindle ノートページに到達しました`, `保存処理まで完了しました`
 
-Firebase token を `pendingSyncs[tabId].token` に一時格納し、`handleNotebookHighlightData` で `var token = sync.token; delete pendingSyncs[tabId];` と先に削除してから `postImport(token, ...)` に渡す。Amazon ログインは不要（ブラウザの既存 Cookie を使用）。
+## バックグラウンドスクリプトの責務
 
-### extension なし時のフォールバック
+- Kindle Notebook 用の非表示タブを開く
+- 本一覧モードと本同期モードを切り替える
+- content script から受けた `NOTEBOOK_PROGRESS`, `NOTEBOOK_BOOK_LIST`, `NOTEBOOK_HIGHLIGHT_DATA`, `NOTEBOOK_ERROR` をアプリへ返す
+- タイムアウト時に `NOTEBOOK_TIMEOUT` として失敗させる
 
-`extensionInstalled = false` のとき `/api/highlights/books`（保存済み本のみ）を表示する。同期ボタンは非表示。これにより拡張機能未インストール環境でも既存の問題生成フローは動作する。
+## モバイルとの関係
 
----
+モバイルは Chrome 拡張を使わず、WebView で Kindle Notebook を開いて自動同期する。つまり「ハイライト取得の入り口」は別だが、保存先 API と問題ストック同期の考え方はそろえている。
 
-## 他の選択肢と比較してなぜこれを選んだか
+## 現在の制約
 
-### `externally_connectable` + 固定 extension ID
+- Chrome 拡張は Kindle Notebook の DOM に依存する
+- `read.amazon.co.jp/notebook` の表示内容だけを対象にするため、未表示本まで一気に取る仕組みではない
+- Amazon ログインが切れている場合は同期できない
+- Service Worker 側のタイムアウトやタブ生成失敗は、アプリ側でリトライやエラー表示が必要
 
-- メリット: セキュアなチャネル
-- 却下理由: extension ID をフロントの環境変数にハードコードする必要がある。Chrome Web Store 未配布の個人ツールでは ID が環境依存になる
+## 古い前提として捨てたもの
 
-### Extension popup で完結させる
-
-- メリット: シンプル
-- 却下理由: ユーザーが web app を離れてポップアップを操作する必要があり、UX が断絶する
-
-### Backend が Amazon をスクレイピング
-
-- 却下理由: Amazon Cookie を backend に送る必要があり、セキュリティリスクが高い
-
-### `?asin=X` 直リンク前提（v1 の方式）
-
-- 却下理由: 初回同期前は本一覧が空になる。Amazon notebook トップから本一覧を取得する2段階フローが必要
-
----
-
-## トレードオフ
-
-- `scrapeBookList` のセレクタは Amazon の DOM に依存。Amazon がページ構造を変更した場合はセレクタの修正が必要
-- `waitForBookList` / `waitForHighlights` は最大15秒（30回 × 500ms / 20回 × 500ms）待つ。ネットワークが遅い環境では silent tab が残る可能性がある（`closeTab` は `chrome.runtime.lastError` を void して安全に処理）
-- `pendingSyncs` は service worker のメモリに存在し、MV3 の service worker は非アクティブ時に終了する。長時間放置した後の同期はタイムアウトする可能性がある
-
-## 将来の拡張性
-
-- `notebook.js` の URL チェックに `read.amazon.com` を追加し、manifest の `host_permissions` を追加するだけで US 版対応可能
-- `source_type` は backend 側で `SourceType` として拡張済み（Kobo 等も追加可能）
-- `ImportHighlightItem` に `source` フィールドを追加することで、Kindle 以外のプラットフォームも同じエンドポイントで対応可能
+- 「問題を作るボタンから 1 冊だけ同期してその場で生成する」考え方
+- 初回同期前は本一覧が空でもよいという前提
+- highlight 保存と問題生成を同一操作で同期的に進める前提

@@ -38,8 +38,10 @@ useAuth・useTimelineのカスタムフックで十分に管理できる。
 - AnswerModalを閉じた後に問題一覧の正答率が更新されない
   → Question型にanswer_count/correct_countを追加し、
     close時にリストを再fetchする
-- GET /api/questions バックエンドハンドラーが未実装（TODO状態）
-  → バックエンドにListUserQuestionsハンドラーを追加する必要あり
+
+## 現在は解消済み
+- `GET /api/questions` はバックエンド実装済み。
+- Kindle 本からの学習は `GET /api/questions/prepared` と `POST /api/questions/sync` を使い、起動時・取り込み後に問題ストックを準備する。
 
 ## 想定リスク
 - Firebase Authの初期化タイミングによりloading中に

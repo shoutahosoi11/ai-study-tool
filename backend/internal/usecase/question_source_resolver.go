@@ -10,10 +10,15 @@ import (
 )
 
 type questionSourceResolver struct {
-	highlightRepo domain.HighlightRepository
+	highlightRepo highlightSourceReader
 }
 
-func NewQuestionSourceResolver(highlightRepo domain.HighlightRepository) domain.QuestionSourceResolver {
+type highlightSourceReader interface {
+	ListByUserIDAndASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error)
+	ListByUserIDAndBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error)
+}
+
+func NewQuestionSourceResolver(highlightRepo highlightSourceReader) domain.QuestionSourceResolver {
 	return &questionSourceResolver{
 		highlightRepo: highlightRepo,
 	}

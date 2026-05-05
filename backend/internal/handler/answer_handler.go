@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -8,34 +9,34 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
-	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
 )
 
 type AnswerHandler struct {
-	answerUsecase *usecase.AnswerUsecase
-	userUsecase   usecase.UserUsecaseInterface
+	answerUsecase       AnswerUsecase
+	userUsecase         usecase.UserUsecaseInterface
+	questionSyncUsecase QuestionSyncUsecase
 }
 
-func NewAnswerHandler(au *usecase.AnswerUsecase, userUsecase usecase.UserUsecaseInterface) *AnswerHandler {
-	return &AnswerHandler{answerUsecase: au, userUsecase: userUsecase}
+type AnswerUsecase interface {
+	SubmitAnswer(ctx context.Context, input usecase.SubmitAnswerInput) (*usecase.SubmitAnswerResult, error)
+}
+
+func NewAnswerHandler(au AnswerUsecase, userUsecase usecase.UserUsecaseInterface, questionSyncUsecase QuestionSyncUsecase) *AnswerHandler {
+	return &AnswerHandler{
+		answerUsecase:       au,
+		userUsecase:         userUsecase,
+		questionSyncUsecase: questionSyncUsecase,
+	}
 }
 
 func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	user, err := resolveCurrentUser(c, h.userUsecase, "answer")
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return err
 	}
 
-	questionID := c.Param("id")
+	questionID := strings.TrimSpace(c.Param("id"))
 	if questionID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "question id is required")
 	}
@@ -61,17 +62,17 @@ func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
-		if strings.HasPrefix(err.Error(), "llm_error:") {
-			return echo.NewHTTPError(http.StatusBadGateway, "AI grading failed")
-		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+	if h.questionSyncUsecase != nil {
+		if err := h.questionSyncUsecase.EvaluateBookAfterAnswer(c.Request().Context(), user, questionID); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		}
 	}
 
 	return c.JSON(http.StatusOK, dto.SubmitAnswerResponse{
 		IsCorrect:     result.IsCorrect,
 		CorrectAnswer: result.CorrectAnswer,
 		Explanation:   result.Explanation,
-		Score:         result.Score,
-		Feedback:      result.Feedback,
 	})
 }

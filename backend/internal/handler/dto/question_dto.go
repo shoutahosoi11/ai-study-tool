@@ -6,18 +6,6 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
-type GenerateQuestionRequest struct {
-	SourceType        string `json:"source_type"`
-	SourceID          string `json:"source_id"`
-	BookTitle         string `json:"book_title"`
-	BookAuthor        string `json:"book_author"`
-	QuestionCount     int    `json:"question_count"`
-	QuestionType      string `json:"question_type"`
-	CustomInstruction string `json:"custom_instruction"`
-}
-
-type SyncQuestionStockRequest struct{}
-
 type SyncQuestionStockBookResponse struct {
 	BookKey    string `json:"book_key"`
 	BookTitle  string `json:"book_title"`
@@ -41,6 +29,15 @@ type SaveQuestionResponse struct {
 	QuestionID string `json:"question_id"`
 	Note       string `json:"note"`
 	Saved      bool   `json:"saved"`
+}
+
+type ManualGenerateQuestionRequest struct {
+	BookKey      string   `json:"book_key"`
+	HighlightIDs []string `json:"highlight_ids"`
+}
+
+type ManualGenerateQuestionResponse struct {
+	JobID string `json:"job_id"`
 }
 
 type SavedQuestionResponse struct {
@@ -109,14 +106,4 @@ func ToIncorrectQuestionResponse(q *domain.IncorrectQuestion) IncorrectQuestionR
 		Note:          q.Note,
 		AnsweredAt:    q.AnsweredAt,
 	}
-}
-
-type GradeAnswerRequest struct {
-	UserAnswer string `json:"user_answer"`
-}
-
-type GradeAnswerResponse struct {
-	IsCorrect bool   `json:"is_correct"`
-	Score     int    `json:"score"`
-	Feedback  string `json:"feedback"`
 }

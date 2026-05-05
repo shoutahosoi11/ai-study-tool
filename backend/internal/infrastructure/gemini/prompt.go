@@ -11,8 +11,6 @@ func BuildBatchGeneratorPrompt(points []domain.ExtractedPoint, questionType doma
 	switch questionType {
 	case domain.QuestionTypeMultipleChoice:
 		typeInstruction = "すべて4択選択問題にしてください。各 questions[i].options には必ず4つの選択肢を含めてください。"
-	case domain.QuestionTypeDescriptive:
-		typeInstruction = "すべて記述式問題にしてください。各 questions[i].options は空配列にしてください。"
 	default:
 		typeInstruction = "すべて4択選択問題にしてください。"
 	}
@@ -46,19 +44,4 @@ func BuildBatchGeneratorPrompt(points []domain.ExtractedPoint, questionType doma
     }
   ]
 }`, pointsSection, typeInstruction, customPart)
-}
-
-func BuildGraderPrompt(question *domain.Question, userAnswer string) string {
-	return fmt.Sprintf(`以下の問題に対するユーザーの回答を採点してください。
-
-問題: %s
-模範解答: %s
-ユーザーの回答: %s
-
-以下のJSON形式で回答してください。他のテキストは含めないでください:
-{
-  "is_correct": true/false,
-  "score": 0-100の整数,
-  "feedback": "フィードバックコメント"
-}`, question.Content, question.CorrectAnswer, userAnswer)
 }

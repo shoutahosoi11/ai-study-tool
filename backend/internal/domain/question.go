@@ -7,7 +7,6 @@ type SourceType string
 
 const (
 	QuestionTypeMultipleChoice QuestionType = "multiple_choice"
-	QuestionTypeDescriptive    QuestionType = "descriptive"
 
 	SourceTypeKindleBook SourceType = "kindle_book"
 )

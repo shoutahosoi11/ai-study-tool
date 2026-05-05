@@ -24,6 +24,8 @@ ALTER TABLE highlights
 CREATE INDEX IF NOT EXISTS idx_highlights_status_user_requested_at
     ON highlights (status, user_id, generation_requested_at);
 
+DROP INDEX IF EXISTS highlights_user_id_content_hash_idx;
+
 UPDATE highlights
 SET content_hash = encode(
         digest(
@@ -90,6 +92,10 @@ DELETE FROM highlights h
 USING ranked r
 WHERE h.id = r.id
   AND r.rn > 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS highlights_user_id_content_hash_idx
+    ON highlights (user_id, content_hash)
+    WHERE content_hash IS NOT NULL;
 
 ALTER TABLE questions
     ADD COLUMN IF NOT EXISTS perspective VARCHAR(32) NOT NULL DEFAULT 'definition',

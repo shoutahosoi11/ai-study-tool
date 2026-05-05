@@ -40,6 +40,15 @@ type BookStock struct {
 	LatestHighlightAt time.Time
 }
 
+type QuestionGenerationBookCandidate struct {
+	BookKey                 string
+	BookTitle               string
+	BookAuthor              string
+	PendingHighlightCount   int
+	UnansweredQuestionCount int
+	LatestHighlightAt       time.Time
+}
+
 type RegenerationTask struct {
 	ID                    uuid.UUID
 	UserID                uuid.UUID
