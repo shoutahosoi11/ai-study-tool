@@ -13,16 +13,13 @@ import (
 )
 
 type Answer struct {
-	ID          uuid.UUID      `json:"id"`
-	UserID      uuid.UUID      `json:"user_id"`
-	QuestionID  uuid.UUID      `json:"question_id"`
-	UserAnswer  string         `json:"user_answer"`
-	IsCorrect   bool           `json:"is_correct"`
-	CreatedAt   time.Time      `json:"created_at"`
-	Score       sql.NullInt32  `json:"score"`
-	Feedback    sql.NullString `json:"feedback"`
-	GraderModel sql.NullString `json:"grader_model"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	ID         uuid.UUID `json:"id"`
+	UserID     uuid.UUID `json:"user_id"`
+	QuestionID uuid.UUID `json:"question_id"`
+	UserAnswer string    `json:"user_answer"`
+	IsCorrect  bool      `json:"is_correct"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type Book struct {
@@ -81,6 +78,7 @@ type Highlight struct {
 	CompletedAt           sql.NullTime   `json:"completed_at"`
 	FailedAt              sql.NullTime   `json:"failed_at"`
 	LastError             sql.NullString `json:"last_error"`
+	BookOrderIndex        sql.NullInt32  `json:"book_order_index"`
 }
 
 type Like struct {

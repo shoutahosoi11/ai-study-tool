@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
@@ -21,6 +22,7 @@ const (
 type QuestionHandler struct {
 	questionUsecase     QuestionUsecase
 	questionSyncUsecase QuestionSyncUsecase
+	manualUsecase       ManualGenerationUsecase
 	userUsecase         usecase.UserUsecaseInterface
 }
 
@@ -37,14 +39,24 @@ type QuestionSyncUsecase interface {
 	EvaluateBookAfterAnswer(ctx context.Context, user *domain.User, questionID string) error
 }
 
+type ManualGenerationUsecase interface {
+	Generate(ctx context.Context, user *domain.User, bookKey string, highlightIDs []uuid.UUID) (*domain.QuestionGenerationJob, error)
+}
+
 func NewQuestionHandler(
 	qu QuestionUsecase,
 	questionSyncUsecase QuestionSyncUsecase,
 	userUsecase usecase.UserUsecaseInterface,
+	manualUsecases ...ManualGenerationUsecase,
 ) *QuestionHandler {
+	var manualUsecase ManualGenerationUsecase
+	if len(manualUsecases) > 0 {
+		manualUsecase = manualUsecases[0]
+	}
 	return &QuestionHandler{
 		questionUsecase:     qu,
 		questionSyncUsecase: questionSyncUsecase,
+		manualUsecase:       manualUsecase,
 		userUsecase:         userUsecase,
 	}
 }
@@ -132,14 +144,24 @@ func (h *QuestionHandler) ListPrepared(c echo.Context) error {
 		}
 		questionCount = parsedLimit
 	}
+	startIndex, err := parseOptionalNonNegativeInt(c.QueryParam("highlight_start_index"), "highlight_start_index")
+	if err != nil {
+		return err
+	}
+	endIndex, err := parseOptionalNonNegativeInt(c.QueryParam("highlight_end_index"), "highlight_end_index")
+	if err != nil {
+		return err
+	}
 
 	input := domain.GenerateQuestionsInput{
-		CreatorID:     user.ID.String(),
-		SourceType:    sourceType,
-		SourceID:      sourceID,
-		BookTitle:     strings.TrimSpace(c.QueryParam("book_title")),
-		BookAuthor:    strings.TrimSpace(c.QueryParam("book_author")),
-		QuestionCount: questionCount,
+		CreatorID:           user.ID.String(),
+		SourceType:          sourceType,
+		SourceID:            sourceID,
+		BookTitle:           strings.TrimSpace(c.QueryParam("book_title")),
+		BookAuthor:          strings.TrimSpace(c.QueryParam("book_author")),
+		QuestionCount:       questionCount,
+		HighlightStartIndex: startIndex,
+		HighlightEndIndex:   endIndex,
 	}
 
 	questions, err := h.questionUsecase.ListPreparedQuestions(c.Request().Context(), input)
@@ -198,6 +220,61 @@ func (h *QuestionHandler) SyncStock(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, response)
+}
+
+func (h *QuestionHandler) ManualGenerate(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+	if h.manualUsecase == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "manual generation is unavailable")
+	}
+
+	req := new(dto.ManualGenerateQuestionRequest)
+	if err := c.Bind(req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if len(req.HighlightIDs) < 5 {
+		return echo.NewHTTPError(http.StatusBadRequest, "minimum 5 highlights required")
+	}
+
+	highlightIDs := make([]uuid.UUID, 0, len(req.HighlightIDs))
+	for _, rawID := range req.HighlightIDs {
+		highlightID, parseErr := uuid.Parse(strings.TrimSpace(rawID))
+		if parseErr != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight id")
+		}
+		highlightIDs = append(highlightIDs, highlightID)
+	}
+
+	job, err := h.manualUsecase.Generate(c.Request().Context(), user, strings.TrimSpace(req.BookKey), highlightIDs)
+	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
+		}
+		if errors.Is(err, domain.ErrQuestionBudgetExceeded) {
+			return echo.NewHTTPError(http.StatusPaymentRequired, "question budget exceeded")
+		}
+		if errors.Is(err, domain.ErrAlreadyExists) {
+			return echo.NewHTTPError(http.StatusConflict, "generation job already exists")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusAccepted, dto.ManualGenerateQuestionResponse{JobID: job.ID.String()})
+}
+
+func parseOptionalNonNegativeInt(rawValue string, name string) (int, error) {
+	normalized := strings.TrimSpace(rawValue)
+	if normalized == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.Atoi(normalized)
+	if err != nil || parsed < 0 {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid "+name)
+	}
+	return parsed, nil
 }
 
 func (h *QuestionHandler) SaveQuestion(c echo.Context) error {

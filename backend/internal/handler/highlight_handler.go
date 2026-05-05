@@ -307,6 +307,7 @@ func toHighlightResponse(h *domain.Highlight) *dto.HighlightResponse {
 		Source:        h.Source,
 		SourceApp:     h.SourceApp,
 		SourceURL:     h.SourceURL,
+		BookOrderIndex: h.BookOrderIndex,
 		CreatedAt:     h.CreatedAt,
 	}
 

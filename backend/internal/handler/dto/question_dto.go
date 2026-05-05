@@ -31,6 +31,15 @@ type SaveQuestionResponse struct {
 	Saved      bool   `json:"saved"`
 }
 
+type ManualGenerateQuestionRequest struct {
+	BookKey      string   `json:"book_key"`
+	HighlightIDs []string `json:"highlight_ids"`
+}
+
+type ManualGenerateQuestionResponse struct {
+	JobID string `json:"job_id"`
+}
+
 type SavedQuestionResponse struct {
 	ID            string    `json:"id"`
 	QuestionType  string    `json:"question_type"`

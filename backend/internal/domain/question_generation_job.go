@@ -22,6 +22,7 @@ type QuestionGenerationJobReason string
 const (
 	JobReasonHighlightBatchThreshold QuestionGenerationJobReason = "highlight_batch_threshold"
 	JobReasonAllUnansweredConsumed   QuestionGenerationJobReason = "all_unanswered_consumed"
+	JobReasonManualSelection         QuestionGenerationJobReason = "manual_selection"
 )
 
 const (

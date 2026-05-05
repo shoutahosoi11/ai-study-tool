@@ -19,8 +19,7 @@ import (
 )
 
 const (
-	ModelFlash = "gemini-2.5-flash"
-	ModelPro   = "gemini-2.5-pro"
+	ModelDefault = "gemini-2.5-flash-lite"
 
 	defaultTimeoutSeconds = 90
 	defaultMaxRetries     = 2
@@ -52,10 +51,7 @@ func (c *Client) Close() {
 }
 
 func ModelForPlan(plan string) string {
-	if plan == "pro" {
-		return ModelPro
-	}
-	return ModelFlash
+	return ModelDefault
 }
 
 func (c *Client) ModelForPlan(plan string) string {

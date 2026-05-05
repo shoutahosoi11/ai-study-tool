@@ -9,10 +9,10 @@ import (
 
 	"github.com/shout/ai-study-tool/backend/internal/handler"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
-	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gcs"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/inprocess"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
+	infrastripes "github.com/shout/ai-study-tool/backend/internal/infrastructure/stripe"
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	postgresrepo "github.com/shout/ai-study-tool/backend/internal/repository/postgres"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
@@ -25,7 +25,8 @@ type Container struct {
 	AnswerHandler       *handler.AnswerHandler
 	SocialHandler       *handler.SocialHandler
 	HighlightHandler    *handler.HighlightHandler
-	StorageHandler      *handler.StorageHandler
+	TokenHandler        *handler.TokenHandler
+	StripeHandler       *handler.StripeHandler
 	QuestionDispatcher  *inprocess.QuestionGenerationDispatcher
 	FirebaseMiddleware  *middleware.FirebaseMiddleware
 	RateLimitMiddleware *middleware.RateLimitMiddleware
@@ -58,15 +59,6 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
-	storageSigner, err := gcs.NewSignedURLService(
-		ctx,
-		os.Getenv("GCS_BUCKET_NAME"),
-		os.Getenv("GCS_SIGNING_SERVICE_ACCOUNT"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	userRepo := postgresrepo.NewUserRepository(db)
 	postRepo := postgresrepo.NewPostRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)
@@ -75,6 +67,8 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	highlightRepo := persistence.NewHighlightRepository(db)
 	rateLimitRepo := persistence.NewRateLimitRepository(db)
 	questionJobRepo := persistence.NewQuestionGenerationJobRepository(db)
+	questionBudgetRepo := persistence.NewQuestionBudgetRepository(db)
+	billingRepo := persistence.NewBillingRepository(db)
 
 	rateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
 	if err != nil {
@@ -91,19 +85,24 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		readEnvIntOrDefault("QUESTION_DISPATCHER_MAX_CONCURRENT", 3),
 	)
 	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionDispatcher)
+	manualGenerationUsecase := usecase.NewManualGenerationUsecase(questionJobRepo, questionBudgetRepo, questionDispatcher)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	highlightUsecase := usecase.NewHighlightUsecase(highlightRepo)
-	storageUsecase := usecase.NewStorageUsecase(storageSigner)
-
+	tokenUsecase := usecase.NewTokenUsecase(questionBudgetRepo)
+	billingUsecase := usecase.NewBillingUsecase(
+		infrastripes.NewCheckoutClientFromEnv(),
+		infrastripes.NewWebhookValidatorFromEnv(),
+		billingRepo,
+	)
 	userHandler := handler.NewUserHandler(userUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
-	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase)
+	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)
 	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase, questionSyncUsecase)
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
-	storageHandler := handler.NewStorageHandler(storageUsecase, userUsecase)
-
+	tokenHandler := handler.NewTokenHandler(tokenUsecase, userUsecase)
+	stripeHandler := handler.NewStripeHandler(billingUsecase, userUsecase)
 	return &Container{
 		UserHandler:         userHandler,
 		PostHandler:         postHandler,
@@ -111,7 +110,8 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		AnswerHandler:       answerHandler,
 		SocialHandler:       socialHandler,
 		HighlightHandler:    highlightHandler,
-		StorageHandler:      storageHandler,
+		TokenHandler:        tokenHandler,
+		StripeHandler:       stripeHandler,
 		QuestionDispatcher:  questionDispatcher,
 		FirebaseMiddleware:  firebaseMiddleware,
 		RateLimitMiddleware: rateLimitMiddleware,

@@ -24,7 +24,7 @@ ON CONFLICT (user_id, question_id) DO UPDATE SET
     user_answer  = EXCLUDED.user_answer,
     is_correct   = EXCLUDED.is_correct,
     updated_at   = NOW()
-RETURNING id, user_id, question_id, user_answer, is_correct, created_at, score, feedback, grader_model, updated_at
+RETURNING id, user_id, question_id, user_answer, is_correct, created_at, updated_at
 `
 
 type UpsertAnswerParams struct {
@@ -49,9 +49,6 @@ func (q *Queries) UpsertAnswer(ctx context.Context, arg UpsertAnswerParams) (Ans
 		&i.UserAnswer,
 		&i.IsCorrect,
 		&i.CreatedAt,
-		&i.Score,
-		&i.Feedback,
-		&i.GraderModel,
 		&i.UpdatedAt,
 	)
 	return i, err

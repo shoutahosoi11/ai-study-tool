@@ -86,6 +86,7 @@ func (u *QuestionUsecase) ListPreparedQuestions(ctx context.Context, input domai
 	}
 
 	candidates := filterNonEmptyHighlights(sourceHighlights)
+	candidates = filterHighlightsByBookOrderIndex(candidates, input.HighlightStartIndex, input.HighlightEndIndex)
 	if len(candidates) == 0 {
 		return nil, domain.ErrSourceTextUnavailable
 	}
@@ -119,6 +120,27 @@ func (u *QuestionUsecase) ListPreparedQuestions(ctx context.Context, input domai
 	}
 
 	return nil, domain.ErrSourceTextUnavailable
+}
+
+func filterHighlightsByBookOrderIndex(highlights []*domain.Highlight, startIndex int, endIndex int) []*domain.Highlight {
+	if startIndex == 0 && endIndex == 0 {
+		return highlights
+	}
+	filtered := make([]*domain.Highlight, 0, len(highlights))
+	for _, highlight := range highlights {
+		if highlight == nil || highlight.BookOrderIndex == nil {
+			continue
+		}
+		index := *highlight.BookOrderIndex
+		if startIndex > 0 && index < startIndex {
+			continue
+		}
+		if endIndex > 0 && index > endIndex {
+			continue
+		}
+		filtered = append(filtered, highlight)
+	}
+	return filtered
 }
 
 func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {

@@ -127,36 +127,16 @@ func answerStatDeltas(hadPreviousAnswer bool, previousCorrect bool, currentCorre
 
 func toDomainAnswer(answer sqlcgen.Answer) *domain.Answer {
 	return &domain.Answer{
-		ID:          answer.ID.String(),
-		UserID:      answer.UserID.String(),
-		QuestionID:  answer.QuestionID.String(),
-		UserAnswer:  answer.UserAnswer,
-		IsCorrect:   answer.IsCorrect,
-		Score:       fromNullInt32(answer.Score),
-		Feedback:    fromNullString(answer.Feedback),
-		GraderModel: fromNullString(answer.GraderModel),
-		CreatedAt:   answer.CreatedAt,
-		UpdatedAt:   answer.UpdatedAt,
+		ID:         answer.ID.String(),
+		UserID:     answer.UserID.String(),
+		QuestionID: answer.QuestionID.String(),
+		UserAnswer: answer.UserAnswer,
+		IsCorrect:  answer.IsCorrect,
+		CreatedAt:  answer.CreatedAt,
+		UpdatedAt:  answer.UpdatedAt,
 	}
 }
 
 func parseAnswerUUID(value string) (uuid.UUID, error) {
 	return uuid.Parse(value)
-}
-
-func toNullInt32(value *int) sql.NullInt32 {
-	if value == nil {
-		return sql.NullInt32{}
-	}
-
-	return sql.NullInt32{Int32: int32(*value), Valid: true}
-}
-
-func fromNullInt32(value sql.NullInt32) *int {
-	if !value.Valid {
-		return nil
-	}
-
-	converted := int(value.Int32)
-	return &converted
 }

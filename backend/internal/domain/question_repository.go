@@ -8,15 +8,17 @@ import (
 )
 
 type GenerateQuestionsInput struct {
-	CreatorID         string
-	SourceType        SourceType
-	SourceID          string
-	BookTitle         string
-	BookAuthor        string
-	QuestionCount     int
-	QuestionType      QuestionType
-	CustomInstruction string
-	UserPlan          string
+	CreatorID           string
+	SourceType          SourceType
+	SourceID            string
+	BookTitle           string
+	BookAuthor          string
+	QuestionCount       int
+	QuestionType        QuestionType
+	CustomInstruction   string
+	UserPlan            string
+	HighlightStartIndex int
+	HighlightEndIndex   int
 }
 
 type QuestionCatalogReader interface {
