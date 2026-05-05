@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -15,7 +16,7 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
-	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
+	db, err := dbinfra.Open(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatalf("highlight-importer: failed to open database: %v", err)
 	}
