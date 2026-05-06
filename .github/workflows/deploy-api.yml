@@ -18,6 +18,9 @@ env:
   SERVICE: ${{ vars.CLOUD_RUN_API_SERVICE }}
   GAR_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}
   APP_ENV: ${{ vars.APP_ENV || 'production' }}
+  STRIPE_PRICE_ID_MONTHLY: ${{ vars.STRIPE_PRICE_ID_MONTHLY || '' }}
+  STRIPE_SUCCESS_URL: ${{ vars.STRIPE_SUCCESS_URL || '' }}
+  STRIPE_CANCEL_URL: ${{ vars.STRIPE_CANCEL_URL || '' }}
 
 jobs:
   test-and-deploy-api:
@@ -59,18 +62,6 @@ jobs:
           fi
           if [ -z "${{ secrets.GCP_DEPLOYER_SERVICE_ACCOUNT }}" ]; then
             echo "Missing GitHub Actions secret: GCP_DEPLOYER_SERVICE_ACCOUNT"
-            exit 1
-          fi
-          if [ -z "${{ vars.STRIPE_PRICE_ID_MONTHLY }}" ]; then
-            echo "Missing GitHub Actions variable: STRIPE_PRICE_ID_MONTHLY"
-            exit 1
-          fi
-          if [ -z "${{ vars.STRIPE_SUCCESS_URL }}" ]; then
-            echo "Missing GitHub Actions variable: STRIPE_SUCCESS_URL"
-            exit 1
-          fi
-          if [ -z "${{ vars.STRIPE_CANCEL_URL }}" ]; then
-            echo "Missing GitHub Actions variable: STRIPE_CANCEL_URL"
             exit 1
           fi
 
@@ -119,9 +110,9 @@ jobs:
             GCS_BUCKET_NAME=${{ vars.GCS_BUCKET_NAME }}
             GCS_SIGNING_SERVICE_ACCOUNT=${{ vars.GCS_SIGNING_SERVICE_ACCOUNT }}
             APP_ENV=${{ env.APP_ENV }}
-            STRIPE_PRICE_ID_MONTHLY=${{ vars.STRIPE_PRICE_ID_MONTHLY }}
-            STRIPE_SUCCESS_URL=${{ vars.STRIPE_SUCCESS_URL }}
-            STRIPE_CANCEL_URL=${{ vars.STRIPE_CANCEL_URL }}
+            STRIPE_PRICE_ID_MONTHLY=${{ env.STRIPE_PRICE_ID_MONTHLY }}
+            STRIPE_SUCCESS_URL=${{ env.STRIPE_SUCCESS_URL }}
+            STRIPE_CANCEL_URL=${{ env.STRIPE_CANCEL_URL }}
           secrets: |-
             DATABASE_URL=DATABASE_URL:latest
             GEMINI_API_KEY=GEMINI_API_KEY:latest
