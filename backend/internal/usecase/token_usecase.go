@@ -17,7 +17,12 @@ func NewTokenUsecase(budgetRepo domain.QuestionBudgetRepository) *TokenUsecase {
 }
 
 func (u *TokenUsecase) Award(ctx context.Context, user *domain.User) (*domain.QuestionTokenBalance, error) {
-	return u.budgetRepo.AwardAdTokens(ctx, user.ID, u.now())
+	balance, err := u.budgetRepo.AwardAdTokens(ctx, user.ID, u.now())
+	if err != nil {
+		return nil, err
+	}
+	balance.Plan = user.Plan
+	return balance, nil
 }
 
 func (u *TokenUsecase) Balance(ctx context.Context, user *domain.User) (*domain.QuestionTokenBalance, error) {

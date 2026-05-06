@@ -83,6 +83,20 @@ WHERE id = $1
 }
 
 func (r *QuestionGenerationJobRepository) ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	return r.listByUserIDAndStatus(ctx, userID, domain.JobStatusEnqueueFailed, limit, "list enqueue failed")
+}
+
+func (r *QuestionGenerationJobRepository) ListQueuedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	return r.listByUserIDAndStatus(ctx, userID, domain.JobStatusQueued, limit, "list queued")
+}
+
+func (r *QuestionGenerationJobRepository) listByUserIDAndStatus(
+	ctx context.Context,
+	userID uuid.UUID,
+	status domain.QuestionGenerationJobStatus,
+	limit int,
+	action string,
+) ([]*domain.QuestionGenerationJob, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -95,9 +109,9 @@ WHERE user_id = $1
   AND status = $2
 ORDER BY created_at ASC
 LIMIT $3
-`, userID, string(domain.JobStatusEnqueueFailed), limit)
+`, userID, string(status), limit)
 	if err != nil {
-		return nil, wrapQuestionGenerationJobError("list enqueue failed", err)
+		return nil, wrapQuestionGenerationJobError(action, err)
 	}
 	defer rows.Close()
 
@@ -105,7 +119,7 @@ LIMIT $3
 	for rows.Next() {
 		job, err := scanQuestionGenerationJob(rows)
 		if err != nil {
-			return nil, wrapQuestionGenerationJobError("scan enqueue failed", err)
+			return nil, wrapQuestionGenerationJobError("scan "+action, err)
 		}
 		if err := r.loadHighlightIDs(ctx, job); err != nil {
 			return nil, err
@@ -113,7 +127,7 @@ LIMIT $3
 		jobs = append(jobs, job)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, wrapQuestionGenerationJobError("rows enqueue failed", err)
+		return nil, wrapQuestionGenerationJobError("rows "+action, err)
 	}
 	return jobs, nil
 }

@@ -86,7 +86,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		readEnvIntOrDefault("QUESTION_DISPATCHER_MAX_CONCURRENT", 3),
 	)
 	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionDispatcher)
-	manualGenerationUsecase := usecase.NewManualGenerationUsecase(questionJobRepo, questionBudgetRepo, questionDispatcher)
+	manualGenerationUsecase := usecase.NewManualGenerationUsecase(questionJobRepo, highlightRepo, questionBudgetRepo, questionDispatcher)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	importQueueRepo := persistence.NewHighlightImportQueueRepository(db)

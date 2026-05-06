@@ -104,21 +104,6 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 		return u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID)
 	}
 
-	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, userID, questionSyncDay(u.now()), len(highlightIDs), readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
-	if err != nil {
-		return fmt.Errorf("question worker: reserve generation quota: %w", err)
-	}
-	if !reserved {
-		if err := u.jobRepo.MarkQueued(ctx, job.ID, job.UserID); err != nil {
-			return fmt.Errorf("question worker: return quota-limited job to queued: %w", err)
-		}
-		logQuestionWorkerEvent("job_quota_skipped", map[string]any{
-			"user_id": userID.String(),
-			"job_id":  jobID.String(),
-		})
-		return nil
-	}
-
 	highlights, err := u.highlightRepo.ListByIDs(ctx, userID, highlightIDs)
 	if err != nil {
 		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: list job highlights: %w", err))
@@ -127,17 +112,8 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 		return u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID)
 	}
 
-	if err := u.waitForRateLimit(ctx); err != nil {
-		return u.recordJobFailure(ctx, job, err)
-	}
-
 	model := u.llmClient.ModelForPlan("free")
 	customInstruction := "各ハイライトから選択式問題を1問ずつ作成してください。"
-	generationID, err := u.questionRepo.SaveGeneration(ctx, userID.String(), "question_generation_job", job.ID.String(), customInstruction, model)
-	if err != nil {
-		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generation: %w", err))
-	}
-
 	materials := make([]domain.ExtractedPoint, 0, len(highlights))
 	materialHighlights := make([]*domain.Highlight, 0, len(highlights))
 	for _, highlight := range highlights {
@@ -152,6 +128,30 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 	}
 	if len(materials) == 0 {
 		return u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID)
+	}
+
+	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, userID, questionSyncDay(u.now()), len(materials), readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
+	if err != nil {
+		return fmt.Errorf("question worker: reserve generation quota: %w", err)
+	}
+	if !reserved {
+		if err := u.jobRepo.MarkQueued(ctx, job.ID, job.UserID); err != nil {
+			return fmt.Errorf("question worker: return quota-limited job to queued: %w", err)
+		}
+		logQuestionWorkerEvent("job_quota_skipped", map[string]any{
+			"user_id": userID.String(),
+			"job_id":  jobID.String(),
+		})
+		return nil
+	}
+
+	if err := u.waitForRateLimit(ctx); err != nil {
+		return u.recordJobFailure(ctx, job, err)
+	}
+
+	generationID, err := u.questionRepo.SaveGeneration(ctx, userID.String(), "question_generation_job", job.ID.String(), customInstruction, model)
+	if err != nil {
+		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generation: %w", err))
 	}
 
 	generatedQuestions, err := u.llmClient.GenerateQuestions(ctx, materials, domain.QuestionTypeMultipleChoice, customInstruction, model)
