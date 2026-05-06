@@ -110,6 +110,7 @@ func (m *mockQuestionSyncQuestionRepository) SupersedeActiveQuestionsForHighligh
 type mockQuestionGenerationJobRepository struct {
 	createErr           error
 	createdInputs       []domain.CreateQuestionGenerationJobInput
+	queuedJobs          []*domain.QuestionGenerationJob
 	enqueueFailedJobs   []*domain.QuestionGenerationJob
 	claimJob            *domain.QuestionGenerationJob
 	claimOK             bool
@@ -141,6 +142,10 @@ func (m *mockQuestionGenerationJobRepository) Get(ctx context.Context, jobID, us
 
 func (m *mockQuestionGenerationJobRepository) ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
 	return append([]*domain.QuestionGenerationJob(nil), m.enqueueFailedJobs...), nil
+}
+
+func (m *mockQuestionGenerationJobRepository) ListQueuedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	return append([]*domain.QuestionGenerationJob(nil), m.queuedJobs...), nil
 }
 
 func (m *mockQuestionGenerationJobRepository) ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*domain.QuestionGenerationJob, bool, error) {

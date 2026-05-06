@@ -78,6 +78,10 @@ func (u *QuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domai
 		return result, nil
 	}
 
+	if err := u.reenqueueQueuedJobs(ctx, user.ID, result); err != nil {
+		return nil, err
+	}
+
 	if err := u.reenqueueFailedJobs(ctx, user.ID, result); err != nil {
 		return nil, err
 	}
@@ -210,6 +214,30 @@ func (u *QuestionSyncUsecase) reenqueueFailedJobs(ctx context.Context, userID uu
 		result.QueuedCount++
 	}
 
+	return nil
+}
+
+func (u *QuestionSyncUsecase) reenqueueQueuedJobs(ctx context.Context, userID uuid.UUID, result *SyncQuestionStockResult) error {
+	if u.jobRepo == nil {
+		return nil
+	}
+
+	jobs, err := u.jobRepo.ListQueuedByUserID(ctx, userID, defaultQuestionSyncEnqueueFailedLimit)
+	if err != nil {
+		return fmt.Errorf("question sync usecase: list queued jobs: %w", err)
+	}
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		if err := u.enqueueJob(ctx, job); err != nil {
+			if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, job.UserID, err.Error()); markErr != nil {
+				return fmt.Errorf("question sync usecase: mark queued job enqueue failed: %w", markErr)
+			}
+			continue
+		}
+		result.QueuedCount++
+	}
 	return nil
 }
 

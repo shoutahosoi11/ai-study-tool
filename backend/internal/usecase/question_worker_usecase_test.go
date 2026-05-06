@@ -324,7 +324,9 @@ func TestProcessQuestionGenerationJobReturnsQueuedWhenDailyLimitExceeded(t *test
 			return false, nil
 		},
 	}
-	highlightRepo := &mockWorkerHighlightLifecycle{}
+	highlightRepo := &mockWorkerHighlightLifecycle{
+		highlights: []*domain.Highlight{{ID: highlightID, UserID: userID, Content: "生成対象のハイライト"}},
+	}
 	uc := NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, jobRepo, &mockQuestionWorkerLLMClient{})
 
 	if err := uc.ProcessQuestionGenerationJob(context.Background(), jobID, userID); err != nil {
@@ -334,8 +336,8 @@ func TestProcessQuestionGenerationJobReturnsQueuedWhenDailyLimitExceeded(t *test
 	if len(jobRepo.markedQueued) != 1 || jobRepo.markedQueued[0] != jobID {
 		t.Fatalf("expected quota-limited job returned to queued, got %#v", jobRepo.markedQueued)
 	}
-	if highlightRepo.listByIDsCalled != 0 {
-		t.Fatalf("expected no highlight load after quota limit, got %d", highlightRepo.listByIDsCalled)
+	if highlightRepo.listByIDsCalled != 1 {
+		t.Fatalf("expected highlight load before quota reservation, got %d", highlightRepo.listByIDsCalled)
 	}
 }
 

@@ -1,15 +1,18 @@
 -- name: GetUserByFirebaseUID :one
-SELECT * FROM users
+SELECT id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count
+FROM users
 WHERE firebase_uid = $1
 LIMIT 1;
 
 -- name: GetUserByID :one
-SELECT * FROM users
+SELECT id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count
+FROM users
 WHERE id = $1
 LIMIT 1;
 
 -- name: GetUserByUsername :one
-SELECT * FROM users
+SELECT id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count
+FROM users
 WHERE username = $1
 LIMIT 1;
 
@@ -28,7 +31,7 @@ INSERT INTO users (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, 'free'
 )
-RETURNING *;
+RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count;
 
 -- name: UpdateUser :one
 UPDATE users SET
@@ -42,11 +45,11 @@ UPDATE users SET
     country = $9,
     updated_at = NOW()
 WHERE id = $1
-RETURNING *;
+RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count;
 
 -- name: UpdateUserQuestionSettings :one
 UPDATE users SET
     default_question_count = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING *;
+RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count;
