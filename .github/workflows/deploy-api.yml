@@ -84,6 +84,25 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
 
+      - name: Prepare Cloud Run secret bindings
+        id: cloud-run-secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "secrets<<EOF"
+            echo "DATABASE_URL=DATABASE_URL:latest"
+            echo "GEMINI_API_KEY=GEMINI_API_KEY:latest"
+            for secret in STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
+              if gcloud secrets describe "${secret}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+                echo "${secret}=${secret}:latest"
+              else
+                echo "Optional GCP Secret Manager secret not found: ${secret}; deploying without it." >&2
+              fi
+            done
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
@@ -113,11 +132,7 @@ jobs:
             STRIPE_PRICE_ID_MONTHLY=${{ env.STRIPE_PRICE_ID_MONTHLY }}
             STRIPE_SUCCESS_URL=${{ env.STRIPE_SUCCESS_URL }}
             STRIPE_CANCEL_URL=${{ env.STRIPE_CANCEL_URL }}
-          secrets: |-
-            DATABASE_URL=DATABASE_URL:latest
-            GEMINI_API_KEY=GEMINI_API_KEY:latest
-            STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest
-            STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest
+          secrets: ${{ steps.cloud-run-secrets.outputs.secrets }}
           flags: >-
             --port=8080
             --allow-unauthenticated
