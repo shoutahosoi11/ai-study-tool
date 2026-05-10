@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -30,6 +31,25 @@ func (r *HighlightImportQueueRepository) Enqueue(ctx context.Context, userID uui
 	return id, nil
 }
 
+func (r *HighlightImportQueueRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.HighlightImportQueue, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, source, raw_payload, status, retry_count,
+		       COALESCE(last_error, ''), created_at,
+		       processing_started_at, completed_at, failed_at
+		FROM highlight_import_queue
+		WHERE id = $1
+	`, id)
+
+	item, err := scanHighlightImportQueue(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("highlight import queue: get by id: %w", err)
+	}
+	return item, nil
+}
+
 func (r *HighlightImportQueueRepository) DequeueBatch(ctx context.Context, limit int) ([]*domain.HighlightImportQueue, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, user_id, source, raw_payload, status, retry_count,
@@ -47,12 +67,8 @@ func (r *HighlightImportQueueRepository) DequeueBatch(ctx context.Context, limit
 
 	var items []*domain.HighlightImportQueue
 	for rows.Next() {
-		item := &domain.HighlightImportQueue{}
-		if err := rows.Scan(
-			&item.ID, &item.UserID, &item.Source, &item.RawPayload,
-			&item.Status, &item.RetryCount, &item.LastError, &item.CreatedAt,
-			&item.ProcessingStartedAt, &item.CompletedAt, &item.FailedAt,
-		); err != nil {
+		item, err := scanHighlightImportQueue(rows)
+		if err != nil {
 			return nil, fmt.Errorf("highlight import queue: scan: %w", err)
 		}
 		items = append(items, item)
@@ -127,4 +143,20 @@ func (r *HighlightImportQueueRepository) RequeueStale(ctx context.Context, cutof
 		return 0, err
 	}
 	return int(n), nil
+}
+
+type highlightImportQueueScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanHighlightImportQueue(scanner highlightImportQueueScanner) (*domain.HighlightImportQueue, error) {
+	item := &domain.HighlightImportQueue{}
+	if err := scanner.Scan(
+		&item.ID, &item.UserID, &item.Source, &item.RawPayload,
+		&item.Status, &item.RetryCount, &item.LastError, &item.CreatedAt,
+		&item.ProcessingStartedAt, &item.CompletedAt, &item.FailedAt,
+	); err != nil {
+		return nil, err
+	}
+	return item, nil
 }

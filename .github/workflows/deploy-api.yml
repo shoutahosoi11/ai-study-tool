@@ -21,6 +21,9 @@ env:
   STRIPE_PRICE_ID_MONTHLY: ${{ vars.STRIPE_PRICE_ID_MONTHLY || '' }}
   STRIPE_SUCCESS_URL: ${{ vars.STRIPE_SUCCESS_URL || '' }}
   STRIPE_CANCEL_URL: ${{ vars.STRIPE_CANCEL_URL || '' }}
+  QUEUE_QUESTION_GENERATION: ${{ vars.QUEUE_QUESTION_GENERATION || '' }}
+  QUEUE_HIGHLIGHT_IMPORT: ${{ vars.QUEUE_HIGHLIGHT_IMPORT || '' }}
+  TASK_HANDLER_BASE_URL: ${{ vars.TASK_HANDLER_BASE_URL || '' }}
 
 jobs:
   test-and-deploy-api:
@@ -34,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in PROJECT_ID REGION SERVICE GAR_REPOSITORY; do
+          for name in PROJECT_ID REGION SERVICE GAR_REPOSITORY QUEUE_QUESTION_GENERATION QUEUE_HIGHLIGHT_IMPORT TASK_HANDLER_BASE_URL; do
             if [ -z "${!name}" ]; then
               echo "Missing GitHub Actions variable: ${name}"
               exit 1
@@ -132,10 +135,14 @@ jobs:
             STRIPE_PRICE_ID_MONTHLY=${{ env.STRIPE_PRICE_ID_MONTHLY }}
             STRIPE_SUCCESS_URL=${{ env.STRIPE_SUCCESS_URL }}
             STRIPE_CANCEL_URL=${{ env.STRIPE_CANCEL_URL }}
+            QUEUE_QUESTION_GENERATION=${{ env.QUEUE_QUESTION_GENERATION }}
+            QUEUE_HIGHLIGHT_IMPORT=${{ env.QUEUE_HIGHLIGHT_IMPORT }}
+            TASK_HANDLER_BASE_URL=${{ env.TASK_HANDLER_BASE_URL }}
           secrets: ${{ steps.cloud-run-secrets.outputs.secrets }}
           flags: >-
             --port=8080
             --allow-unauthenticated
+            --ingress=internal-and-cloud-load-balancing
             --service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
             --max-instances=10
             --concurrency=80
@@ -143,5 +150,15 @@ jobs:
             --memory=512Mi
             --timeout=60s
 
-      - name: Check deployed health endpoint
-        run: curl --fail --show-error --silent "${{ steps.deploy.outputs.url }}/health"
+      - name: Check deployed Cloud Run service
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready_status="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.conditions[?type="Ready"].status)')"
+          if [ "${ready_status}" != "True" ]; then
+            echo "Cloud Run service is not Ready: ${ready_status}"
+            exit 1
+          fi

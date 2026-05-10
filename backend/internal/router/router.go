@@ -16,7 +16,17 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
 	registerQuestionRoutes(api, container, authMiddleware)
 	registerMonetizationRoutes(api, container, authMiddleware)
+	registerInternalTaskRoutes(e, container)
 	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook)
+}
+
+func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
+	internal := e.Group("/internal/tasks")
+	// Cloud Run ingress=internal-and-cloud-load-balancing and Cloud Tasks queue
+	// IAM protect these endpoints. OIDC verification can be added later without
+	// changing the usecase/repository contracts.
+	internal.POST("/question-generation", container.TaskHandler.HandleQuestionGeneration)
+	internal.POST("/highlight-import", container.TaskHandler.HandleHighlightImport)
 }
 
 func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {

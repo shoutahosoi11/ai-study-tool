@@ -125,7 +125,7 @@ func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.
 	}
 
 	if u.jobTrigger != nil {
-		if triggerErr := u.jobTrigger.TriggerHighlightImportJob(ctx); triggerErr != nil {
+		if triggerErr := u.jobTrigger.TriggerHighlightImportJob(ctx, queueID, userID); triggerErr != nil {
 			log.Printf("highlight import job trigger failed (queue_id=%s): %v", queueID, triggerErr)
 		}
 	}
