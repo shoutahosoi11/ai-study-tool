@@ -13,7 +13,15 @@ const env = {
     process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID_POST_ANSWER ?? 'ca-app-pub-3940256099942544/5224354917',
 }
 
-export const apiBaseURL = env.apiBaseURL.trim()
+function normalizeAPIBaseURL(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '')
+  if (trimmed.endsWith('/api')) {
+    return `${trimmed}/v1`
+  }
+  return trimmed
+}
+
+export const apiBaseURL = normalizeAPIBaseURL(env.apiBaseURL)
 
 export const firebaseConfig = {
   apiKey: env.firebaseApiKey.trim(),

@@ -7,8 +7,7 @@ import (
 )
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
-	api := e.Group("/api")
-	apiV1 := e.Group("/api/v1")
+	api := e.Group("/api/v1")
 	authMiddleware := container.FirebaseMiddleware.Authenticate
 	ingestRateLimit := container.RateLimitMiddleware.Limit
 
@@ -16,8 +15,7 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	registerPostRoutes(api, container, authMiddleware)
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
 	registerQuestionRoutes(api, container, authMiddleware)
-	registerSocialRoutes(api, container, authMiddleware)
-	registerMonetizationRoutes(apiV1, container, authMiddleware)
+	registerMonetizationRoutes(api, container, authMiddleware)
 	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook)
 }
 
@@ -28,6 +26,8 @@ func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware
 	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings)
 	users.GET("/:id", container.UserHandler.GetUser)
 	users.PUT("/me", container.UserHandler.UpdateProfile)
+	users.POST("/:id/follow", container.SocialHandler.Follow)
+	users.DELETE("/:id/follow", container.SocialHandler.Unfollow)
 }
 
 func registerPostRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
@@ -36,6 +36,12 @@ func registerPostRoutes(api *echo.Group, container *di.Container, authMiddleware
 	posts.GET("/:id/questions", container.PostHandler.ListQuestions)
 	posts.GET("/:id", container.PostHandler.GetPost)
 	posts.POST("", container.PostHandler.CreatePost)
+	posts.POST("/:id/like", container.SocialHandler.Like)
+	posts.DELETE("/:id/like", container.SocialHandler.Unlike)
+	posts.POST("/:id/repost", container.SocialHandler.Repost)
+	posts.DELETE("/:id/repost", container.SocialHandler.Unrepost)
+	posts.POST("/:id/comments", container.SocialHandler.CreateComment)
+	posts.GET("/:id/comments", container.SocialHandler.ListComments)
 }
 
 func registerHighlightRoutes(
@@ -65,7 +71,6 @@ func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddle
 	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate)
 	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
 	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)
-	questions.POST("/:id/grade", container.AnswerHandler.SubmitAnswer)
 }
 
 func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
@@ -75,19 +80,4 @@ func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMi
 
 	checkout := api.Group("/checkout", authMiddleware)
 	checkout.POST("/session", container.StripeHandler.CreateCheckoutSession)
-
-	questions := api.Group("/questions", authMiddleware)
-	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate)
-}
-
-func registerSocialRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
-	social := api.Group("", authMiddleware)
-	social.POST("/users/:id/follow", container.SocialHandler.Follow)
-	social.DELETE("/users/:id/follow", container.SocialHandler.Unfollow)
-	social.POST("/posts/:id/like", container.SocialHandler.Like)
-	social.DELETE("/posts/:id/like", container.SocialHandler.Unlike)
-	social.POST("/posts/:id/repost", container.SocialHandler.Repost)
-	social.DELETE("/posts/:id/repost", container.SocialHandler.Unrepost)
-	social.POST("/posts/:id/comments", container.SocialHandler.CreateComment)
-	social.GET("/posts/:id/comments", container.SocialHandler.ListComments)
 }

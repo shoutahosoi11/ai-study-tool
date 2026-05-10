@@ -5,6 +5,6 @@ export type CheckoutSessionResponse = {
 }
 
 export async function createCheckoutSession(): Promise<CheckoutSessionResponse> {
-  const response = await apiClient.post<CheckoutSessionResponse>('/v1/checkout/session', {})
+  const response = await apiClient.post<CheckoutSessionResponse>('/checkout/session', {})
   return response.data
 }
