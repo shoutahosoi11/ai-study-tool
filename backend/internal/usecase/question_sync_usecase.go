@@ -310,7 +310,7 @@ func (u *QuestionSyncUsecase) enqueueJob(ctx context.Context, job *domain.Questi
 		return domain.ErrInvalidInput
 	}
 	if u.taskEnqueuer == nil {
-		return fmt.Errorf("question generation task enqueuer is not configured")
+		return nil
 	}
 	return u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID)
 }

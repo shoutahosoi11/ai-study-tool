@@ -73,6 +73,9 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 		return nil, err
 	}
 
+	if u.taskEnqueuer == nil {
+		return job, nil
+	}
 	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, user.ID); err != nil {
 		if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, user.ID, err.Error()); markErr != nil {
 			return nil, fmt.Errorf("manual generation usecase: mark enqueue failed: %w", markErr)

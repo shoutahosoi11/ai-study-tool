@@ -116,14 +116,12 @@ func (u *HighlightImportJobUsecase) fail(ctx context.Context, item *domain.Highl
 
 // ProcessSingle は特定の queue_id を処理する（テスト・デバッグ用）。
 func (u *HighlightImportJobUsecase) ProcessSingle(ctx context.Context, queueID uuid.UUID) error {
-	batch, err := u.queueRepo.DequeueBatch(ctx, 1)
+	item, err := u.queueRepo.GetByID(ctx, queueID)
 	if err != nil {
-		return err
+		return fmt.Errorf("highlight import job: get queue item: %w", err)
 	}
-	for _, item := range batch {
-		if item.ID == queueID {
-			return u.processOne(ctx, item)
-		}
+	if item == nil {
+		return nil
 	}
-	return nil
+	return u.processOne(ctx, item)
 }

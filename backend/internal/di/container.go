@@ -3,15 +3,15 @@ package di
 import (
 	"context"
 	"database/sql"
+	"log"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/shout/ai-study-tool/backend/internal/handler"
-	"github.com/shout/ai-study-tool/backend/internal/infrastructure/cloudrun"
+	"github.com/shout/ai-study-tool/backend/internal/infrastructure/cloudtasks"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
-	"github.com/shout/ai-study-tool/backend/internal/infrastructure/inprocess"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/persistence"
 	infrastripes "github.com/shout/ai-study-tool/backend/internal/infrastructure/stripe"
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
@@ -28,9 +28,10 @@ type Container struct {
 	HighlightHandler    *handler.HighlightHandler
 	TokenHandler        *handler.TokenHandler
 	StripeHandler       *handler.StripeHandler
-	QuestionDispatcher  *inprocess.QuestionGenerationDispatcher
+	TaskHandler         *handler.TaskHandler
 	FirebaseMiddleware  *middleware.FirebaseMiddleware
 	RateLimitMiddleware *middleware.RateLimitMiddleware
+	closeCloudTasks     []func() error
 	closeLLMClient      gemini.ClientCloser
 }
 
@@ -81,17 +82,21 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
 	questionWorkerUsecase := usecase.NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, questionJobRepo, geminiClient)
-	questionDispatcher := inprocess.NewQuestionGenerationDispatcher(
-		questionWorkerUsecase,
-		readEnvIntOrDefault("QUESTION_DISPATCHER_MAX_CONCURRENT", 3),
-	)
-	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionDispatcher)
-	manualGenerationUsecase := usecase.NewManualGenerationUsecase(questionJobRepo, highlightRepo, questionBudgetRepo, questionDispatcher)
+	questionTaskEnqueuer, err := cloudtasks.NewQuestionGenerationEnqueuerFromEnv(ctx)
+	if err != nil {
+		return nil, err
+	}
+	questionSyncUsecase := usecase.NewQuestionSyncUsecase(highlightRepo, questionRepo, questionJobRepo, questionTaskEnqueuer)
+	manualGenerationUsecase := usecase.NewManualGenerationUsecase(questionJobRepo, highlightRepo, questionBudgetRepo, questionTaskEnqueuer)
 	answerUsecase := usecase.NewAnswerUsecase(answerRepo, questionRepo)
 	socialUsecase := usecase.NewSocialUsecase(socialRepo)
 	importQueueRepo := persistence.NewHighlightImportQueueRepository(db)
-	highlightJobTrigger := cloudrun.NewHighlightImportJobTrigger()
+	highlightJobTrigger, err := cloudtasks.NewHighlightImportEnqueuerFromEnv(ctx)
+	if err != nil {
+		return nil, err
+	}
 	highlightUsecase := usecase.NewHighlightUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
+	highlightImportJobUsecase := usecase.NewHighlightImportJobUsecase(importQueueRepo, highlightRepo)
 	tokenUsecase := usecase.NewTokenUsecase(questionBudgetRepo)
 	billingUsecase := usecase.NewBillingUsecase(
 		infrastripes.NewCheckoutClientFromEnv(),
@@ -106,6 +111,14 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
 	tokenHandler := handler.NewTokenHandler(tokenUsecase, userUsecase)
 	stripeHandler := handler.NewStripeHandler(billingUsecase, userUsecase)
+	taskHandler := handler.NewTaskHandler(questionWorkerUsecase, highlightImportJobUsecase)
+	closeCloudTasks := make([]func() error, 0, 2)
+	if questionTaskEnqueuer != nil {
+		closeCloudTasks = append(closeCloudTasks, questionTaskEnqueuer.Close)
+	}
+	if highlightJobTrigger != nil {
+		closeCloudTasks = append(closeCloudTasks, highlightJobTrigger.Close)
+	}
 	return &Container{
 		UserHandler:         userHandler,
 		PostHandler:         postHandler,
@@ -115,9 +128,10 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		HighlightHandler:    highlightHandler,
 		TokenHandler:        tokenHandler,
 		StripeHandler:       stripeHandler,
-		QuestionDispatcher:  questionDispatcher,
+		TaskHandler:         taskHandler,
 		FirebaseMiddleware:  firebaseMiddleware,
 		RateLimitMiddleware: rateLimitMiddleware,
+		closeCloudTasks:     closeCloudTasks,
 		closeLLMClient:      closeLLMClient,
 	}, nil
 }
@@ -126,8 +140,13 @@ func (c *Container) Close() {
 	if c == nil {
 		return
 	}
-	if c.QuestionDispatcher != nil {
-		c.QuestionDispatcher.Wait()
+	for _, closeFn := range c.closeCloudTasks {
+		if closeFn == nil {
+			continue
+		}
+		if err := closeFn(); err != nil {
+			log.Printf("di container: close cloud tasks client: %v", err)
+		}
 	}
 	if c.closeLLMClient != nil {
 		c.closeLLMClient()

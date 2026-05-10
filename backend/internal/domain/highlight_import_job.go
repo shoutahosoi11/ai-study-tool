@@ -38,6 +38,7 @@ type HighlightImportQueue struct {
 
 type HighlightImportQueueRepository interface {
 	Enqueue(ctx context.Context, userID uuid.UUID, source string, payload []byte) (uuid.UUID, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*HighlightImportQueue, error)
 	DequeueBatch(ctx context.Context, limit int) ([]*HighlightImportQueue, error)
 	ClaimProcessing(ctx context.Context, id uuid.UUID) (bool, error)
 	MarkCompleted(ctx context.Context, id uuid.UUID) error
@@ -46,9 +47,8 @@ type HighlightImportQueueRepository interface {
 	RequeueStale(ctx context.Context, cutoff time.Time) (int, error)
 }
 
-// HighlightImportJobTrigger abstracts Cloud Run Job execution.
+// HighlightImportJobTrigger abstracts async import task enqueueing.
 // usecase 層が infrastructure に依存しないよう抽象化。
-// HIGHLIGHT_IMPORT_JOB_NAME 環境変数が未設定の場合は no-op 実装を使う。
 type HighlightImportJobTrigger interface {
-	TriggerHighlightImportJob(ctx context.Context) error
+	TriggerHighlightImportJob(ctx context.Context, queueID uuid.UUID, userID uuid.UUID) error
 }
