@@ -109,7 +109,7 @@ export async function syncQuestionStock(): Promise<QuestionStockSyncResponse> {
 }
 
 export async function manualGenerateQuestions(bookKey: string, highlightIDs: string[]): Promise<ManualGenerateQuestionResponse> {
-  const response = await apiClient.post<ManualGenerateQuestionResponse>('/v1/questions/generate/manual', {
+  const response = await apiClient.post<ManualGenerateQuestionResponse>('/questions/generate/manual', {
     book_key: bookKey,
     highlight_ids: highlightIDs,
   })

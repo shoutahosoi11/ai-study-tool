@@ -10,11 +10,11 @@ export type TokenBalance = {
 }
 
 export async function fetchTokenBalance(): Promise<TokenBalance> {
-  const response = await apiClient.get<TokenBalance>('/v1/tokens/balance')
+  const response = await apiClient.get<TokenBalance>('/tokens/balance')
   return response.data
 }
 
 export async function awardAdTokens(): Promise<TokenBalance> {
-  const response = await apiClient.post<TokenBalance>('/v1/tokens/award', {})
+  const response = await apiClient.post<TokenBalance>('/tokens/award', {})
   return response.data
 }
