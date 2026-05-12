@@ -191,7 +191,11 @@ func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.Ge
 
 	questions := make([]*domain.Question, 0, pairCount)
 	for index := 0; index < pairCount; index++ {
-		generatedQuestion := generatedQuestions[index]
+		generatedQuestion, err := normalizeGeneratedQuestion(generatedQuestions[index], input.QuestionType)
+		if err != nil {
+			log.Printf("question usecase: skip invalid generated question: %v", err)
+			continue
+		}
 		sourceHighlight := selectedHighlights[index]
 
 		q := &domain.Question{

@@ -122,6 +122,7 @@ type mockQuestionGenerationJobRepository struct {
 	markedQueued        []uuid.UUID
 	markedCompleted     []uuid.UUID
 	markedEnqueueFailed []uuid.UUID
+	recordedFailures    []uuid.UUID
 	requeuedStale       int
 }
 
@@ -177,7 +178,14 @@ func (m *mockQuestionGenerationJobRepository) MarkEnqueueFailed(ctx context.Cont
 }
 
 func (m *mockQuestionGenerationJobRepository) RecordFailure(ctx context.Context, jobID, userID uuid.UUID, lastError string, maxRetry int) (*domain.QuestionGenerationJob, error) {
-	return nil, nil
+	m.recordedFailures = append(m.recordedFailures, jobID)
+	return &domain.QuestionGenerationJob{
+		ID:         jobID,
+		UserID:     userID,
+		Status:     domain.JobStatusQueued,
+		LastError:  lastError,
+		RetryCount: 1,
+	}, nil
 }
 
 type mockQuestionGenerationTaskEnqueuer struct {

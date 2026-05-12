@@ -53,6 +53,17 @@ func (s *stubQuestionSyncUsecase) EvaluateBookAfterAnswer(ctx context.Context, u
 	return nil
 }
 
+type stubManualGenerationUsecase struct {
+	generate func(ctx context.Context, user *domain.User, bookKey string, highlightIDs []uuid.UUID) (*domain.QuestionGenerationJob, error)
+}
+
+func (s *stubManualGenerationUsecase) Generate(ctx context.Context, user *domain.User, bookKey string, highlightIDs []uuid.UUID) (*domain.QuestionGenerationJob, error) {
+	if s.generate == nil {
+		return &domain.QuestionGenerationJob{ID: uuid.New()}, nil
+	}
+	return s.generate(ctx, user, bookKey, highlightIDs)
+}
+
 func TestSaveQuestionTrimsNoteBeforeSaving(t *testing.T) {
 	e := echo.New()
 	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
@@ -86,6 +97,53 @@ func TestSaveQuestionTrimsNoteBeforeSaving(t *testing.T) {
 	}
 	if response["note"] != savedNote {
 		t.Fatalf("response note %q differs from saved note %q", response["note"], savedNote)
+	}
+}
+
+func TestManualGenerateRejectsTooManyHighlights(t *testing.T) {
+	e := echo.New()
+	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	manualCalled := false
+	handler := NewQuestionHandler(
+		&stubQuestionUsecase{},
+		&stubQuestionSyncUsecase{},
+		questionHandlerUserUsecase(userID),
+		&stubManualGenerationUsecase{
+			generate: func(ctx context.Context, user *domain.User, bookKey string, highlightIDs []uuid.UUID) (*domain.QuestionGenerationJob, error) {
+				manualCalled = true
+				return &domain.QuestionGenerationJob{ID: uuid.New()}, nil
+			},
+		},
+	)
+
+	highlightIDs := make([]string, 0, domain.MaxHighlightsPerJob+1)
+	for range domain.MaxHighlightsPerJob + 1 {
+		highlightIDs = append(highlightIDs, uuid.NewString())
+	}
+	body, err := json.Marshal(map[string]any{
+		"book_key":      "book-a",
+		"highlight_ids": highlightIDs,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/questions/generate/manual", strings.NewReader(string(body)))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	err = handler.ManualGenerate(c)
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("expected echo.HTTPError, got %T", err)
+	}
+	if httpErr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", httpErr.Code)
+	}
+	if manualCalled {
+		t.Fatal("manual usecase should not be called for oversized request")
 	}
 }
 

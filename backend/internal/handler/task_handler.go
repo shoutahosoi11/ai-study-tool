@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
 type TaskHandler struct {
@@ -19,7 +21,7 @@ type QuestionWorker interface {
 }
 
 type HighlightImportJobs interface {
-	ProcessSingle(ctx context.Context, queueID uuid.UUID) error
+	ProcessSingle(ctx context.Context, queueID uuid.UUID, userID uuid.UUID) error
 }
 
 func NewTaskHandler(questionWorker QuestionWorker, importJobs HighlightImportJobs) *TaskHandler {
@@ -74,11 +76,15 @@ func (h *TaskHandler) HandleHighlightImport(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid queue_id")
 	}
-	if _, err := uuid.Parse(req.UserID); err != nil {
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid user_id")
 	}
 
-	if err := h.importJobs.ProcessSingle(c.Request().Context(), queueID); err != nil {
+	if err := h.importJobs.ProcessSingle(c.Request().Context(), queueID, userID); err != nil {
+		if errors.Is(err, domain.ErrForbidden) {
+			return echo.NewHTTPError(http.StatusForbidden, "highlight import task user mismatch")
+		}
 		log.Printf("task handler: highlight import failed queue_id=%s user_id=%s err=%v", queueID, req.UserID, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "highlight import task failed")
 	}

@@ -63,7 +63,7 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 	result, err := h.highlightUsecase.ImportKindleHighlights(c.Request().Context(), user.ID, items)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidInput) {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		if errors.Is(err, domain.ErrAllCopyProtected) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "コピー制限によりハイライトを取得できませんでした")
@@ -111,6 +111,9 @@ func (h *HighlightHandler) CheckExistingHashes(c echo.Context) error {
 
 	existing, err := h.highlightUsecase.ListExistingContentHashes(c.Request().Context(), user.ID, req.Hashes)
 	if err != nil {
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 		log.Printf("highlight check hashes error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
@@ -307,19 +310,19 @@ func (h *HighlightHandler) currentUser(c echo.Context) (*domain.User, error) {
 
 func toHighlightResponse(h *domain.Highlight) *dto.HighlightResponse {
 	resp := &dto.HighlightResponse{
-		ID:            h.ID.String(),
-		BookTitle:     h.BookTitle,
-		BookAuthor:    h.BookAuthor,
-		ASIN:          h.ASIN,
-		Content:       h.Content,
-		Explanation:   h.Explanation,
-		Location:      h.Location,
-		HighlightedAt: h.HighlightedAt,
-		Source:        h.Source,
-		SourceApp:     h.SourceApp,
-		SourceURL:     h.SourceURL,
+		ID:             h.ID.String(),
+		BookTitle:      h.BookTitle,
+		BookAuthor:     h.BookAuthor,
+		ASIN:           h.ASIN,
+		Content:        h.Content,
+		Explanation:    h.Explanation,
+		Location:       h.Location,
+		HighlightedAt:  h.HighlightedAt,
+		Source:         h.Source,
+		SourceApp:      h.SourceApp,
+		SourceURL:      h.SourceURL,
 		BookOrderIndex: h.BookOrderIndex,
-		CreatedAt:     h.CreatedAt,
+		CreatedAt:      h.CreatedAt,
 	}
 
 	if h.BookID != nil {

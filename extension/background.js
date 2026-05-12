@@ -480,11 +480,12 @@ function buildHashCheckURL(appOrigin) {
 
 function normalizeContent(content) {
   return String(content || '')
-    .toLowerCase()
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .join(' ');
+    .normalize('NFC')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069\u200B-\u200D\uFEFF]/g, '')
+    .replace(/(https?:\/\/|www\.)\S+/g, '')
+    .replace(/[^\S\r\n]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function encodeUTF8(value) {
@@ -507,14 +508,7 @@ function sha256Hex(value) {
 }
 
 function computeKindleContentHash(highlight) {
-  var key = 'source:kindle:asin:'
-    + String(highlight && highlight.asin ? highlight.asin : '').trim()
-    + ':loc:'
-    + String(highlight && highlight.location ? highlight.location : '').trim()
-    + ':content:'
-    + normalizeContent(highlight && highlight.content ? highlight.content : '');
-
-  return sha256Hex(key);
+  return sha256Hex(normalizeContent(highlight && highlight.content ? highlight.content : ''));
 }
 
 function checkExistingHashes(appOrigin, token, hashes) {

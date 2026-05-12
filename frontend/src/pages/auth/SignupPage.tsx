@@ -1,11 +1,12 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiClient } from "../../api/client";
-import { signUpWithEmail } from "../../api/auth";
+import { signUpWithEmail, auth } from "../../api/auth";
+import { signUpBackendUser } from "../../api/users";
 import { Button } from "../../components/common/Button";
 import { Input } from "../../components/common/Input";
 import { theme } from "../../theme";
+import { getApiErrorMessage } from "../../api/errors";
 
 export function SignupPage() {
   const navigate = useNavigate();
@@ -20,12 +21,10 @@ export function SignupPage() {
     setError("");
     setLoading(true);
     try {
-      await signUpWithEmail(email, password);
-      try {
-        await apiClient.post("/users/signup", { username });
-      } catch {
-        // APIエラーは非致命的
+      if (!auth.currentUser) {
+        await signUpWithEmail(email.trim(), password);
       }
+      await signUpBackendUser(username);
       navigate("/");
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
@@ -34,7 +33,14 @@ export function SignupPage() {
       } else if (code === "auth/weak-password") {
         setError("パスワードは6文字以上で入力してください");
       } else {
-        setError("アカウント作成に失敗しました");
+        const apiMessage = getApiErrorMessage(err);
+        if (apiMessage === "user already exists") {
+          setError("このユーザー名は既に使用されています");
+        } else if (apiMessage) {
+          setError(apiMessage);
+        } else {
+          setError("アカウント作成に失敗しました");
+        }
       }
     } finally {
       setLoading(false);

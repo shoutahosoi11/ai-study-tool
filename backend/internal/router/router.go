@@ -25,17 +25,17 @@ func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
 	// Cloud Run ingress=internal-and-cloud-load-balancing and Cloud Tasks queue
 	// IAM protect these endpoints. OIDC verification can be added later without
 	// changing the usecase/repository contracts.
-	internal.POST("/question-generation", container.TaskHandler.HandleQuestionGeneration)
-	internal.POST("/highlight-import", container.TaskHandler.HandleHighlightImport)
+	internal.POST("/question-generation", container.TaskHandler.HandleQuestionGeneration, echomiddleware.BodyLimit("4K"))
+	internal.POST("/highlight-import", container.TaskHandler.HandleHighlightImport, echomiddleware.BodyLimit("4K"))
 }
 
 func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
 	users := api.Group("/users", authMiddleware)
-	users.POST("/signup", container.UserHandler.SignUp)
+	users.POST("/signup", container.UserHandler.SignUp, echomiddleware.BodyLimit("16K"))
 	users.GET("/me", container.UserHandler.GetMe)
-	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings)
+	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings, echomiddleware.BodyLimit("4K"))
 	users.GET("/:id", container.UserHandler.GetUser)
-	users.PUT("/me", container.UserHandler.UpdateProfile)
+	users.PUT("/me", container.UserHandler.UpdateProfile, echomiddleware.BodyLimit("16K"))
 	users.POST("/:id/follow", container.SocialHandler.Follow)
 	users.DELETE("/:id/follow", container.SocialHandler.Unfollow)
 }
@@ -61,14 +61,14 @@ func registerHighlightRoutes(
 	ingestRateLimit echo.MiddlewareFunc,
 ) {
 	highlights := api.Group("/highlights", authMiddleware)
-	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes)
-	highlights.POST("/import", container.HighlightHandler.Import, ingestRateLimit)
-	highlights.POST("/share", container.HighlightHandler.ImportShared, ingestRateLimit)
+	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes, echomiddleware.BodyLimit("256K"))
+	highlights.POST("/import", container.HighlightHandler.Import, echomiddleware.BodyLimit("2M"), ingestRateLimit)
+	highlights.POST("/share", container.HighlightHandler.ImportShared, echomiddleware.BodyLimit("8K"), ingestRateLimit)
 	highlights.POST("/paste", container.HighlightHandler.ImportPaste, echomiddleware.BodyLimit("5K"), ingestRateLimit)
 	highlights.GET("/books", container.HighlightHandler.ListBooks)
 	highlights.GET("/books/search/items", container.HighlightHandler.ListByBookMetadata)
 	highlights.GET("/books/:asin/items", container.HighlightHandler.ListByASIN)
-	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation)
+	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation, echomiddleware.BodyLimit("8K"))
 }
 
 func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
@@ -77,10 +77,10 @@ func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddle
 	questions.GET("/prepared", container.QuestionHandler.ListPrepared)
 	questions.GET("/saved", container.QuestionHandler.ListSaved)
 	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
-	questions.POST("/sync", container.QuestionHandler.SyncStock)
-	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate)
-	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion)
-	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer)
+	questions.POST("/sync", container.QuestionHandler.SyncStock, echomiddleware.BodyLimit("1K"))
+	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate, echomiddleware.BodyLimit("4K"))
+	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion, echomiddleware.BodyLimit("8K"))
+	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer, echomiddleware.BodyLimit("4K"))
 }
 
 func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {

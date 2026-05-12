@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,8 @@ type mockImportHighlightRepository struct {
 	bulkUpsertCalled bool
 	bulkUpsertInput  []*domain.Highlight
 	bulkUpsertTime   time.Time
+	existingHashes   []string
+	checkedHashes    []string
 }
 
 func (m *mockImportHighlightRepository) BulkUpsert(ctx context.Context, highlights []*domain.Highlight) (int, error) {
@@ -37,7 +40,8 @@ func (m *mockImportHighlightRepository) BulkUpsert(ctx context.Context, highligh
 }
 
 func (m *mockImportHighlightRepository) ListExistingContentHashesByUserID(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error) {
-	return make([]string, 0), errors.New("not implemented")
+	m.checkedHashes = append([]string(nil), hashes...)
+	return m.existingHashes, nil
 }
 
 func (m *mockImportHighlightRepository) FindByUserIDAndContentHash(ctx context.Context, userID uuid.UUID, contentHash string) (*domain.Highlight, error) {
@@ -213,6 +217,24 @@ func TestImportKindleHighlightsAllCopyProtectedReturnsError(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrAllCopyProtected) {
 		t.Fatalf("expected ErrAllCopyProtected, got %v", err)
+	}
+	if repo.bulkUpsertCalled {
+		t.Fatal("expected BulkUpsert not to be called")
+	}
+}
+
+func TestImportKindleHighlightsRejectsTooManyItems(t *testing.T) {
+	userID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	repo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightUsecase(repo)
+	items := make([]usecase.ImportHighlightItem, 1001)
+	for i := range items {
+		items[i] = usecase.ImportHighlightItem{Content: "highlight"}
+	}
+
+	_, err := uc.ImportKindleHighlights(context.Background(), userID, items)
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
 	if repo.bulkUpsertCalled {
 		t.Fatal("expected BulkUpsert not to be called")
@@ -458,6 +480,38 @@ func TestImportPastedHighlightRejectsInvalidSourceApp(t *testing.T) {
 	}
 	if repo.bulkUpsertCalled {
 		t.Fatal("expected BulkUpsert not to be called")
+	}
+}
+
+func TestListExistingContentHashesNormalizesAndDeduplicates(t *testing.T) {
+	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	hash := strings.Repeat("a", 64)
+	upperHash := strings.ToUpper(hash)
+	repo := &mockImportHighlightRepository{
+		existingHashes: []string{hash},
+	}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	existing, err := uc.ListExistingContentHashes(context.Background(), userID, []string{" " + upperHash + " ", hash, ""})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repo.checkedHashes) != 1 || repo.checkedHashes[0] != hash {
+		t.Fatalf("unexpected checked hashes: %#v", repo.checkedHashes)
+	}
+	if len(existing) != 1 || existing[0] != hash {
+		t.Fatalf("unexpected existing hashes: %#v", existing)
+	}
+}
+
+func TestListExistingContentHashesRejectsInvalidHash(t *testing.T) {
+	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	repo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	_, err := uc.ListExistingContentHashes(context.Background(), userID, []string{"not-a-sha256"})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
 }
 

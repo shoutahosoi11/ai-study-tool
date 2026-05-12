@@ -65,6 +65,7 @@ The app evaluates generation conditions on sync and after answer completion:
 
 - App startup or polling calls `POST /api/v1/questions/sync`.
 - Answer submission calls `POST /api/v1/questions/:id/answer`.
+- Manual selection calls `POST /api/v1/questions/generate/manual` with 5 to 10 highlights.
 - The backend evaluates each `book_key` and creates rows in `question_generation_jobs` when generation conditions are met.
 - Cloud Tasks calls `POST /internal/tasks/question-generation`.
 - The worker claims a queued job with DB CAS, generates questions with Gemini, and marks the job completed or failed.
@@ -78,6 +79,7 @@ Generation conditions are book-based:
 Important invariants:
 
 - `highlights.status = 'pending'` is the generation queue source.
+- Multiple-choice generations are validated before saving so malformed LLM output is retried or rejected.
 - A generation job processes up to 10 highlights.
 - One active question per highlight is maintained with `questions.superseded_at`.
 - Answering a question can return the source highlight to `pending`.

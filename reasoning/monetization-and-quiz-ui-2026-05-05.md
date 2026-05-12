@@ -5,7 +5,7 @@
 - 手動問題生成の受け口を追加した。
   - `POST /api/questions/generate/manual`
   - `POST /api/v1/questions/generate/manual`
-  - 5件未満のハイライトは 400 とし、`question_generation_jobs` に `manual_selection` job を作成して in-process dispatcher に渡す。
+  - 5件未満または10件超のハイライトは 400 とし、`question_generation_jobs` に `manual_selection` job を作成して in-process dispatcher に渡す。
 - 課金・トークン管理の基盤を追加した。
   - `POST /api/v1/checkout/session`
   - `POST /webhooks/stripe`

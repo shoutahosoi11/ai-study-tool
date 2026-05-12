@@ -174,7 +174,10 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 
 	replacements := make([]domain.QuestionReplacement, 0, len(materialHighlights))
 	for index, highlight := range materialHighlights {
-		generated := generatedQuestions[index]
+		generated, err := normalizeGeneratedQuestion(generatedQuestions[index], domain.QuestionTypeMultipleChoice)
+		if err != nil {
+			return releaseReservedQuota(u.recordJobFailure(ctx, job, fmt.Errorf("question worker: invalid generated question: %w", err)))
+		}
 		question := &domain.Question{
 			ID:            uuid.NewString(),
 			QuestionType:  domain.QuestionTypeMultipleChoice,
@@ -487,8 +490,12 @@ func (u *QuestionWorkerUsecase) saveGeneratedQuestionsForChunk(
 	for _, plan := range chunk {
 		savedForHighlight := 0
 		for index, perspective := range plan.perspectives {
-			generated := generatedQuestions[offset]
+			generated, err := normalizeGeneratedQuestion(generatedQuestions[offset], domain.QuestionTypeMultipleChoice)
 			offset++
+			if err != nil {
+				failedHighlights[plan.highlight.ID] = err.Error()
+				continue
+			}
 
 			question := &domain.Question{
 				ID:            uuid.NewString(),
@@ -638,6 +645,20 @@ func (u *QuestionWorkerUsecase) ProcessRegenerationTask(ctx context.Context, tas
 		})
 		return releaseReservedQuota(u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry))
 	}
+	generatedQuestion, err := normalizeGeneratedQuestion(generatedQuestions[0], domain.QuestionTypeMultipleChoice)
+	if err != nil {
+		logQuestionWorkerEvent("gemini_call_failed", map[string]any{
+			"user_id":         task.UserID.String(),
+			"generation_id":   generationID,
+			"source_type":     "regeneration",
+			"model":           model,
+			"question_count":  1,
+			"highlight_count": 1,
+			"duration_ms":     u.now().Sub(callStartedAt).Milliseconds(),
+			"error":           err.Error(),
+		})
+		return releaseReservedQuota(u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry))
+	}
 	logQuestionWorkerEvent("gemini_call_completed", map[string]any{
 		"user_id":         task.UserID.String(),
 		"generation_id":   generationID,
@@ -652,10 +673,10 @@ func (u *QuestionWorkerUsecase) ProcessRegenerationTask(ctx context.Context, tas
 	question := &domain.Question{
 		ID:            uuid.NewString(),
 		QuestionType:  domain.QuestionTypeMultipleChoice,
-		Content:       generatedQuestions[0].Content,
-		Options:       generatedQuestions[0].Options,
-		CorrectAnswer: generatedQuestions[0].CorrectAnswer,
-		Explanation:   generatedQuestions[0].Explanation,
+		Content:       generatedQuestion.Content,
+		Options:       generatedQuestion.Options,
+		CorrectAnswer: generatedQuestion.CorrectAnswer,
+		Explanation:   generatedQuestion.Explanation,
 	}
 	meta := &domain.QuestionMeta{
 		QuestionID:    question.ID,
