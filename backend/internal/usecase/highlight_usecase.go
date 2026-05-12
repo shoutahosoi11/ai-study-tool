@@ -343,11 +343,13 @@ func newImportHighlight(userID uuid.UUID, item ImportHighlightItem) (*domain.Hig
 	location := strings.TrimSpace(item.Location)
 	contentHash := computeContentHash(normalizedContent)
 	highlightedAt := sanitizeHighlightedAt(item.HighlightedAt)
+	bookKey := resolveHighlightBookKey(asin, bookTitle, bookAuthor)
 
 	return &domain.Highlight{
 		UserID:        userID,
 		BookTitle:     bookTitle,
 		BookAuthor:    bookAuthor,
+		BookKey:       bookKey,
 		ASIN:          optionalString(asin),
 		Content:       normalizedContent,
 		ContentHash:   &contentHash,
@@ -387,11 +389,13 @@ func newSharedHighlight(userID uuid.UUID, input ImportSharedHighlightInput) (*do
 		return nil, err
 	}
 	contentHash := computeContentHash(normalizedContent)
+	bookKey := resolveHighlightBookKey("", bookTitle, bookAuthor)
 
 	return &domain.Highlight{
 		UserID:        userID,
 		BookTitle:     bookTitle,
 		BookAuthor:    bookAuthor,
+		BookKey:       bookKey,
 		Content:       normalizedContent,
 		ContentHash:   &contentHash,
 		HighlightedAt: sanitizeHighlightedAt(input.SharedAt),
@@ -436,11 +440,13 @@ func newPastedHighlight(userID uuid.UUID, input ImportPastedHighlightInput) (*do
 		return nil, err
 	}
 	contentHash := computeContentHash(normalizedContent)
+	bookKey := resolveHighlightBookKey("", bookTitle, bookAuthor)
 
 	return &domain.Highlight{
 		UserID:      userID,
 		BookTitle:   bookTitle,
 		BookAuthor:  bookAuthor,
+		BookKey:     bookKey,
 		Content:     normalizedContent,
 		ContentHash: &contentHash,
 		Source:      domain.HighlightSourcePaste,
@@ -449,6 +455,23 @@ func newPastedHighlight(userID uuid.UUID, input ImportPastedHighlightInput) (*do
 		Status:      domain.HighlightStatusPending,
 		RequestedAt: time.Now().UTC(),
 	}, nil
+}
+
+func resolveHighlightBookKey(asin string, bookTitle *string, bookAuthor *string) string {
+	normalizedASIN := strings.TrimSpace(asin)
+	if normalizedASIN != "" {
+		return normalizedASIN
+	}
+
+	title := ""
+	if bookTitle != nil {
+		title = strings.TrimSpace(*bookTitle)
+	}
+	author := ""
+	if bookAuthor != nil {
+		author = strings.TrimSpace(*bookAuthor)
+	}
+	return "metadata:" + title + ":" + author
 }
 
 func normalizeAndValidateHighlightContent(content string) (string, error) {

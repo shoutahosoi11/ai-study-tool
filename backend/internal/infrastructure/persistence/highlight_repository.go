@@ -114,6 +114,14 @@ func (r *highlightRepository) executeBulkUpsertQuery(
 }
 
 func (r *highlightRepository) fillMissingBookOrderIndexes(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE highlights h
+SET book_key = `+bookKeyExpressionSQL+`
+WHERE NULLIF(trim(coalesce(h.book_key, '')), '') IS NULL
+`); err != nil {
+		return fmt.Errorf("highlight repo: fill missing book keys: %w", err)
+	}
+
 	_, err := r.db.ExecContext(ctx, `
 WITH missing AS (
     SELECT id, user_id, book_key,
@@ -1095,10 +1103,10 @@ func uuidStrings(values []uuid.UUID) []string {
 func buildHighlightBulkUpsert(highlights []*domain.Highlight) (string, []any, map[string][]*domain.Highlight, error) {
 	var builder strings.Builder
 	builder.WriteString(`
-INSERT INTO highlights (user_id, book_id, book_title, book_author, asin, content, explanation, location, highlighted_at, source, content_hash, source_app, source_url)
+INSERT INTO highlights (user_id, book_id, book_title, book_author, asin, book_key, content, explanation, location, highlighted_at, source, content_hash, source_app, source_url)
 VALUES `)
 
-	args := make([]any, 0, len(highlights)*13)
+	args := make([]any, 0, len(highlights)*14)
 	hashIndex := make(map[string][]*domain.Highlight)
 
 	for i, highlight := range highlights {
@@ -1110,7 +1118,7 @@ VALUES `)
 			builder.WriteString(", ")
 		}
 
-		writeBulkUpsertValueGroup(&builder, i*13+1)
+		writeBulkUpsertValueGroup(&builder, i*14+1)
 		args = appendBulkUpsertArgs(args, highlight)
 		indexHighlightByContentHash(hashIndex, highlight)
 	}
@@ -1156,7 +1164,7 @@ RETURNING id, content_hash, created_at, updated_at`)
 
 func writeBulkUpsertValueGroup(builder *strings.Builder, start int) {
 	builder.WriteString("(")
-	for i := 0; i < 13; i++ {
+	for i := 0; i < 14; i++ {
 		if i > 0 {
 			builder.WriteString(", ")
 		}
@@ -1184,6 +1192,7 @@ func appendBulkUpsertArgs(args []any, highlight *domain.Highlight) []any {
 		highlight.BookTitle,
 		highlight.BookAuthor,
 		highlight.ASIN,
+		toNullStringValue(strings.TrimSpace(highlight.BookKey)),
 		highlight.Content,
 		highlight.Explanation,
 		highlight.Location,
@@ -1193,6 +1202,11 @@ func appendBulkUpsertArgs(args []any, highlight *domain.Highlight) []any {
 		highlight.SourceApp,
 		highlight.SourceURL,
 	)
+}
+
+func toNullStringValue(value string) sql.NullString {
+	normalized := strings.TrimSpace(value)
+	return sql.NullString{String: normalized, Valid: normalized != ""}
 }
 
 func appendLegacyBulkUpsertArgs(args []any, highlight *domain.Highlight) []any {

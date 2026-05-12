@@ -130,7 +130,8 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 		return u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID)
 	}
 
-	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, userID, questionSyncDay(u.now()), len(materials), readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
+	quotaDay := questionSyncDay(u.now())
+	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, userID, quotaDay, len(materials), readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
 	if err != nil {
 		return fmt.Errorf("question worker: reserve generation quota: %w", err)
 	}
@@ -144,30 +145,36 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 		})
 		return nil
 	}
+	releaseReservedQuota := func(cause error) error {
+		if releaseErr := u.questionRepo.ReleaseDailyGeneratedCount(ctx, userID, quotaDay, len(materials)); releaseErr != nil {
+			if cause == nil {
+				return fmt.Errorf("question worker: release generation quota: %w", releaseErr)
+			}
+			return fmt.Errorf("%w; additionally failed to release generation quota: %v", cause, releaseErr)
+		}
+		return cause
+	}
 
 	if err := u.waitForRateLimit(ctx); err != nil {
-		return u.recordJobFailure(ctx, job, err)
+		return releaseReservedQuota(u.recordJobFailure(ctx, job, err))
 	}
 
 	generationID, err := u.questionRepo.SaveGeneration(ctx, userID.String(), "question_generation_job", job.ID.String(), customInstruction, model)
 	if err != nil {
-		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generation: %w", err))
+		return releaseReservedQuota(u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generation: %w", err)))
 	}
 
 	generatedQuestions, err := u.llmClient.GenerateQuestions(ctx, materials, domain.QuestionTypeMultipleChoice, customInstruction, model)
 	if err != nil {
-		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: generate questions: %w", err))
+		return releaseReservedQuota(u.recordJobFailure(ctx, job, fmt.Errorf("question worker: generate questions: %w", err)))
 	}
 	if len(generatedQuestions) < len(materials) {
-		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: generated questions count mismatch: expected %d, got %d", len(materials), len(generatedQuestions)))
+		return releaseReservedQuota(u.recordJobFailure(ctx, job, fmt.Errorf("question worker: generated questions count mismatch: expected %d, got %d", len(materials), len(generatedQuestions))))
 	}
 
+	replacements := make([]domain.QuestionReplacement, 0, len(materialHighlights))
 	for index, highlight := range materialHighlights {
 		generated := generatedQuestions[index]
-		if err := u.questionRepo.SupersedeActiveQuestionsForHighlight(ctx, userID, highlight.ID); err != nil {
-			return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: supersede active question: %w", err))
-		}
-
 		question := &domain.Question{
 			ID:            uuid.NewString(),
 			QuestionType:  domain.QuestionTypeMultipleChoice,
@@ -186,16 +193,15 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 			Version:       1,
 			IsAIGenerated: true,
 		}
-		if err := u.questionRepo.Save(ctx, question, meta); err != nil {
-			return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generated question: %w", err))
-		}
+		replacements = append(replacements, domain.QuestionReplacement{
+			HighlightID: highlight.ID,
+			Question:    question,
+			Meta:        meta,
+		})
 	}
 
-	if err := u.highlightRepo.MarkGenerationCompleted(ctx, highlightIDs); err != nil {
-		return u.recordJobFailure(ctx, job, fmt.Errorf("question worker: mark highlights completed: %w", err))
-	}
-	if err := u.jobRepo.MarkCompleted(ctx, job.ID, job.UserID); err != nil {
-		return fmt.Errorf("question worker: mark job completed: %w", err)
+	if err := u.questionRepo.CompleteQuestionGenerationJob(ctx, userID, job.ID, replacements, highlightIDs); err != nil {
+		return releaseReservedQuota(u.recordJobFailure(ctx, job, fmt.Errorf("question worker: complete generation job: %w", err)))
 	}
 
 	logQuestionWorkerEvent("job_completed", map[string]any{
@@ -572,17 +578,27 @@ func (u *QuestionWorkerUsecase) ProcessRegenerationTask(ctx context.Context, tas
 
 	customInstruction := fmt.Sprintf("このハイライトから %s 観点で1問だけ作成してください。", perspectives[0])
 	model := u.llmClient.ModelForPlan("free")
-	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, task.UserID, questionSyncDay(u.now()), 1, readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
+	quotaDay := questionSyncDay(u.now())
+	reserved, err := u.questionRepo.ReserveDailyGeneratedCount(ctx, task.UserID, quotaDay, 1, readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit))
 	if err != nil {
 		return fmt.Errorf("question worker: reserve regeneration quota: %w", err)
 	}
 	if !reserved {
 		return u.questionRepo.DeferRegenerationTasks(ctx, []uuid.UUID{task.ID}, "daily generation quota exceeded")
 	}
+	releaseReservedQuota := func(cause error) error {
+		if releaseErr := u.questionRepo.ReleaseDailyGeneratedCount(ctx, task.UserID, quotaDay, 1); releaseErr != nil {
+			if cause == nil {
+				return fmt.Errorf("question worker: release regeneration quota: %w", releaseErr)
+			}
+			return fmt.Errorf("%w; additionally failed to release regeneration quota: %v", cause, releaseErr)
+		}
+		return cause
+	}
 
 	generationID, err := u.questionRepo.SaveGeneration(ctx, task.UserID.String(), "regeneration", task.Highlight.ID.String(), customInstruction, model)
 	if err != nil {
-		return u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry)
+		return releaseReservedQuota(u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry))
 	}
 
 	callStartedAt := u.now()
@@ -620,7 +636,7 @@ func (u *QuestionWorkerUsecase) ProcessRegenerationTask(ctx context.Context, tas
 			"duration_ms":     u.now().Sub(callStartedAt).Milliseconds(),
 			"error":           err.Error(),
 		})
-		return u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry)
+		return releaseReservedQuota(u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry))
 	}
 	logQuestionWorkerEvent("gemini_call_completed", map[string]any{
 		"user_id":         task.UserID.String(),
@@ -652,8 +668,12 @@ func (u *QuestionWorkerUsecase) ProcessRegenerationTask(ctx context.Context, tas
 		IsAIGenerated: true,
 	}
 
-	if err := u.questionRepo.Save(ctx, question, meta); err != nil {
-		return u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry)
+	if err := u.questionRepo.ReplaceActiveQuestionsForHighlights(ctx, task.UserID, []domain.QuestionReplacement{{
+		HighlightID: task.Highlight.ID,
+		Question:    question,
+		Meta:        meta,
+	}}); err != nil {
+		return releaseReservedQuota(u.questionRepo.MarkRegenerationTasksFailed(ctx, []uuid.UUID{task.ID}, err.Error(), u.maxRetry))
 	}
 
 	return u.questionRepo.MarkRegenerationTasksCompleted(ctx, []uuid.UUID{task.ID})

@@ -14,9 +14,12 @@ import (
 type mockQuestionWorkerRepository struct {
 	save             func(ctx context.Context, question *domain.Question, meta *domain.QuestionMeta) error
 	reserveDaily     func(ctx context.Context, userID uuid.UUID, day time.Time, delta int, limit int) (bool, error)
+	releasedDelta    int
 	savedHighlight   []uuid.UUID
 	superseded       []uuid.UUID
 	reservedDelta    int
+	completedJob     uuid.UUID
+	completedJobRefs []uuid.UUID
 	saveGenerationID string
 }
 
@@ -57,6 +60,32 @@ func (m *mockQuestionWorkerRepository) ReserveDailyGeneratedCount(ctx context.Co
 		return m.reserveDaily(ctx, userID, day, delta, limit)
 	}
 	return true, nil
+}
+
+func (m *mockQuestionWorkerRepository) ReleaseDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
+	m.releasedDelta += delta
+	return nil
+}
+
+func (m *mockQuestionWorkerRepository) ReplaceActiveQuestionsForHighlights(ctx context.Context, userID uuid.UUID, replacements []domain.QuestionReplacement) error {
+	for _, replacement := range replacements {
+		if err := m.SupersedeActiveQuestionsForHighlight(ctx, userID, replacement.HighlightID); err != nil {
+			return err
+		}
+		if err := m.Save(ctx, replacement.Question, replacement.Meta); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *mockQuestionWorkerRepository) CompleteQuestionGenerationJob(ctx context.Context, userID uuid.UUID, jobID uuid.UUID, replacements []domain.QuestionReplacement, highlightIDs []uuid.UUID) error {
+	if err := m.ReplaceActiveQuestionsForHighlights(ctx, userID, replacements); err != nil {
+		return err
+	}
+	m.completedJob = jobID
+	m.completedJobRefs = append(m.completedJobRefs, highlightIDs...)
+	return nil
 }
 
 func (m *mockQuestionWorkerRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
@@ -391,11 +420,11 @@ func TestProcessQuestionGenerationJobCreatesOneActiveQuestionPerHighlight(t *tes
 	if len(questionRepo.savedHighlight) != 1 || questionRepo.savedHighlight[0] != highlightID {
 		t.Fatalf("expected generated question saved for highlight, got %#v", questionRepo.savedHighlight)
 	}
-	if len(highlightRepo.completed) != 1 || highlightRepo.completed[0] != highlightID {
-		t.Fatalf("expected highlight completed, got %#v", highlightRepo.completed)
+	if len(questionRepo.completedJobRefs) != 1 || questionRepo.completedJobRefs[0] != highlightID {
+		t.Fatalf("expected highlight completed in job transaction, got %#v", questionRepo.completedJobRefs)
 	}
-	if len(jobRepo.markedCompleted) != 1 || jobRepo.markedCompleted[0] != jobID {
-		t.Fatalf("expected job completed, got %#v", jobRepo.markedCompleted)
+	if questionRepo.completedJob != jobID {
+		t.Fatalf("expected job completed in transaction, got %s", questionRepo.completedJob)
 	}
 	if llm.generateCalled != 1 {
 		t.Fatalf("expected one Gemini call, got %d", llm.generateCalled)

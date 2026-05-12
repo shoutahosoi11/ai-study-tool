@@ -81,6 +81,10 @@ func (m *mockQuestionSyncQuestionRepository) ReserveDailyGeneratedCount(ctx cont
 	return true, nil
 }
 
+func (m *mockQuestionSyncQuestionRepository) ReleaseDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
+	return nil
+}
+
 func (m *mockQuestionSyncQuestionRepository) QueueHighlightsWithinDailyLimit(ctx context.Context, userID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
 	return append([]uuid.UUID(nil), highlightIDs...), true, nil
 }

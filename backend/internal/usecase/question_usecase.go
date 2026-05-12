@@ -258,14 +258,20 @@ func (u *QuestionUsecase) selectHighlightsForGeneration(ctx context.Context, use
 }
 
 func (u *QuestionUsecase) SaveQuestion(ctx context.Context, userID string, questionID string, note string) error {
-	if _, err := u.repo.GetByID(ctx, questionID); err != nil {
+	_, meta, _, err := u.repo.FindByID(ctx, questionID)
+	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return domain.ErrNotFound
 		}
 		return fmt.Errorf("question usecase: get question for save: %w", err)
 	}
 
-	if err := u.repo.SaveForUser(ctx, userID, questionID, strings.TrimSpace(note)); err != nil {
+	normalizedNote := strings.TrimSpace(note)
+	if meta != nil && strings.TrimSpace(meta.CreatorID) != strings.TrimSpace(userID) && normalizedNote != "" {
+		return domain.ErrForbidden
+	}
+
+	if err := u.repo.SaveForUser(ctx, userID, questionID, normalizedNote); err != nil {
 		return fmt.Errorf("question usecase: save question: %w", err)
 	}
 

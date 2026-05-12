@@ -17,7 +17,7 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	registerQuestionRoutes(api, container, authMiddleware)
 	registerMonetizationRoutes(api, container, authMiddleware)
 	registerInternalTaskRoutes(e, container)
-	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook)
+	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook, echomiddleware.BodyLimit("1M"))
 }
 
 func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {

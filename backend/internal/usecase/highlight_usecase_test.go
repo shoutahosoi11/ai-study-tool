@@ -120,6 +120,9 @@ func TestImportKindleHighlightsAllItemsSaved(t *testing.T) {
 	if result.DuplicateCount != 0 {
 		t.Fatalf("expected DuplicateCount=0, got %d", result.DuplicateCount)
 	}
+	if repo.bulkUpsertInput[0].BookKey != "B001" {
+		t.Fatalf("expected ASIN book key, got %q", repo.bulkUpsertInput[0].BookKey)
+	}
 	if result.CopyProtectedCount != 0 {
 		t.Fatalf("expected CopyProtectedCount=0, got %d", result.CopyProtectedCount)
 	}
@@ -339,6 +342,9 @@ func TestImportSharedHighlightSavesMobileShareMetadata(t *testing.T) {
 	if highlight.BookAuthor == nil || *highlight.BookAuthor != "Cal Newport" {
 		t.Fatalf("unexpected book author: %#v", highlight.BookAuthor)
 	}
+	if highlight.BookKey != "metadata:Deep Work:Cal Newport" {
+		t.Fatalf("unexpected book key: %q", highlight.BookKey)
+	}
 	if highlight.Content != "Focus is a superpower." {
 		t.Fatalf("expected trimmed content, got %q", highlight.Content)
 	}
@@ -426,6 +432,9 @@ func TestImportPastedHighlightSavesPasteSource(t *testing.T) {
 	highlight := repo.bulkUpsertInput[0]
 	if highlight.Source != domain.HighlightSourcePaste {
 		t.Fatalf("expected paste source, got %q", highlight.Source)
+	}
+	if highlight.BookKey != "metadata:Notes:Me" {
+		t.Fatalf("unexpected book key: %q", highlight.BookKey)
 	}
 	if highlight.Content != "Paste this idea." {
 		t.Fatalf("expected normalized content, got %q", highlight.Content)

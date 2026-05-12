@@ -21,6 +21,10 @@ type questionRepository struct {
 	queries *sqlcgen.Queries
 }
 
+type questionExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
 func NewQuestionRepository(db *sql.DB) domain.QuestionRepository {
 	return &questionRepository{
 		db:      db,
@@ -29,6 +33,13 @@ func NewQuestionRepository(db *sql.DB) domain.QuestionRepository {
 }
 
 func (r *questionRepository) Save(ctx context.Context, q *domain.Question, meta *domain.QuestionMeta) error {
+	if err := insertQuestion(ctx, r.db, q, meta); err != nil {
+		return fmt.Errorf("question repo: save: %w", err)
+	}
+	return nil
+}
+
+func insertQuestion(ctx context.Context, execer questionExecer, q *domain.Question, meta *domain.QuestionMeta) error {
 	optionsJSON, err := json.Marshal(q.Options)
 	if err != nil {
 		return fmt.Errorf("question repo: marshal options: %w", err)
@@ -63,7 +74,7 @@ INSERT INTO questions (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )`
 
-	if _, err := r.db.ExecContext(ctx, query,
+	if _, err := execer.ExecContext(ctx, query,
 		questionID,
 		creatorID,
 		string(meta.SourceType),
@@ -78,14 +89,21 @@ INSERT INTO questions (
 		normalizePerspective(meta.Perspective),
 		normalizeQuestionVersion(meta.Version),
 	); err != nil {
-		return fmt.Errorf("question repo: save: %w", err)
+		return err
 	}
 
 	return nil
 }
 
 func (r *questionRepository) SupersedeActiveQuestionsForHighlight(ctx context.Context, userID uuid.UUID, highlightID uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `
+	if err := supersedeActiveQuestionsForHighlight(ctx, r.db, userID, highlightID); err != nil {
+		return fmt.Errorf("question repo: supersede active questions for highlight: %w", err)
+	}
+	return nil
+}
+
+func supersedeActiveQuestionsForHighlight(ctx context.Context, execer questionExecer, userID uuid.UUID, highlightID uuid.UUID) error {
+	_, err := execer.ExecContext(ctx, `
 UPDATE questions
 SET superseded_at = NOW(),
     updated_at = NOW()
@@ -94,7 +112,96 @@ WHERE user_id = $1
   AND superseded_at IS NULL
 `, userID, highlightID)
 	if err != nil {
-		return fmt.Errorf("question repo: supersede active questions for highlight: %w", err)
+		return err
+	}
+	return nil
+}
+
+func rollbackTx(tx *sql.Tx) {
+	if tx != nil {
+		_ = tx.Rollback()
+	}
+}
+
+func (r *questionRepository) ReplaceActiveQuestionsForHighlights(ctx context.Context, userID uuid.UUID, replacements []domain.QuestionReplacement) error {
+	if len(replacements) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("question repo: begin replace active questions transaction: %w", err)
+	}
+	defer rollbackTx(tx)
+
+	for _, replacement := range replacements {
+		if err := supersedeActiveQuestionsForHighlight(ctx, tx, userID, replacement.HighlightID); err != nil {
+			return err
+		}
+		if err := insertQuestion(ctx, tx, replacement.Question, replacement.Meta); err != nil {
+			return fmt.Errorf("question repo: insert replacement question: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("question repo: commit replace active questions transaction: %w", err)
+	}
+	return nil
+}
+
+func (r *questionRepository) CompleteQuestionGenerationJob(
+	ctx context.Context,
+	userID uuid.UUID,
+	jobID uuid.UUID,
+	replacements []domain.QuestionReplacement,
+	highlightIDs []uuid.UUID,
+) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("question repo: begin complete generation job transaction: %w", err)
+	}
+	defer rollbackTx(tx)
+
+	for _, replacement := range replacements {
+		if err := supersedeActiveQuestionsForHighlight(ctx, tx, userID, replacement.HighlightID); err != nil {
+			return err
+		}
+		if err := insertQuestion(ctx, tx, replacement.Question, replacement.Meta); err != nil {
+			return fmt.Errorf("question repo: insert job question: %w", err)
+		}
+	}
+
+	if len(highlightIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE highlights
+SET
+    status = 'completed',
+    retry_count = 0,
+    processing_started_at = NULL,
+    completed_at = NOW(),
+    failed_at = NULL,
+    last_error = NULL,
+    updated_at = NOW()
+WHERE user_id = $1
+  AND id::text = ANY($2)
+`, userID, pq.Array(uuidStrings(highlightIDs))); err != nil {
+			return fmt.Errorf("question repo: mark job highlights completed: %w", err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+UPDATE question_generation_jobs
+SET status = $3,
+    completed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+`, jobID, userID, string(domain.JobStatusCompleted)); err != nil {
+		return fmt.Errorf("question repo: mark generation job completed: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("question repo: commit complete generation job transaction: %w", err)
 	}
 	return nil
 }
@@ -574,6 +681,22 @@ RETURNING count`
 	}
 
 	return true, nil
+}
+
+func (r *questionRepository) ReleaseDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
+	if delta <= 0 {
+		return nil
+	}
+
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE user_daily_generation_counts
+SET count = GREATEST(count - $3, 0)
+WHERE user_id = $1
+  AND date = $2
+`, userID, day.Format("2006-01-02"), delta); err != nil {
+		return fmt.Errorf("question repo: release daily generated count: %w", err)
+	}
+	return nil
 }
 
 func (r *questionRepository) GetUserLastQuestionSyncAt(ctx context.Context, userID uuid.UUID) (*time.Time, error) {

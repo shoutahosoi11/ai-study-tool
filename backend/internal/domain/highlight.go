@@ -27,6 +27,7 @@ type Highlight struct {
 	BookID         *uuid.UUID
 	BookTitle      *string
 	BookAuthor     *string
+	BookKey        string
 	ASIN           *string
 	Content        string
 	Explanation    *string

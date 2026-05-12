@@ -45,6 +45,7 @@ type QuestionGenerationRepository interface {
 type QuestionDailyQuotaRepository interface {
 	GetDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time) (int, error)
 	ReserveDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int, limit int) (bool, error)
+	ReleaseDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error
 }
 
 type QuestionSyncTransactionRepository interface {
@@ -71,6 +72,8 @@ type QuestionRepository interface {
 	QuestionSyncTransactionRepository
 	QuestionSyncStateRepository
 	QuestionRegenerationRepository
+	ReplaceActiveQuestionsForHighlights(ctx context.Context, userID uuid.UUID, replacements []QuestionReplacement) error
+	CompleteQuestionGenerationJob(ctx context.Context, userID uuid.UUID, jobID uuid.UUID, replacements []QuestionReplacement, highlightIDs []uuid.UUID) error
 }
 
 type QuestionUsecaseRepository interface {
@@ -96,4 +99,12 @@ type QuestionWorkerRepository interface {
 	QuestionGenerationRepository
 	QuestionDailyQuotaRepository
 	QuestionRegenerationRepository
+	ReplaceActiveQuestionsForHighlights(ctx context.Context, userID uuid.UUID, replacements []QuestionReplacement) error
+	CompleteQuestionGenerationJob(ctx context.Context, userID uuid.UUID, jobID uuid.UUID, replacements []QuestionReplacement, highlightIDs []uuid.UUID) error
+}
+
+type QuestionReplacement struct {
+	HighlightID uuid.UUID
+	Question    *Question
+	Meta        *QuestionMeta
 }

@@ -298,6 +298,9 @@ func (h *QuestionHandler) SaveQuestion(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
+		if errors.Is(err, domain.ErrForbidden) {
+			return echo.NewHTTPError(http.StatusForbidden, "question notes are only available for your own questions")
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
