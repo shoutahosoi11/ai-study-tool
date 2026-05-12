@@ -300,6 +300,8 @@ func (m *mockWorkerHighlightLifecycle) MarkGenerationFailed(ctx context.Context,
 
 type mockQuestionWorkerLLMClient struct {
 	generateCalled int
+	generated      []domain.GeneratedQuestion
+	err            error
 }
 
 func (m *mockQuestionWorkerLLMClient) ModelForPlan(plan string) string {
@@ -308,6 +310,12 @@ func (m *mockQuestionWorkerLLMClient) ModelForPlan(plan string) string {
 
 func (m *mockQuestionWorkerLLMClient) GenerateQuestions(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
 	m.generateCalled++
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.generated != nil {
+		return append([]domain.GeneratedQuestion(nil), m.generated...), nil
+	}
 	questions := make([]domain.GeneratedQuestion, 0, len(points))
 	for range points {
 		questions = append(questions, domain.GeneratedQuestion{
@@ -428,5 +436,45 @@ func TestProcessQuestionGenerationJobCreatesOneActiveQuestionPerHighlight(t *tes
 	}
 	if llm.generateCalled != 1 {
 		t.Fatalf("expected one Gemini call, got %d", llm.generateCalled)
+	}
+}
+
+func TestProcessQuestionGenerationJobRecordsFailureForInvalidGeneratedQuestion(t *testing.T) {
+	jobID := uuid.New()
+	userID := uuid.New()
+	highlightID := uuid.New()
+	jobRepo := &mockQuestionGenerationJobRepository{
+		claimOK:  true,
+		claimJob: &domain.QuestionGenerationJob{ID: jobID, UserID: userID, HighlightIDs: []uuid.UUID{highlightID}},
+	}
+	highlightRepo := &mockWorkerHighlightLifecycle{
+		highlights: []*domain.Highlight{{
+			ID:      highlightID,
+			UserID:  userID,
+			Content: "ハイライト本文",
+		}},
+	}
+	questionRepo := &mockQuestionWorkerRepository{}
+	llm := &mockQuestionWorkerLLMClient{
+		generated: []domain.GeneratedQuestion{{
+			Content:       "",
+			Options:       []string{"A", "B", "C", "D"},
+			CorrectAnswer: "A",
+			Explanation:   "解説",
+		}},
+	}
+	uc := NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, jobRepo, llm)
+
+	if err := uc.ProcessQuestionGenerationJob(context.Background(), jobID, userID); err == nil {
+		t.Fatal("expected invalid generated question to fail the job")
+	}
+	if len(jobRepo.recordedFailures) != 1 || jobRepo.recordedFailures[0] != jobID {
+		t.Fatalf("expected job failure recorded, got %#v", jobRepo.recordedFailures)
+	}
+	if questionRepo.releasedDelta != 1 {
+		t.Fatalf("expected reserved quota to be released, got %d", questionRepo.releasedDelta)
+	}
+	if questionRepo.completedJob != uuid.Nil {
+		t.Fatalf("invalid generated question should not complete job, got %s", questionRepo.completedJob)
 	}
 }

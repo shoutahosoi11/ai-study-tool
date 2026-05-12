@@ -237,10 +237,13 @@ func TestImportPasteReturnsBadRequestForInvalidSourceURL(t *testing.T) {
 
 func TestCheckExistingHashesReturnsMatches(t *testing.T) {
 	e := echo.New()
+	hash1 := strings.Repeat("a", 64)
+	hash2 := strings.Repeat("b", 64)
+	hash3 := strings.Repeat("c", 64)
 	repo := &stubHighlightRepository{
 		existingHashes: []string{
-			"hash-1",
-			"hash-3",
+			hash1,
+			hash3,
 		},
 	}
 	handler := NewHighlightHandler(usecase.NewHighlightUsecase(repo), &stubUserUsecase{
@@ -249,7 +252,8 @@ func TestCheckExistingHashesReturnsMatches(t *testing.T) {
 		},
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/highlights/sync/check", strings.NewReader(`{"hashes":["hash-1","hash-2","hash-3"]}`))
+	reqBody := `{"hashes":["` + hash1 + `","` + hash2 + `","` + hash3 + `"]}`
+	req := httptest.NewRequest(http.MethodPost, "/highlights/sync/check", strings.NewReader(reqBody))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -270,5 +274,33 @@ func TestCheckExistingHashesReturnsMatches(t *testing.T) {
 
 	if len(resp.ExistingHashes) != 2 {
 		t.Fatalf("expected 2 hashes, got %d", len(resp.ExistingHashes))
+	}
+}
+
+func TestCheckExistingHashesRejectsInvalidHash(t *testing.T) {
+	e := echo.New()
+	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/highlights/sync/check", strings.NewReader(`{"hashes":["not-a-sha256"]}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	err := handler.CheckExistingHashes(c)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("expected *echo.HTTPError, got %T", err)
+	}
+	if httpErr.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d", httpErr.Code)
 	}
 }

@@ -77,7 +77,7 @@ func (u *HighlightImportJobUsecase) processOne(ctx context.Context, item *domain
 	}
 
 	if _, err := u.highlightRepo.BulkUpsert(ctx, highlights); err != nil {
-		if item.RetryCount >= domain.ImportQueueMaxRetry {
+		if item.RetryCount+1 >= domain.ImportQueueMaxRetry {
 			return u.fail(ctx, item, fmt.Sprintf("bulk upsert (max retry reached): %v", err))
 		}
 		if requeueErr := u.queueRepo.RequeueWithRetry(ctx, item.ID, err.Error()); requeueErr != nil {
@@ -114,14 +114,17 @@ func (u *HighlightImportJobUsecase) fail(ctx context.Context, item *domain.Highl
 	return fmt.Errorf("queue_id=%s failed: %s", item.ID, reason)
 }
 
-// ProcessSingle は特定の queue_id を処理する（テスト・デバッグ用）。
-func (u *HighlightImportJobUsecase) ProcessSingle(ctx context.Context, queueID uuid.UUID) error {
+// ProcessSingle は特定の queue_id を処理する（Cloud Tasks / テスト・デバッグ用）。
+func (u *HighlightImportJobUsecase) ProcessSingle(ctx context.Context, queueID uuid.UUID, userID uuid.UUID) error {
 	item, err := u.queueRepo.GetByID(ctx, queueID)
 	if err != nil {
 		return fmt.Errorf("highlight import job: get queue item: %w", err)
 	}
 	if item == nil {
 		return nil
+	}
+	if item.UserID != userID {
+		return domain.ErrForbidden
 	}
 	return u.processOne(ctx, item)
 }

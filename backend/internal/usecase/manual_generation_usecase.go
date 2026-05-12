@@ -42,6 +42,9 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 	if user == nil || u.highlightRepo == nil || strings.TrimSpace(bookKey) == "" || len(uniqueHighlightIDs) < 5 {
 		return nil, domain.ErrInvalidInput
 	}
+	if len(uniqueHighlightIDs) > domain.MaxHighlightsPerJob {
+		return nil, domain.ErrInvalidInput
+	}
 
 	ownedHighlights, err := u.highlightRepo.ListByIDs(ctx, user.ID, uniqueHighlightIDs)
 	if err != nil {

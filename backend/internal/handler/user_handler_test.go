@@ -62,6 +62,19 @@ func TestBuildCreateUserInputNormalizesOptionalText(t *testing.T) {
 	}
 }
 
+func TestBuildCreateUserInputRejectsInvalidAvatarURL(t *testing.T) {
+	avatarURL := "javascript:alert(1)"
+	req := &dto.SignUpRequest{
+		Username:  "alice",
+		AvatarURL: &avatarURL,
+	}
+
+	_, err := buildCreateUserInput("firebase-uid-1", req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestBuildCreateUserInputRejectsShortUsername(t *testing.T) {
 	req := &dto.SignUpRequest{
 		Username: "ab",
@@ -115,6 +128,34 @@ func TestBuildUpdateUserInputNormalizesOptionalText(t *testing.T) {
 	}
 	if input.University == nil || *input.University != "Example University" {
 		t.Fatalf("unexpected university: %#v", input.University)
+	}
+}
+
+func TestBuildUpdateUserInputRejectsLongBio(t *testing.T) {
+	bio := strings.Repeat("a", maxBioLength+1)
+	req := &dto.UpdateProfileRequest{
+		Username:    "alice",
+		DisplayName: "Alice",
+		Bio:         &bio,
+	}
+
+	_, err := buildUpdateUserInput(req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestBuildUpdateUserInputRejectsInvalidAvatarURL(t *testing.T) {
+	avatarURL := "ftp://example.com/avatar.png"
+	req := &dto.UpdateProfileRequest{
+		Username:    "alice",
+		DisplayName: "Alice",
+		AvatarURL:   &avatarURL,
+	}
+
+	_, err := buildUpdateUserInput(req)
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
 

@@ -14,6 +14,12 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
+const (
+	maxKindleImportItems = 1000
+	maxHashCheckItems    = 2000
+	sha256HexLength      = 64
+)
+
 type HighlightUsecase struct {
 	repo        domain.HighlightImportRepository
 	importQueue domain.HighlightImportQueueRepository
@@ -92,6 +98,9 @@ type ImportPastedHighlightResult struct {
 func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
 	if len(items) == 0 {
 		return nil, domain.ErrAllCopyProtected
+	}
+	if len(items) > maxKindleImportItems {
+		return nil, fmt.Errorf("%w: highlights must be at most %d items", domain.ErrInvalidInput, maxKindleImportItems)
 	}
 
 	// キューが設定されている場合は非同期処理に委譲する
@@ -236,7 +245,10 @@ func (u *HighlightUsecase) ListExistingContentHashes(ctx context.Context, userID
 		return make([]string, 0), nil
 	}
 
-	normalized := normalizeHashList(hashes)
+	normalized, err := normalizeHashList(hashes)
+	if err != nil {
+		return nil, err
+	}
 	if len(normalized) == 0 {
 		return make([]string, 0), nil
 	}
@@ -532,13 +544,20 @@ func computeContentHash(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func normalizeHashList(hashes []string) []string {
+func normalizeHashList(hashes []string) ([]string, error) {
+	if len(hashes) > maxHashCheckItems {
+		return nil, fmt.Errorf("%w: hashes must be at most %d items", domain.ErrInvalidInput, maxHashCheckItems)
+	}
+
 	seen := make(map[string]struct{}, len(hashes))
 	items := make([]string, 0, len(hashes))
 	for _, hash := range hashes {
-		normalized := strings.TrimSpace(hash)
+		normalized := strings.ToLower(strings.TrimSpace(hash))
 		if normalized == "" {
 			continue
+		}
+		if !isSHA256Hex(normalized) {
+			return nil, fmt.Errorf("%w: invalid content hash", domain.ErrInvalidInput)
 		}
 		if _, ok := seen[normalized]; ok {
 			continue
@@ -546,7 +565,19 @@ func normalizeHashList(hashes []string) []string {
 		seen[normalized] = struct{}{}
 		items = append(items, normalized)
 	}
-	return items
+	return items, nil
+}
+
+func isSHA256Hex(value string) bool {
+	if len(value) != sha256HexLength {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeHighlightedAt(highlightedAt *time.Time) *time.Time {

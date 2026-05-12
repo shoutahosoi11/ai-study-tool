@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -13,6 +14,11 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/handler/dto"
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/usecase"
+)
+
+const (
+	maxAvatarURLLength = 2048
+	maxBioLength       = 300
 )
 
 // ユーザーデータに関する処理をするための部品などをまとめたファイル
@@ -183,12 +189,16 @@ func buildCreateUserInput(firebaseUID string, req *dto.SignUpRequest) (domain.Cr
 	if err := validateOptionalText(country, "country", 10); err != nil {
 		return domain.CreateUserInput{}, err
 	}
+	avatarURL := normalizeOptionalText(req.AvatarURL)
+	if err := validateOptionalURL(avatarURL, "avatar_url", maxAvatarURLLength); err != nil {
+		return domain.CreateUserInput{}, err
+	}
 
 	return domain.CreateUserInput{
 		FirebaseUID: firebaseUID,
 		Username:    username,
 		DisplayName: displayName,
-		AvatarURL:   req.AvatarURL,
+		AvatarURL:   avatarURL,
 		University:  university,
 		Faculty:     faculty,
 		Grade:       req.Grade,
@@ -207,7 +217,13 @@ func buildUpdateUserInput(req *dto.UpdateProfileRequest) (domain.UpdateUserInput
 		return domain.UpdateUserInput{}, err
 	}
 	avatarURL := normalizeOptionalText(req.AvatarURL)
+	if err := validateOptionalURL(avatarURL, "avatar_url", maxAvatarURLLength); err != nil {
+		return domain.UpdateUserInput{}, err
+	}
 	bio := normalizeOptionalText(req.Bio)
+	if err := validateOptionalText(bio, "bio", maxBioLength); err != nil {
+		return domain.UpdateUserInput{}, err
+	}
 	university := normalizeOptionalText(req.University)
 	if err := validateOptionalText(university, "university", 100); err != nil {
 		return domain.UpdateUserInput{}, err
@@ -256,6 +272,25 @@ func validateOptionalText(value *string, field string, maxLen int) error {
 
 	if utf8.RuneCountInString(strings.TrimSpace(*value)) > maxLen {
 		return errors.New(field + " must be at most " + strconv.Itoa(maxLen) + " characters")
+	}
+
+	return nil
+}
+
+func validateOptionalURL(value *string, field string, maxLen int) error {
+	if value == nil {
+		return nil
+	}
+	if err := validateOptionalText(value, field, maxLen); err != nil {
+		return err
+	}
+
+	parsed, err := url.ParseRequestURI(*value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return errors.New(field + " must be a valid http or https URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errors.New(field + " must be a valid http or https URL")
 	}
 
 	return nil

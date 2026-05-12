@@ -455,3 +455,66 @@ func TestGenerateQuestions_PrefersUnusedHighlightWithExplanation(t *testing.T) {
 		t.Fatalf("expected 1 question, got %d", len(questions))
 	}
 }
+
+func TestGenerateQuestionsSkipsInvalidGeneratedQuestion(t *testing.T) {
+	ctx := context.Background()
+	highlightIDOne := uuid.New()
+	highlightIDTwo := uuid.New()
+
+	llm := &mockLLMClient{
+		generateQuestions: func(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
+			return []domain.GeneratedQuestion{
+				{
+					Content:       "",
+					Options:       []string{"A", "B", "C", "D"},
+					CorrectAnswer: "A",
+					Explanation:   "解説",
+				},
+				{
+					Content:       "問題2",
+					Options:       []string{"A", "B", "C", "D"},
+					CorrectAnswer: "B",
+					Explanation:   "解説2",
+				},
+			}, nil
+		},
+	}
+
+	savedCount := 0
+	repo := &mockQuestionRepository{
+		saveGeneration: func(_ context.Context, _, _, _, _, _ string) (string, error) { return "gen-id", nil },
+		save: func(_ context.Context, q *domain.Question, meta *domain.QuestionMeta) error {
+			savedCount++
+			if q.Content != "問題2" {
+				t.Fatalf("unexpected saved question content: %q", q.Content)
+			}
+			return nil
+		},
+	}
+
+	resolver := &mockQuestionSourceResolver{
+		resolveHighlights: func(ctx context.Context, userID string, sourceType domain.SourceType, sourceID string, bookTitle string, bookAuthor string) ([]*domain.Highlight, error) {
+			return []*domain.Highlight{
+				{ID: highlightIDOne, Content: "ハイライト1"},
+				{ID: highlightIDTwo, Content: "ハイライト2"},
+			}, nil
+		},
+	}
+
+	uc := usecase.NewQuestionUsecase(repo, llm, resolver)
+
+	questions, err := uc.GenerateQuestions(ctx, domain.GenerateQuestionsInput{
+		CreatorID:     "user-123",
+		SourceType:    domain.SourceTypeKindleBook,
+		SourceID:      "B00BOOK",
+		QuestionCount: 2,
+		QuestionType:  domain.QuestionTypeMultipleChoice,
+		UserPlan:      "free",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(questions) != 1 || savedCount != 1 {
+		t.Fatalf("expected one valid generated question, got questions=%d saved=%d", len(questions), savedCount)
+	}
+}

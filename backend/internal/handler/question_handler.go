@@ -238,6 +238,9 @@ func (h *QuestionHandler) ManualGenerate(c echo.Context) error {
 	if len(req.HighlightIDs) < 5 {
 		return echo.NewHTTPError(http.StatusBadRequest, "minimum 5 highlights required")
 	}
+	if len(req.HighlightIDs) > domain.MaxHighlightsPerJob {
+		return echo.NewHTTPError(http.StatusBadRequest, "too many highlights requested")
+	}
 
 	highlightIDs := make([]uuid.UUID, 0, len(req.HighlightIDs))
 	for _, rawID := range req.HighlightIDs {
