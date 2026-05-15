@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,16 +22,21 @@ import (
 const (
 	ModelDefault = "gemini-2.5-flash-lite"
 
-	defaultTimeoutSeconds = 90
-	defaultMaxRetries     = 2
-	defaultRetryBaseDelay = 1500 * time.Millisecond
+	defaultTimeoutSeconds      = 90
+	defaultTotalTimeoutSeconds = 60
+	defaultMaxRetries          = 2
+	defaultRetryBaseDelay      = 1500 * time.Millisecond
+	defaultRetryMaxDelay       = 15 * time.Second
 )
 
 type Client struct {
-	apiKey     string
-	httpClient *http.Client
-	maxRetries int
-	retryDelay time.Duration
+	apiKey          string
+	httpClient      *http.Client
+	maxRetries      int
+	retryDelay      time.Duration
+	maxRetryDelay   time.Duration
+	totalTimeout    time.Duration
+	endpointBaseURL string
 }
 
 func NewClient(apiKey string) (*Client, error) {
@@ -42,8 +48,11 @@ func NewClient(apiKey string) (*Client, error) {
 		httpClient: &http.Client{
 			Timeout: readEnvDurationSeconds("GEMINI_TIMEOUT_SECONDS", defaultTimeoutSeconds),
 		},
-		maxRetries: readEnvInt("GEMINI_MAX_RETRIES", defaultMaxRetries),
-		retryDelay: readEnvDurationMilliseconds("GEMINI_RETRY_BASE_DELAY_MS", defaultRetryBaseDelay),
+		maxRetries:      readEnvInt("GEMINI_MAX_RETRIES", defaultMaxRetries),
+		retryDelay:      readEnvDurationMilliseconds("GEMINI_RETRY_BASE_DELAY_MS", defaultRetryBaseDelay),
+		maxRetryDelay:   readEnvDurationMilliseconds("GEMINI_RETRY_MAX_DELAY_MS", defaultRetryMaxDelay),
+		totalTimeout:    readEnvDurationSeconds("GEMINI_TOTAL_TIMEOUT_SECONDS", defaultTotalTimeoutSeconds),
+		endpointBaseURL: "https://generativelanguage.googleapis.com",
 	}, nil
 }
 
@@ -59,6 +68,12 @@ func (c *Client) ModelForPlan(plan string) string {
 }
 
 func (c *Client) GenerateQuestions(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
+	if c.totalTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.totalTimeout)
+		defer cancel()
+	}
+
 	prompt := BuildBatchGeneratorPrompt(points, questionType, customInstruction)
 	resp, err := c.generate(ctx, model, prompt)
 	if err != nil {
@@ -93,7 +108,7 @@ func (c *Client) GenerateQuestions(ctx context.Context, points []domain.Extracte
 func (c *Client) generate(ctx context.Context, model string, prompt string) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
-		resp, retryable, err := c.generateOnce(ctx, model, prompt)
+		resp, retryable, retryAfter, err := c.generateOnce(ctx, model, prompt)
 		if err == nil {
 			return resp, nil
 		}
@@ -103,7 +118,11 @@ func (c *Client) generate(ctx context.Context, model string, prompt string) (str
 			break
 		}
 
-		if err := waitRetry(ctx, c.retryDelay*time.Duration(attempt+1)); err != nil {
+		delay := retryAfter
+		if delay <= 0 {
+			delay = c.retryDelayForAttempt(attempt)
+		}
+		if err := waitRetry(ctx, delay); err != nil {
 			return "", fmt.Errorf("gemini: request canceled while waiting to retry: %w", err)
 		}
 	}
@@ -111,7 +130,7 @@ func (c *Client) generate(ctx context.Context, model string, prompt string) (str
 	return "", lastErr
 }
 
-func (c *Client) generateOnce(ctx context.Context, model string, prompt string) (string, bool, error) {
+func (c *Client) generateOnce(ctx context.Context, model string, prompt string) (string, bool, time.Duration, error) {
 	payload := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -121,40 +140,42 @@ func (c *Client) generateOnce(ctx context.Context, model string, prompt string) 
 			},
 		},
 		"generationConfig": map[string]interface{}{
-			"temperature": 0.7,
+			"temperature":      0.7,
+			"responseMimeType": "application/json",
 		},
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", false, fmt.Errorf("gemini: marshal request: %w", err)
+		return "", false, 0, fmt.Errorf("gemini: marshal request: %w", err)
 	}
 
 	endpoint := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
+		"%s/v1beta/models/%s:generateContent",
+		strings.TrimRight(c.endpointBaseURL, "/"),
 		url.PathEscape(model),
-		url.QueryEscape(c.apiKey),
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return "", false, fmt.Errorf("gemini: create request: %w", err)
+		return "", false, 0, fmt.Errorf("gemini: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", c.apiKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", isRetryableTransportError(err), fmt.Errorf("gemini: request failed: %w", err)
+		return "", isRetryableTransportError(err), 0, fmt.Errorf("gemini: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", false, fmt.Errorf("gemini: read response: %w", err)
+		return "", false, 0, fmt.Errorf("gemini: read response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
-		return "", isRetryableStatus(resp.StatusCode), fmt.Errorf("gemini: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return "", isRetryableStatus(resp.StatusCode), retryAfter(resp.Header), fmt.Errorf("gemini: status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	var result struct {
@@ -167,21 +188,22 @@ func (c *Client) generateOnce(ctx context.Context, model string, prompt string) 
 		} `json:"candidates"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
+		// DEBUG_GEMINI_RAW is for local development only; it can include model output.
 		if os.Getenv("DEBUG_GEMINI_RAW") != "" {
-			return "", false, fmt.Errorf("gemini: decode response: %w: %s", err, string(respBody))
+			return "", false, 0, fmt.Errorf("gemini: decode response: %w: %s", err, string(respBody))
 		}
-		return "", false, fmt.Errorf("gemini: decode response: %w", err)
+		return "", false, 0, fmt.Errorf("gemini: decode response: %w", err)
 	}
 
 	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
-		return "", false, fmt.Errorf("gemini: empty response")
+		return "", false, 0, fmt.Errorf("gemini: empty response")
 	}
 
 	var sb strings.Builder
 	for _, part := range result.Candidates[0].Content.Parts {
 		sb.WriteString(part.Text)
 	}
-	return sb.String(), false, nil
+	return sb.String(), false, 0, nil
 }
 
 func parseJSON(raw string, v interface{}) error {
@@ -190,7 +212,21 @@ func parseJSON(raw string, v interface{}) error {
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")
 	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "{") {
+		if extracted, ok := extractJSONObject(raw); ok {
+			raw = extracted
+		}
+	}
 	return json.Unmarshal([]byte(raw), v)
+}
+
+func extractJSONObject(raw string) (string, bool) {
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start < 0 || end <= start {
+		return "", false
+	}
+	return strings.TrimSpace(raw[start : end+1]), true
 }
 
 func readEnvInt(key string, fallback int) int {
@@ -238,6 +274,35 @@ func isRetryableTransportError(err error) bool {
 
 func isRetryableStatus(statusCode int) bool {
 	return statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError
+}
+
+func (c *Client) retryDelayForAttempt(attempt int) time.Duration {
+	delay := c.retryDelay * time.Duration(1<<attempt)
+	if c.maxRetryDelay > 0 && delay > c.maxRetryDelay {
+		delay = c.maxRetryDelay
+	}
+	if delay <= 0 {
+		return 0
+	}
+	jitter := time.Duration(rand.Int64N(max(int64(delay/2), 1)))
+	return delay + jitter
+}
+
+func retryAfter(header http.Header) time.Duration {
+	raw := strings.TrimSpace(header.Get("Retry-After"))
+	if raw == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(raw); err == nil {
+		delay := time.Until(when)
+		if delay > 0 {
+			return delay
+		}
+	}
+	return 0
 }
 
 func waitRetry(ctx context.Context, delay time.Duration) error {

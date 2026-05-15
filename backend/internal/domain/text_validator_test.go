@@ -8,7 +8,7 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
-func TestValidateTextLength(t *testing.T) {
+func TestValidateRequiredTextLength(t *testing.T) {
 	testCases := []struct {
 		name    string
 		input   string
@@ -49,7 +49,7 @@ func TestValidateTextLength(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := domain.ValidateTextLength(tc.input, tc.max)
+			err := domain.ValidateRequiredTextLength(tc.input, tc.max)
 			assertInvalidInputState(t, err, tc.wantErr)
 		})
 	}

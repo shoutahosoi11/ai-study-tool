@@ -30,7 +30,7 @@ function formatCommentDate(dateStr: string) {
 
 function toQuestionShape(postQuestion: {
   id: string;
-  question_type: "multiple_choice" | "descriptive";
+  question_type: "multiple_choice";
   content: string;
   options: string[];
   correct_answer: string;

@@ -7,7 +7,7 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
-  User,
+  type User,
 } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -20,6 +20,20 @@ const firebaseConfig = {
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
 export const auth = getAuth(app)
+
+let authReadyPromise: Promise<void> | null = null
+
+function waitForAuthReady(): Promise<void> {
+  if (authReadyPromise) return authReadyPromise
+
+  authReadyPromise = new Promise(function (resolve) {
+    const unsubscribe = onAuthStateChanged(auth, function () {
+      unsubscribe()
+      resolve()
+    })
+  })
+  return authReadyPromise
+}
 
 export async function signInWithEmail(email: string, password: string) {
   return signInWithEmailAndPassword(auth, email, password)
@@ -38,10 +52,11 @@ export async function signOutUser() {
   return signOut(auth)
 }
 
-export async function getIdToken(): Promise<string | null> {
+export async function getIdToken(forceRefresh = false): Promise<string | null> {
+  await waitForAuthReady()
   const user = auth.currentUser
   if (!user) return null
-  return user.getIdToken()
+  return user.getIdToken(forceRefresh)
 }
 
 export function onAuthChanged(callback: (user: User | null) => void) {

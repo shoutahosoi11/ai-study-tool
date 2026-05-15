@@ -18,7 +18,7 @@ import (
 
 func TestBuildCreateUserInputDefaultsDisplayNameToUsername(t *testing.T) {
 	req := &dto.SignUpRequest{
-		Username: "  alice  ",
+		Username: "  @Alice_1  ",
 	}
 
 	input, err := buildCreateUserInput("firebase-uid-1", req)
@@ -28,10 +28,10 @@ func TestBuildCreateUserInputDefaultsDisplayNameToUsername(t *testing.T) {
 	if input.FirebaseUID != "firebase-uid-1" {
 		t.Fatalf("unexpected firebase uid: %s", input.FirebaseUID)
 	}
-	if input.Username != "alice" {
+	if input.Username != "alice_1" {
 		t.Fatalf("unexpected username: %s", input.Username)
 	}
-	if input.DisplayName != "alice" {
+	if input.DisplayName != "alice_1" {
 		t.Fatalf("unexpected display name: %s", input.DisplayName)
 	}
 }
@@ -86,21 +86,32 @@ func TestBuildCreateUserInputRejectsShortUsername(t *testing.T) {
 	}
 }
 
+func TestBuildCreateUserInputRejectsInvalidUsernameCharacters(t *testing.T) {
+	req := &dto.SignUpRequest{
+		Username: "alice!",
+	}
+
+	_, err := buildCreateUserInput("firebase-uid-1", req)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestBuildUpdateUserInputUsesDTOBoundary(t *testing.T) {
 	req := &dto.UpdateProfileRequest{
-		Username:    "  alice  ",
+		Username:    "  @Alice  ",
 		DisplayName: "  Alice  ",
 	}
 
-	input, err := buildUpdateUserInput(req)
+	input, err := buildUpdateUserInput(req, map[string]bool{"username": true, "display_name": true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if input.Username != "alice" {
-		t.Fatalf("unexpected username: %s", input.Username)
+	if !input.Username.Set || input.Username.Value == nil || *input.Username.Value != "alice" {
+		t.Fatalf("unexpected username: %#v", input.Username)
 	}
-	if input.DisplayName != "Alice" {
-		t.Fatalf("unexpected display name: %s", input.DisplayName)
+	if !input.DisplayName.Set || input.DisplayName.Value == nil || *input.DisplayName.Value != "Alice" {
+		t.Fatalf("unexpected display name: %#v", input.DisplayName)
 	}
 }
 
@@ -116,18 +127,41 @@ func TestBuildUpdateUserInputNormalizesOptionalText(t *testing.T) {
 		University:  &university,
 	}
 
-	input, err := buildUpdateUserInput(req)
+	input, err := buildUpdateUserInput(req, map[string]bool{
+		"username":     true,
+		"display_name": true,
+		"avatar_url":   true,
+		"bio":          true,
+		"university":   true,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if input.AvatarURL == nil || *input.AvatarURL != "https://example.com/avatar.png" {
+	if !input.AvatarURL.Set || input.AvatarURL.Value == nil || *input.AvatarURL.Value != "https://example.com/avatar.png" {
 		t.Fatalf("unexpected avatar url: %#v", input.AvatarURL)
 	}
-	if input.Bio != nil {
-		t.Fatalf("expected nil bio, got %#v", *input.Bio)
+	if !input.Bio.Set || input.Bio.Value != nil {
+		t.Fatalf("expected nil bio clear, got %#v", input.Bio)
 	}
-	if input.University == nil || *input.University != "Example University" {
+	if !input.University.Set || input.University.Value == nil || *input.University.Value != "Example University" {
 		t.Fatalf("unexpected university: %#v", input.University)
+	}
+}
+
+func TestBuildUpdateUserInputPreservesOmittedFields(t *testing.T) {
+	req := &dto.UpdateProfileRequest{
+		Bio: stringPtr("updated bio"),
+	}
+
+	input, err := buildUpdateUserInput(req, map[string]bool{"bio": true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if input.Username.Set {
+		t.Fatalf("expected username to be omitted, got %#v", input.Username)
+	}
+	if !input.Bio.Set || input.Bio.Value == nil || *input.Bio.Value != "updated bio" {
+		t.Fatalf("unexpected bio: %#v", input.Bio)
 	}
 }
 
@@ -139,7 +173,7 @@ func TestBuildUpdateUserInputRejectsLongBio(t *testing.T) {
 		Bio:         &bio,
 	}
 
-	_, err := buildUpdateUserInput(req)
+	_, err := buildUpdateUserInput(req, map[string]bool{"username": true, "display_name": true, "bio": true})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -153,7 +187,7 @@ func TestBuildUpdateUserInputRejectsInvalidAvatarURL(t *testing.T) {
 		AvatarURL:   &avatarURL,
 	}
 
-	_, err := buildUpdateUserInput(req)
+	_, err := buildUpdateUserInput(req, map[string]bool{"username": true, "display_name": true, "avatar_url": true})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -313,8 +347,8 @@ func TestUpdateProfileReturnsConflictWhenUsernameAlreadyExists(t *testing.T) {
 			if id != currentUserID {
 				t.Fatalf("unexpected update id: %s", id)
 			}
-			if input.Username != "alice" {
-				t.Fatalf("unexpected username: %s", input.Username)
+			if !input.Username.Set || input.Username.Value == nil || *input.Username.Value != "alice" {
+				t.Fatalf("unexpected username: %#v", input.Username)
 			}
 			return nil, domain.ErrAlreadyExists
 		},
@@ -374,4 +408,8 @@ func TestGetUserWritesPublicProfileResponse(t *testing.T) {
 	if response.Username != "alice" {
 		t.Fatalf("unexpected username: %s", response.Username)
 	}
+}
+
+func stringPtr(value string) *string {
+	return &value
 }

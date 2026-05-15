@@ -1,10 +1,6 @@
 package domain
 
-import (
-	"time"
-
-	"github.com/google/uuid"
-)
+import "time"
 
 const (
 	QuestionPerspectiveDefinition    = "definition"
@@ -24,13 +20,6 @@ var QuestionPerspectiveOrder = []string{
 	QuestionPerspectiveApplication,
 }
 
-type PendingHighlightUserStat struct {
-	UserID          uuid.UUID
-	PendingCount    int
-	TotalCount      int
-	OldestPendingAt time.Time
-}
-
 type BookStock struct {
 	BookKey           string
 	BookTitle         string
@@ -47,15 +36,4 @@ type QuestionGenerationBookCandidate struct {
 	PendingHighlightCount   int
 	UnansweredQuestionCount int
 	LatestHighlightAt       time.Time
-}
-
-type RegenerationTask struct {
-	ID                    uuid.UUID
-	UserID                uuid.UUID
-	HighlightID           uuid.UUID
-	Highlight             *Highlight
-	RetryCount            int
-	RequestedAt           time.Time
-	RequestedFromQuestion *uuid.UUID
-	Reason                string
 }

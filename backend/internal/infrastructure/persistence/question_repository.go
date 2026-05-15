@@ -25,6 +25,22 @@ type questionExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+type questionInsertRow struct {
+	QuestionID    uuid.UUID
+	UserID        uuid.UUID
+	SourceType    string
+	QuestionType  string
+	Body          string
+	Options       pqtype.NullRawMessage
+	CorrectAnswer string
+	Explanation   sql.NullString
+	IsAIGenerated bool
+	GenerationID  uuid.NullUUID
+	HighlightID   uuid.NullUUID
+	Perspective   string
+	Version       int
+}
+
 func NewQuestionRepository(db *sql.DB) domain.QuestionRepository {
 	return &questionRepository{
 		db:      db,
@@ -117,6 +133,135 @@ WHERE user_id = $1
 	return nil
 }
 
+func supersedeActiveQuestionsForHighlights(ctx context.Context, execer questionExecer, userID uuid.UUID, highlightIDs []uuid.UUID) error {
+	if len(highlightIDs) == 0 {
+		return nil
+	}
+
+	_, err := execer.ExecContext(ctx, `
+UPDATE questions
+SET superseded_at = NOW(),
+    updated_at = NOW()
+WHERE user_id = $1
+  AND highlight_id::text = ANY($2)
+  AND superseded_at IS NULL
+`, userID, pq.Array(uuidTextSlice(uniqueUUIDs(highlightIDs))))
+	return err
+}
+
+func buildQuestionInsertRows(replacements []domain.QuestionReplacement) ([]questionInsertRow, []uuid.UUID, error) {
+	rows := make([]questionInsertRow, 0, len(replacements))
+	highlightIDs := make([]uuid.UUID, 0, len(replacements))
+
+	for _, replacement := range replacements {
+		if replacement.Question == nil || replacement.Meta == nil || replacement.HighlightID == uuid.Nil {
+			return nil, nil, domain.ErrInvalidInput
+		}
+
+		row, err := buildQuestionInsertRow(replacement.Question, replacement.Meta)
+		if err != nil {
+			return nil, nil, err
+		}
+		rows = append(rows, row)
+		highlightIDs = append(highlightIDs, replacement.HighlightID)
+	}
+
+	return rows, highlightIDs, nil
+}
+
+func buildQuestionInsertRow(q *domain.Question, meta *domain.QuestionMeta) (questionInsertRow, error) {
+	optionsJSON, err := json.Marshal(q.Options)
+	if err != nil {
+		return questionInsertRow{}, fmt.Errorf("question repo: marshal options: %w", err)
+	}
+
+	questionID, err := uuid.Parse(q.ID)
+	if err != nil {
+		return questionInsertRow{}, fmt.Errorf("question repo: parse question id: %w", err)
+	}
+
+	creatorID, err := uuid.Parse(meta.CreatorID)
+	if err != nil {
+		return questionInsertRow{}, fmt.Errorf("question repo: parse creator id: %w", err)
+	}
+
+	return questionInsertRow{
+		QuestionID:    questionID,
+		UserID:        creatorID,
+		SourceType:    string(meta.SourceType),
+		QuestionType:  string(q.QuestionType),
+		Body:          q.Content,
+		Options:       pqtype.NullRawMessage{RawMessage: optionsJSON, Valid: true},
+		CorrectAnswer: q.CorrectAnswer,
+		Explanation:   sql.NullString{String: q.Explanation, Valid: strings.TrimSpace(q.Explanation) != ""},
+		IsAIGenerated: meta.IsAIGenerated,
+		GenerationID:  parseOptionalUUID(meta.GenerationID),
+		HighlightID:   parseOptionalUUID(meta.HighlightID),
+		Perspective:   normalizePerspective(meta.Perspective),
+		Version:       normalizeQuestionVersion(meta.Version),
+	}, nil
+}
+
+func insertQuestions(ctx context.Context, execer questionExecer, rows []questionInsertRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	var builder strings.Builder
+	builder.WriteString(`
+INSERT INTO questions (
+    id,
+    user_id,
+    source_type,
+    question_type,
+    body,
+    options,
+    correct_answer,
+    explanation,
+    is_ai_generated,
+    generation_id,
+    highlight_id,
+    perspective,
+    version
+) VALUES `)
+
+	args := make([]any, 0, len(rows)*13)
+	for index, row := range rows {
+		if index > 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString("(")
+		start := index*13 + 1
+		for offset := 0; offset < 13; offset++ {
+			if offset > 0 {
+				builder.WriteString(", ")
+			}
+			builder.WriteString(fmt.Sprintf("$%d", start+offset))
+		}
+		builder.WriteString(")")
+		args = append(args,
+			row.QuestionID,
+			row.UserID,
+			row.SourceType,
+			row.QuestionType,
+			row.Body,
+			row.Options,
+			row.CorrectAnswer,
+			row.Explanation,
+			row.IsAIGenerated,
+			row.GenerationID,
+			row.HighlightID,
+			row.Perspective,
+			row.Version,
+		)
+	}
+
+	if _, err := execer.ExecContext(ctx, builder.String(), args...); err != nil {
+		return err
+	}
+	return nil
+}
+
 func rollbackTx(tx *sql.Tx) {
 	if tx != nil {
 		_ = tx.Rollback()
@@ -127,6 +272,10 @@ func (r *questionRepository) ReplaceActiveQuestionsForHighlights(ctx context.Con
 	if len(replacements) == 0 {
 		return nil
 	}
+	rows, highlightIDs, err := buildQuestionInsertRows(replacements)
+	if err != nil {
+		return fmt.Errorf("question repo: build replacement questions: %w", err)
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -134,13 +283,11 @@ func (r *questionRepository) ReplaceActiveQuestionsForHighlights(ctx context.Con
 	}
 	defer rollbackTx(tx)
 
-	for _, replacement := range replacements {
-		if err := supersedeActiveQuestionsForHighlight(ctx, tx, userID, replacement.HighlightID); err != nil {
-			return err
-		}
-		if err := insertQuestion(ctx, tx, replacement.Question, replacement.Meta); err != nil {
-			return fmt.Errorf("question repo: insert replacement question: %w", err)
-		}
+	if err := supersedeActiveQuestionsForHighlights(ctx, tx, userID, highlightIDs); err != nil {
+		return fmt.Errorf("question repo: supersede replacement questions: %w", err)
+	}
+	if err := insertQuestions(ctx, tx, rows); err != nil {
+		return fmt.Errorf("question repo: insert replacement questions: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -162,13 +309,15 @@ func (r *questionRepository) CompleteQuestionGenerationJob(
 	}
 	defer rollbackTx(tx)
 
-	for _, replacement := range replacements {
-		if err := supersedeActiveQuestionsForHighlight(ctx, tx, userID, replacement.HighlightID); err != nil {
-			return err
-		}
-		if err := insertQuestion(ctx, tx, replacement.Question, replacement.Meta); err != nil {
-			return fmt.Errorf("question repo: insert job question: %w", err)
-		}
+	rows, replacementHighlightIDs, err := buildQuestionInsertRows(replacements)
+	if err != nil {
+		return fmt.Errorf("question repo: build job questions: %w", err)
+	}
+	if err := supersedeActiveQuestionsForHighlights(ctx, tx, userID, replacementHighlightIDs); err != nil {
+		return fmt.Errorf("question repo: supersede job questions: %w", err)
+	}
+	if err := insertQuestions(ctx, tx, rows); err != nil {
+		return fmt.Errorf("question repo: insert job questions: %w", err)
 	}
 
 	if len(highlightIDs) > 0 {
@@ -192,7 +341,10 @@ WHERE user_id = $1
 	if _, err := tx.ExecContext(ctx, `
 UPDATE question_generation_jobs
 SET status = $3,
+    last_error = NULL,
+    processing_started_at = NULL,
     completed_at = NOW(),
+    failed_at = NULL,
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
@@ -570,22 +722,6 @@ func (r *questionRepository) GetByID(ctx context.Context, id string) (*domain.Qu
 	}, nil
 }
 
-func (r *questionRepository) UpdateStats(ctx context.Context, questionID string, isCorrect bool) error {
-	id, err := uuid.Parse(questionID)
-	if err != nil {
-		return fmt.Errorf("question repo: parse question id for update stats: %w", err)
-	}
-
-	if err := r.queries.UpdateQuestionStats(ctx, sqlcgen.UpdateQuestionStatsParams{
-		ID:        id,
-		IsCorrect: isCorrect,
-	}); err != nil {
-		return fmt.Errorf("question repo: update stats: %w", err)
-	}
-
-	return nil
-}
-
 func (r *questionRepository) SaveGeneration(ctx context.Context, userID, sourceType, sourceID, promptUsed, modelUsed string) (string, error) {
 	query := `
 INSERT INTO question_generations (user_id, source_type, source_id, prompt_used, model_used)
@@ -734,366 +870,6 @@ WHERE id = $1
 	if rowsAffected == 0 {
 		return domain.ErrNotFound
 	}
-	return nil
-}
-
-func (r *questionRepository) QueueHighlightsWithinDailyLimit(
-	ctx context.Context,
-	userID uuid.UUID,
-	day time.Time,
-	limit int,
-	highlightIDs []uuid.UUID,
-	questionCountByHighlightID map[uuid.UUID]int,
-	requestedAt time.Time,
-) ([]uuid.UUID, bool, error) {
-	if len(highlightIDs) == 0 || len(questionCountByHighlightID) == 0 {
-		return make([]uuid.UUID, 0), true, nil
-	}
-	if limit <= 0 {
-		return nil, false, nil
-	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, false, fmt.Errorf("question repo: begin sync queue transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	queueQuery := `
-UPDATE highlights
-SET
-    status = 'pending',
-    retry_count = 0,
-    generation_requested_at = $3,
-    processing_started_at = NULL,
-    completed_at = NULL,
-    failed_at = NULL,
-    last_error = NULL,
-    updated_at = NOW()
-WHERE user_id = $1
-  AND id::text = ANY($2)
-  AND status NOT IN ('pending', 'processing')
-RETURNING id`
-
-	rows, err := tx.QueryContext(ctx, queueQuery, userID, pq.Array(uuidStrings(highlightIDs)), requestedAt.UTC())
-	if err != nil {
-		return nil, false, fmt.Errorf("question repo: queue sync highlights: %w", err)
-	}
-	defer rows.Close()
-
-	queuedIDs := make([]uuid.UUID, 0, len(highlightIDs))
-	queuedQuestionCount := 0
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, false, fmt.Errorf("question repo: scan sync queued highlight id: %w", err)
-		}
-		queuedIDs = append(queuedIDs, id)
-		queuedQuestionCount += questionCountByHighlightID[id]
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("question repo: rows sync queued highlight ids: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, false, fmt.Errorf("question repo: close sync queued highlight rows: %w", err)
-	}
-
-	if queuedQuestionCount <= 0 {
-		if err := tx.Commit(); err != nil {
-			return nil, false, fmt.Errorf("question repo: commit empty sync queue transaction: %w", err)
-		}
-		return queuedIDs, true, nil
-	}
-
-	reserveQuery := `
-INSERT INTO user_daily_generation_counts (user_id, date, count)
-VALUES ($1, $2, $3)
-ON CONFLICT (user_id, date)
-DO UPDATE SET
-    count = user_daily_generation_counts.count + EXCLUDED.count
-WHERE user_daily_generation_counts.count + EXCLUDED.count <= $4
-RETURNING count`
-
-	var count int
-	err = tx.QueryRowContext(ctx, reserveQuery, userID, day.Format("2006-01-02"), queuedQuestionCount, limit).Scan(&count)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("question repo: reserve sync daily generated count: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, false, fmt.Errorf("question repo: commit sync queue transaction: %w", err)
-	}
-
-	return queuedIDs, true, nil
-}
-
-func (r *questionRepository) EnqueueRegeneration(ctx context.Context, userID string, highlightID uuid.UUID, questionID string) error {
-	uID, err := uuid.Parse(userID)
-	if err != nil {
-		return fmt.Errorf("question repo: parse user id for regeneration queue: %w", err)
-	}
-
-	query := `
-INSERT INTO regeneration_queue (
-    user_id,
-    highlight_id,
-    requested_from_question_id,
-    reason,
-    status,
-    requested_at,
-    updated_at
-) VALUES ($1, $2, $3, 'answer_submitted', 'pending', NOW(), NOW())
-ON CONFLICT DO NOTHING`
-
-	if _, err := r.db.ExecContext(ctx, query, uID, highlightID, parseOptionalUUID(questionID)); err != nil {
-		return fmt.Errorf("question repo: enqueue regeneration: %w", err)
-	}
-
-	return nil
-}
-
-func (r *questionRepository) ClaimPendingRegenerationTasks(ctx context.Context, limit int) ([]*domain.RegenerationTask, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-
-	query := `
-WITH claimed AS (
-    SELECT id
-    FROM regeneration_queue
-    WHERE status = 'pending'
-      AND requested_at <= NOW()
-    ORDER BY requested_at ASC
-    LIMIT $1
-    FOR UPDATE SKIP LOCKED
-),
-updated AS (
-    UPDATE regeneration_queue AS rq
-    SET
-        status = 'processing',
-        processing_started_at = NOW(),
-        updated_at = NOW()
-    FROM claimed
-    WHERE rq.id = claimed.id
-    RETURNING
-        rq.id,
-        rq.user_id,
-        rq.highlight_id,
-        rq.retry_count,
-        rq.requested_at,
-        rq.requested_from_question_id,
-        rq.reason
-)
-SELECT
-    updated.id,
-    updated.user_id,
-    updated.highlight_id,
-    updated.retry_count,
-    updated.requested_at,
-    updated.requested_from_question_id,
-    updated.reason,
-    h.id,
-    h.user_id,
-    h.book_id,
-    h.book_title,
-    h.book_author,
-    h.asin,
-    h.content,
-    h.explanation,
-    h.content_hash,
-    h.location,
-    h.highlighted_at,
-    h.source,
-    h.source_app,
-    h.source_url,
-    h.status,
-    h.retry_count,
-    h.last_error,
-    h.generation_requested_at,
-    h.processing_started_at,
-    h.completed_at,
-    h.failed_at,
-    h.created_at,
-    h.updated_at
-FROM updated
-JOIN highlights h
-  ON h.id = updated.highlight_id`
-
-	rows, err := r.db.QueryContext(ctx, query, limit)
-	if err != nil {
-		return nil, fmt.Errorf("question repo: claim regeneration tasks: %w", err)
-	}
-	defer rows.Close()
-
-	tasks := make([]*domain.RegenerationTask, 0)
-	for rows.Next() {
-		var (
-			task                domain.RegenerationTask
-			requestedFromQID    uuid.NullUUID
-			highlightBookID     uuid.NullUUID
-			highlightBookTitle  sql.NullString
-			highlightBookAuthor sql.NullString
-			highlightASIN       sql.NullString
-			highlightExplain    sql.NullString
-			highlightHash       sql.NullString
-			highlightLocation   sql.NullString
-			highlightedAt       sql.NullTime
-			highlightSource     sql.NullString
-			highlightSourceApp  sql.NullString
-			highlightSourceURL  sql.NullString
-			highlightStatus     sql.NullString
-			highlightLastError  sql.NullString
-			highlightRequestAt  sql.NullTime
-			highlightProcessAt  sql.NullTime
-			highlightDoneAt     sql.NullTime
-			highlightFailedAt   sql.NullTime
-			highlightCreatedAt  time.Time
-			highlightUpdatedAt  time.Time
-			highlight           domain.Highlight
-		)
-
-		if err := rows.Scan(
-			&task.ID,
-			&task.UserID,
-			&task.HighlightID,
-			&task.RetryCount,
-			&task.RequestedAt,
-			&requestedFromQID,
-			&task.Reason,
-			&highlight.ID,
-			&highlight.UserID,
-			&highlightBookID,
-			&highlightBookTitle,
-			&highlightBookAuthor,
-			&highlightASIN,
-			&highlight.Content,
-			&highlightExplain,
-			&highlightHash,
-			&highlightLocation,
-			&highlightedAt,
-			&highlightSource,
-			&highlightSourceApp,
-			&highlightSourceURL,
-			&highlightStatus,
-			&highlight.RetryCount,
-			&highlightLastError,
-			&highlightRequestAt,
-			&highlightProcessAt,
-			&highlightDoneAt,
-			&highlightFailedAt,
-			&highlightCreatedAt,
-			&highlightUpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("question repo: scan regeneration task: %w", err)
-		}
-
-		highlight.BookID = fromNullUUID(highlightBookID)
-		highlight.BookTitle = fromNullString(highlightBookTitle)
-		highlight.BookAuthor = fromNullString(highlightBookAuthor)
-		highlight.ASIN = fromNullString(highlightASIN)
-		highlight.Explanation = fromNullString(highlightExplain)
-		highlight.ContentHash = fromNullString(highlightHash)
-		highlight.Location = fromNullString(highlightLocation)
-		highlight.HighlightedAt = fromNullTime(highlightedAt)
-		highlight.Source = fromNullStringValue(highlightSource)
-		highlight.SourceApp = fromNullString(highlightSourceApp)
-		highlight.SourceURL = fromNullString(highlightSourceURL)
-		highlight.Status = domain.HighlightStatus(strings.TrimSpace(highlightStatus.String))
-		highlight.LastError = fromNullString(highlightLastError)
-		highlight.ProcessingAt = fromNullTime(highlightProcessAt)
-		highlight.CompletedAt = fromNullTime(highlightDoneAt)
-		highlight.FailedAt = fromNullTime(highlightFailedAt)
-		highlight.CreatedAt = highlightCreatedAt
-		highlight.UpdatedAt = highlightUpdatedAt
-		if highlightRequestAt.Valid {
-			highlight.RequestedAt = highlightRequestAt.Time
-		} else {
-			highlight.RequestedAt = highlightCreatedAt
-		}
-
-		if requestedFromQID.Valid {
-			task.RequestedFromQuestion = &requestedFromQID.UUID
-		}
-		task.Highlight = &highlight
-		tasks = append(tasks, &task)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("question repo: rows regeneration task: %w", err)
-	}
-
-	return tasks, nil
-}
-
-func (r *questionRepository) DeferRegenerationTasks(ctx context.Context, taskIDs []uuid.UUID, lastError string) error {
-	if len(taskIDs) == 0 {
-		return nil
-	}
-
-	query := `
-UPDATE regeneration_queue
-SET
-    status = 'pending',
-    requested_at = NOW() + INTERVAL '1 hour',
-    processing_started_at = NULL,
-    last_error = LEFT($2, 500),
-    updated_at = NOW()
-WHERE id::text = ANY($1)`
-
-	if _, err := r.db.ExecContext(ctx, query, pq.Array(uuidTextSlice(taskIDs)), strings.TrimSpace(lastError)); err != nil {
-		return fmt.Errorf("question repo: defer regeneration tasks: %w", err)
-	}
-
-	return nil
-}
-
-func (r *questionRepository) MarkRegenerationTasksCompleted(ctx context.Context, taskIDs []uuid.UUID) error {
-	if len(taskIDs) == 0 {
-		return nil
-	}
-
-	query := `
-UPDATE regeneration_queue
-SET
-    status = 'completed',
-    completed_at = NOW(),
-    failed_at = NULL,
-    last_error = NULL,
-    updated_at = NOW()
-WHERE id::text = ANY($1)`
-
-	if _, err := r.db.ExecContext(ctx, query, pq.Array(uuidTextSlice(taskIDs))); err != nil {
-		return fmt.Errorf("question repo: mark regeneration completed: %w", err)
-	}
-
-	return nil
-}
-
-func (r *questionRepository) MarkRegenerationTasksFailed(ctx context.Context, taskIDs []uuid.UUID, lastError string, maxRetry int) error {
-	if len(taskIDs) == 0 {
-		return nil
-	}
-	if maxRetry <= 0 {
-		maxRetry = 3
-	}
-
-	query := `
-UPDATE regeneration_queue
-SET
-    retry_count = retry_count + 1,
-    status = CASE WHEN retry_count + 1 >= $3 THEN 'failed' ELSE 'pending' END,
-    processing_started_at = NULL,
-    failed_at = CASE WHEN retry_count + 1 >= $3 THEN NOW() ELSE failed_at END,
-    last_error = LEFT($2, 500),
-    updated_at = NOW()
-WHERE id::text = ANY($1)`
-
-	if _, err := r.db.ExecContext(ctx, query, pq.Array(uuidTextSlice(taskIDs)), strings.TrimSpace(lastError), maxRetry); err != nil {
-		return fmt.Errorf("question repo: mark regeneration failed: %w", err)
-	}
-
 	return nil
 }
 

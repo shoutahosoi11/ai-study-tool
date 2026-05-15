@@ -43,9 +43,14 @@ func (s *stubQuestionUsecase) SaveQuestion(ctx context.Context, userID string, q
 	return s.saveQuestion(ctx, userID, questionID, note)
 }
 
-type stubQuestionSyncUsecase struct{}
+type stubQuestionSyncUsecase struct {
+	syncQuestionStock func(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
+}
 
 func (s *stubQuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error) {
+	if s.syncQuestionStock != nil {
+		return s.syncQuestionStock(ctx, user)
+	}
 	return &usecase.SyncQuestionStockResult{}, nil
 }
 
@@ -73,7 +78,7 @@ func TestSaveQuestionTrimsNoteBeforeSaving(t *testing.T) {
 			savedNote = note
 			return nil
 		},
-	}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID))
+	}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/questions/q-1/save", strings.NewReader(`{"note":"  keep this  "}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
@@ -165,7 +170,7 @@ func questionHandlerUserUsecase(userID uuid.UUID) *stubUserUsecase {
 func TestListPreparedRejectsNonNumericQuestionCount(t *testing.T) {
 	e := echo.New()
 	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
-	handler := NewQuestionHandler(&stubQuestionUsecase{}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID))
+	handler := NewQuestionHandler(&stubQuestionUsecase{}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/questions/prepared?source_type=kindle_book&source_id=book-1&question_count=abc", nil)
 	rec := httptest.NewRecorder()
@@ -185,7 +190,7 @@ func TestListPreparedRejectsNonNumericQuestionCount(t *testing.T) {
 func TestListPreparedRejectsNegativeQuestionCount(t *testing.T) {
 	e := echo.New()
 	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
-	handler := NewQuestionHandler(&stubQuestionUsecase{}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID))
+	handler := NewQuestionHandler(&stubQuestionUsecase{}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/questions/prepared?source_type=kindle_book&source_id=book-1&question_count=-1", nil)
 	rec := httptest.NewRecorder()
@@ -205,7 +210,7 @@ func TestListPreparedRejectsNegativeQuestionCount(t *testing.T) {
 func TestListPreparedAllowsZeroQuestionCount(t *testing.T) {
 	e := echo.New()
 	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
-	handler := NewQuestionHandler(&stubQuestionUsecase{}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID))
+	handler := NewQuestionHandler(&stubQuestionUsecase{}, &stubQuestionSyncUsecase{}, questionHandlerUserUsecase(userID), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/questions/prepared?source_type=kindle_book&source_id=book-1&question_count=0", nil)
 	rec := httptest.NewRecorder()
@@ -218,5 +223,34 @@ func TestListPreparedAllowsZeroQuestionCount(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestSyncStockMapsTemporaryErrorToServiceUnavailable(t *testing.T) {
+	e := echo.New()
+	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	handler := NewQuestionHandler(
+		&stubQuestionUsecase{},
+		&stubQuestionSyncUsecase{
+			syncQuestionStock: func(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error) {
+				return nil, context.DeadlineExceeded
+			},
+		},
+		questionHandlerUserUsecase(userID),
+		nil,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/questions/sync", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	err := handler.SyncStock(c)
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("expected echo.HTTPError, got %T", err)
+	}
+	if httpErr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", httpErr.Code)
 	}
 }

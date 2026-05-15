@@ -95,8 +95,8 @@ export async function generateQuestions(
       question_count: options?.questionCount ?? 0,
       book_title: options?.bookTitle ?? '',
       book_author: options?.bookAuthor ?? '',
-      highlight_start_index: options?.highlightStartIndex ?? undefined,
-      highlight_end_index: options?.highlightEndIndex ?? undefined,
+      highlight_start_index: options?.highlightStartIndex,
+      highlight_end_index: options?.highlightEndIndex,
     },
   })
 

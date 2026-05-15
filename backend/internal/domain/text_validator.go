@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 )
 
-func ValidateTextLength(input string, max int) error {
+func ValidateRequiredTextLength(input string, max int) error {
 	length := utf8.RuneCountInString(input)
 	if length == 0 || length > max {
 		return ErrInvalidInput

@@ -13,7 +13,6 @@ import (
 // TokenVerifier は Firebase のトークン検証を抽象化するための interface。
 // auth.Client の具体的な実装に直接依存しないようにして、テストで差し替えやすくしている。
 type TokenVerifier interface {
-	VerifyIDToken(ctx context.Context, idToken string) (*auth.Token, error)
 	VerifyIDTokenAndCheckRevoked(ctx context.Context, idToken string) (*auth.Token, error)
 }
 

@@ -4,9 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -17,6 +17,7 @@ import (
 const (
 	maxKindleImportItems = 1000
 	maxHashCheckItems    = 2000
+	maxSourceAppLength   = 100
 	sha256HexLength      = 64
 )
 
@@ -80,7 +81,7 @@ type ImportKindleResult struct {
 	ResolvedASIN       string
 	Highlights         []*domain.Highlight
 	Warning            *string
-	Queued             bool
+	InvalidItemCount   int
 }
 
 type ImportSharedHighlightResult struct {
@@ -97,7 +98,7 @@ type ImportPastedHighlightResult struct {
 
 func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
 	if len(items) == 0 {
-		return nil, domain.ErrAllCopyProtected
+		return nil, fmt.Errorf("%w: highlights must not be empty", domain.ErrInvalidInput)
 	}
 	if len(items) > maxKindleImportItems {
 		return nil, fmt.Errorf("%w: highlights must be at most %d items", domain.ErrInvalidInput, maxKindleImportItems)
@@ -113,17 +114,22 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 }
 
 func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
+	u.recoverFailedImportEnqueues(ctx, userID)
+
 	// 既存の検証・正規化ロジックを使いコピープロテクトを除外する
-	highlights, copyProtectedCount, err := buildImportHighlights(userID, items)
+	highlights, copyProtectedCount, invalidItemCount, err := buildImportHighlights(userID, items)
 	if err != nil {
 		return nil, err
 	}
 	if len(highlights) == 0 {
+		if invalidItemCount > 0 {
+			return nil, domain.ErrInvalidInput
+		}
 		return nil, domain.ErrAllCopyProtected
 	}
 
-	// 検証済み highlights を JSON にシリアライズしてキューに積む
-	payload, err := json.Marshal(highlights)
+	// 検証済み highlights を安定した queue payload に変換して積む。
+	payload, err := marshalHighlightImportPayload(highlights)
 	if err != nil {
 		return nil, fmt.Errorf("highlight usecase: marshal kindle items: %w", err)
 	}
@@ -135,7 +141,10 @@ func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.
 
 	if u.jobTrigger != nil {
 		if triggerErr := u.jobTrigger.TriggerHighlightImportJob(ctx, queueID, userID); triggerErr != nil {
-			log.Printf("highlight import job trigger failed (queue_id=%s): %v", queueID, triggerErr)
+			if markErr := u.importQueue.MarkEnqueueFailed(ctx, queueID, fmt.Sprintf("trigger import task: %v", triggerErr)); markErr != nil {
+				slog.Error("highlight_import_queue_mark_enqueue_failed_error", "queue_id", queueID.String(), "error", markErr)
+			}
+			return nil, fmt.Errorf("highlight usecase: trigger kindle import task: %w", triggerErr)
 		}
 	}
 
@@ -143,20 +152,24 @@ func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.
 		QueueID:            queueID,
 		QueuedCount:        len(highlights),
 		CopyProtectedCount: copyProtectedCount,
+		InvalidItemCount:   invalidItemCount,
 	}
-	if copyProtectedCount > 0 {
-		warning := "コピー制限により一部のハイライトが読み込めませんでした"
+	if copyProtectedCount > 0 || invalidItemCount > 0 {
+		warning := importWarning(copyProtectedCount, invalidItemCount)
 		result.Warning = &warning
 	}
 	return result, nil
 }
 
 func (u *HighlightUsecase) importKindleHighlightsDirect(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
-	highlights, copyProtectedCount, err := buildImportHighlights(userID, items)
+	highlights, copyProtectedCount, invalidItemCount, err := buildImportHighlights(userID, items)
 	if err != nil {
 		return nil, err
 	}
 	if len(highlights) == 0 {
+		if invalidItemCount > 0 {
+			return nil, domain.ErrInvalidInput
+		}
 		return nil, domain.ErrAllCopyProtected
 	}
 
@@ -174,9 +187,10 @@ func (u *HighlightUsecase) importKindleHighlightsDirect(ctx context.Context, use
 		CopyProtectedCount: copyProtectedCount,
 		ResolvedASIN:       resolveImportASIN(highlights),
 		Highlights:         collectPersistedHighlights(highlights),
+		InvalidItemCount:   invalidItemCount,
 	}
-	if copyProtectedCount > 0 {
-		warning := "コピー制限により一部のハイライトが読み込めませんでした"
+	if copyProtectedCount > 0 || invalidItemCount > 0 {
+		warning := importWarning(copyProtectedCount, invalidItemCount)
 		result.Warning = &warning
 	}
 	return result, nil
@@ -311,14 +325,20 @@ func (u *HighlightUsecase) UpdateExplanation(ctx context.Context, id, userID uui
 	return highlight, nil
 }
 
-func buildImportHighlights(userID uuid.UUID, items []ImportHighlightItem) ([]*domain.Highlight, int, error) {
+func buildImportHighlights(userID uuid.UUID, items []ImportHighlightItem) ([]*domain.Highlight, int, int, error) {
 	highlights := make([]*domain.Highlight, 0, len(items))
 	copyProtectedCount := 0
+	invalidItemCount := 0
 
-	for _, item := range items {
+	for index, item := range items {
 		highlight, ok, err := newImportHighlight(userID, item)
 		if err != nil {
-			return nil, copyProtectedCount, err
+			if errors.Is(err, domain.ErrInvalidInput) {
+				invalidItemCount++
+				slog.Warn("highlight_import_item_invalid", "index", index, "error", err)
+				continue
+			}
+			return nil, copyProtectedCount, invalidItemCount, err
 		}
 		if !ok {
 			copyProtectedCount++
@@ -328,7 +348,7 @@ func buildImportHighlights(userID uuid.UUID, items []ImportHighlightItem) ([]*do
 		highlights = append(highlights, highlight)
 	}
 
-	return highlights, copyProtectedCount, nil
+	return highlights, copyProtectedCount, invalidItemCount, nil
 }
 
 func newImportHighlight(userID uuid.UUID, item ImportHighlightItem) (*domain.Highlight, bool, error) {
@@ -384,7 +404,14 @@ func newSharedHighlight(userID uuid.UUID, input ImportSharedHighlightInput) (*do
 		return nil, err
 	}
 
-	sourceApp := strings.TrimSpace(input.SourceApp)
+	sourceApp := strings.ToLower(strings.TrimSpace(input.SourceApp))
+	if sourceApp != "" {
+		// Share import preserves client-provided app names for diagnostics; unlike paste,
+		// it is length-limited rather than allowlisted because mobile share sources vary.
+		if err := domain.ValidateRequiredTextLength(sourceApp, maxSourceAppLength); err != nil {
+			return nil, err
+		}
+	}
 	sourceURL := strings.TrimSpace(input.SourceURL)
 	if sourceURL != "" {
 		if err := domain.ValidateSourceURL(sourceURL); err != nil {
@@ -500,7 +527,7 @@ func normalizeAndValidateHighlightContent(content string) (string, error) {
 }
 
 func validateHighlightContent(content string) error {
-	if err := domain.ValidateTextLength(content, 300); err != nil {
+	if err := domain.ValidateRequiredTextLength(content, 300); err != nil {
 		return err
 	}
 	if err := domain.ValidateLineCount(content, 20); err != nil {
@@ -518,12 +545,12 @@ func normalizeAndValidateOptionalMetaText(value string, max int) (*string, error
 	if trimmed == "" {
 		return nil, nil
 	}
-	if err := domain.ValidateTextLength(trimmed, max); err != nil {
+	if err := domain.ValidateRequiredTextLength(trimmed, max); err != nil {
 		return nil, err
 	}
 
 	normalized := domain.NormalizeMetaText(trimmed)
-	if err := domain.ValidateTextLength(normalized, max); err != nil {
+	if err := domain.ValidateRequiredTextLength(normalized, max); err != nil {
 		return nil, err
 	}
 
@@ -584,12 +611,58 @@ func sanitizeHighlightedAt(highlightedAt *time.Time) *time.Time {
 	if highlightedAt == nil {
 		return nil
 	}
-	if highlightedAt.After(time.Now()) {
+	if highlightedAt.Before(minHighlightedAt()) || highlightedAt.After(time.Now()) {
 		return nil
 	}
 
 	sanitized := *highlightedAt
 	return &sanitized
+}
+
+func minHighlightedAt() time.Time {
+	return time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+}
+
+func importWarning(copyProtectedCount, invalidItemCount int) string {
+	if copyProtectedCount > 0 && invalidItemCount > 0 {
+		return "コピー制限または入力不備により一部のハイライトが読み込めませんでした"
+	}
+	if invalidItemCount > 0 {
+		return "入力不備により一部のハイライトが読み込めませんでした"
+	}
+	return "コピー制限により一部のハイライトが読み込めませんでした"
+}
+
+func (u *HighlightUsecase) recoverFailedImportEnqueues(ctx context.Context, userID uuid.UUID) {
+	if u.importQueue == nil || u.jobTrigger == nil {
+		return
+	}
+
+	cutoff := time.Now().UTC().Add(-domain.ImportQueueStaleQueuedTimeout)
+	items, err := u.importQueue.ListRecoverableEnqueuesByUserID(ctx, userID, cutoff, domain.ImportQueueRecoverLimit)
+	if err != nil {
+		slog.Warn("highlight_import_recoverable_list_error", "user_id", userID.String(), "error", err)
+		return
+	}
+
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if item.Status == domain.ImportQueueStatusEnqueueFailed {
+			if err := u.importQueue.MarkQueued(ctx, item.ID); err != nil {
+				slog.Warn("highlight_import_recoverable_mark_queued_error", "queue_id", item.ID.String(), "error", err)
+				continue
+			}
+		}
+		if err := u.jobTrigger.TriggerHighlightImportJob(ctx, item.ID, item.UserID); err != nil {
+			if markErr := u.importQueue.MarkEnqueueFailed(ctx, item.ID, fmt.Sprintf("retry trigger import task: %v", err)); markErr != nil {
+				slog.Warn("highlight_import_recoverable_mark_enqueue_failed_error", "queue_id", item.ID.String(), "error", markErr)
+			}
+			continue
+		}
+		slog.Info("highlight_import_recoverable_enqueued", "queue_id", item.ID.String(), "status", item.Status)
+	}
 }
 
 func optionalString(value string) *string {

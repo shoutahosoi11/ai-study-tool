@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
@@ -26,7 +27,15 @@ func NewUserUsecase(userRepo domain.UserRepository) *UserUsecase {
 }
 
 func (u *UserUsecase) SignUp(ctx context.Context, input domain.CreateUserInput) (*domain.User, error) {
-	// 登録済みかどうか
+	input.FirebaseUID = strings.TrimSpace(input.FirebaseUID)
+	input.Username = domain.NormalizeUsername(input.Username)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.FirebaseUID == "" || !domain.IsValidUsername(input.Username) || strings.TrimSpace(input.DisplayName) == "" {
+		return nil, domain.ErrInvalidInput
+	}
+
+	// SignUp は Firebase ユーザー作成後の再試行に備えて、同じ Firebase UID では冪等に既存ユーザーを返す。
+	// 既存ユーザーの username/display_name 変更は UpdateProfile に集約する。
 	existing, err := u.userRepo.GetByFirebaseUID(ctx, input.FirebaseUID)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return nil, err
@@ -44,7 +53,17 @@ func (u *UserUsecase) SignUp(ctx context.Context, input domain.CreateUserInput) 
 	}
 
 	// DBの一意制約が最終防衛ラインなので、ここは事前チェックとの race を許容する。
-	return u.userRepo.Create(ctx, input)
+	created, err := u.userRepo.Create(ctx, input)
+	if err == nil {
+		return created, nil
+	}
+	if errors.Is(err, domain.ErrAlreadyExists) {
+		existing, lookupErr := u.userRepo.GetByFirebaseUID(ctx, input.FirebaseUID)
+		if lookupErr == nil && existing != nil {
+			return existing, nil
+		}
+	}
+	return nil, err
 }
 
 func (u *UserUsecase) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
@@ -56,13 +75,39 @@ func (u *UserUsecase) GetByFirebaseUID(ctx context.Context, firebaseUID string) 
 }
 
 func (u *UserUsecase) UpdateProfile(ctx context.Context, id uuid.UUID, input domain.UpdateUserInput) (*domain.User, error) {
-	//　同じ username を他のユーザーが使っていないか
-	existingByUsername, err := u.userRepo.GetByUsername(ctx, input.Username)
-	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		return nil, err
+	if !input.HasChanges() {
+		return nil, domain.ErrInvalidInput
 	}
-	if existingByUsername != nil && existingByUsername.ID != id {
-		return nil, domain.ErrAlreadyExists
+
+	if input.Username.Set {
+		if input.Username.Value == nil {
+			return nil, domain.ErrInvalidInput
+		}
+		username := domain.NormalizeUsername(*input.Username.Value)
+		if !domain.IsValidUsername(username) {
+			return nil, domain.ErrInvalidInput
+		}
+		input.Username.Value = &username
+
+		//　同じ username を他のユーザーが使っていないか
+		existingByUsername, err := u.userRepo.GetByUsername(ctx, username)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return nil, err
+		}
+		if existingByUsername != nil && existingByUsername.ID != id {
+			return nil, domain.ErrAlreadyExists
+		}
+	}
+
+	if input.DisplayName.Set {
+		if input.DisplayName.Value == nil {
+			return nil, domain.ErrInvalidInput
+		}
+		displayName := strings.TrimSpace(*input.DisplayName.Value)
+		if displayName == "" {
+			return nil, domain.ErrInvalidInput
+		}
+		input.DisplayName.Value = &displayName
 	}
 
 	// DBの一意制約が最終防衛ラインなので、ここは事前チェックとの race を許容する。

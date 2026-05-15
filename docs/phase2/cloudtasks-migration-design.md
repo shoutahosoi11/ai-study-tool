@@ -44,9 +44,11 @@ Cloud Run に以下を追加する。
 QUEUE_QUESTION_GENERATION=projects/<project>/locations/asia-northeast1/queues/question-generation
 QUEUE_HIGHLIGHT_IMPORT=projects/<project>/locations/asia-northeast1/queues/highlight-import
 TASK_HANDLER_BASE_URL=https://<api-service>.run.app
+INTERNAL_TASK_SECRET=<Secret Manager injected value>
 ```
 
-未設定の場合、enqueuer は nil/no-op として動く。ローカル開発では build/run を壊さない。
+Queue または `TASK_HANDLER_BASE_URL` が未設定の場合、enqueuer は nil/no-op として動く。
+Queue を設定して `INTERNAL_TASK_SECRET` が未設定の場合は起動時に fail-closed する。
 
 ## Internal Endpoints
 
@@ -55,8 +57,9 @@ POST /internal/tasks/question-generation
 POST /internal/tasks/highlight-import
 ```
 
-現時点では Cloud Run の `--ingress=internal-and-cloud-load-balancing` を前提に保護する。
-将来、Cloud Tasks OIDC token の検証を middleware として追加できる。
+Cloud Run の `--ingress=internal-and-cloud-load-balancing` と Cloud Tasks queue IAM に加えて、
+Cloud Tasks から `X-Internal-Task-Secret` を渡し、Cloud Run 側で `INTERNAL_TASK_SECRET`
+と照合する。未設定時は fail-closed にする。
 
 既存サービスへ手動適用する場合:
 

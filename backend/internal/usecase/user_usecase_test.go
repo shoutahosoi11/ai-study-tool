@@ -173,6 +173,95 @@ func TestSignUpCreatesUserWhenNoConflictExists(t *testing.T) {
 	}
 }
 
+func TestSignUpReturnsExistingUserWhenCreateRacesOnFirebaseUID(t *testing.T) {
+	existingUser := &domain.User{ID: uuid.New(), FirebaseUID: "firebase-uid-1", Username: "alice"}
+	created := false
+	uc := usecase.NewUserUsecase(&mockUserRepository{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			if created {
+				return existingUser, nil
+			}
+			return nil, domain.ErrNotFound
+		},
+		getByUsername: func(ctx context.Context, username string) (*domain.User, error) {
+			return nil, domain.ErrNotFound
+		},
+		create: func(ctx context.Context, input domain.CreateUserInput) (*domain.User, error) {
+			created = true
+			return nil, domain.ErrAlreadyExists
+		},
+	})
+
+	user, err := uc.SignUp(context.Background(), domain.CreateUserInput{
+		FirebaseUID: "firebase-uid-1",
+		Username:    "alice",
+		DisplayName: "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if user != existingUser {
+		t.Fatal("expected existing user")
+	}
+}
+
+func TestSignUpNormalizesUsernameBeforeRepositoryAccess(t *testing.T) {
+	createdUser := &domain.User{ID: uuid.New(), Username: "alice"}
+	uc := usecase.NewUserUsecase(&mockUserRepository{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			if firebaseUID != "firebase-uid-1" {
+				t.Fatalf("unexpected firebase uid: %s", firebaseUID)
+			}
+			return nil, domain.ErrNotFound
+		},
+		getByUsername: func(ctx context.Context, username string) (*domain.User, error) {
+			if username != "alice" {
+				t.Fatalf("unexpected username lookup: %s", username)
+			}
+			return nil, domain.ErrNotFound
+		},
+		create: func(ctx context.Context, input domain.CreateUserInput) (*domain.User, error) {
+			if input.Username != "alice" {
+				t.Fatalf("unexpected username: %s", input.Username)
+			}
+			if input.FirebaseUID != "firebase-uid-1" {
+				t.Fatalf("unexpected firebase uid: %s", input.FirebaseUID)
+			}
+			return createdUser, nil
+		},
+	})
+
+	user, err := uc.SignUp(context.Background(), domain.CreateUserInput{
+		FirebaseUID: "  firebase-uid-1  ",
+		Username:    "@Alice",
+		DisplayName: "Alice",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if user != createdUser {
+		t.Fatal("expected created user")
+	}
+}
+
+func TestSignUpRejectsInvalidInputBeforeRepositoryAccess(t *testing.T) {
+	uc := usecase.NewUserUsecase(&mockUserRepository{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			t.Fatal("repository should not be called")
+			return nil, nil
+		},
+	})
+
+	_, err := uc.SignUp(context.Background(), domain.CreateUserInput{
+		FirebaseUID: "",
+		Username:    "alice",
+		DisplayName: "Alice",
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
 func TestUpdateProfileAllowsKeepingOwnUsername(t *testing.T) {
 	currentUserID := uuid.New()
 	updatedUser := &domain.User{ID: currentUserID, Username: "alice"}
@@ -184,22 +273,69 @@ func TestUpdateProfileAllowsKeepingOwnUsername(t *testing.T) {
 			if id != currentUserID {
 				t.Fatalf("unexpected id: %s", id)
 			}
-			if input.Username != "alice" {
-				t.Fatalf("unexpected username: %s", input.Username)
+			if !input.Username.Set || input.Username.Value == nil || *input.Username.Value != "alice" {
+				t.Fatalf("unexpected username: %#v", input.Username)
 			}
 			return updatedUser, nil
 		},
 	})
 
 	user, err := uc.UpdateProfile(context.Background(), currentUserID, domain.UpdateUserInput{
-		Username:    "alice",
-		DisplayName: "Alice",
+		Username:    domain.SomeStringUpdate("alice"),
+		DisplayName: domain.SomeStringUpdate("Alice"),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if user != updatedUser {
 		t.Fatal("expected updated user to be returned")
+	}
+}
+
+func TestUpdateProfileNormalizesUsernameBeforeRepositoryAccess(t *testing.T) {
+	currentUserID := uuid.New()
+	updatedUser := &domain.User{ID: currentUserID, Username: "alice"}
+	uc := usecase.NewUserUsecase(&mockUserRepository{
+		getByUsername: func(ctx context.Context, username string) (*domain.User, error) {
+			if username != "alice" {
+				t.Fatalf("unexpected username lookup: %s", username)
+			}
+			return &domain.User{ID: currentUserID, Username: username}, nil
+		},
+		update: func(ctx context.Context, id uuid.UUID, input domain.UpdateUserInput) (*domain.User, error) {
+			if !input.Username.Set || input.Username.Value == nil || *input.Username.Value != "alice" {
+				t.Fatalf("unexpected username: %#v", input.Username)
+			}
+			return updatedUser, nil
+		},
+	})
+
+	user, err := uc.UpdateProfile(context.Background(), currentUserID, domain.UpdateUserInput{
+		Username:    domain.SomeStringUpdate("@Alice"),
+		DisplayName: domain.SomeStringUpdate("Alice"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if user != updatedUser {
+		t.Fatal("expected updated user")
+	}
+}
+
+func TestUpdateProfileRejectsInvalidUsernameBeforeRepositoryAccess(t *testing.T) {
+	uc := usecase.NewUserUsecase(&mockUserRepository{
+		getByUsername: func(ctx context.Context, username string) (*domain.User, error) {
+			t.Fatal("repository should not be called")
+			return nil, nil
+		},
+	})
+
+	_, err := uc.UpdateProfile(context.Background(), uuid.New(), domain.UpdateUserInput{
+		Username:    domain.SomeStringUpdate("alice!"),
+		DisplayName: domain.SomeStringUpdate("Alice"),
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
 }
 
@@ -213,8 +349,8 @@ func TestUpdateProfileRejectsOtherUsersUsername(t *testing.T) {
 	})
 
 	_, err := uc.UpdateProfile(context.Background(), currentUserID, domain.UpdateUserInput{
-		Username:    "alice",
-		DisplayName: "Alice",
+		Username:    domain.SomeStringUpdate("alice"),
+		DisplayName: domain.SomeStringUpdate("Alice"),
 	})
 	if !errors.Is(err, domain.ErrAlreadyExists) {
 		t.Fatalf("expected ErrAlreadyExists, got %v", err)

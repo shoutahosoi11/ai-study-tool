@@ -1,6 +1,6 @@
 export interface Question {
   id: string;
-  question_type: "multiple_choice" | "descriptive";
+  question_type: "multiple_choice";
   content: string;
   options: string[];
   correct_answer: string;
@@ -15,7 +15,7 @@ export interface SaveQuestionResult {
 
 export interface SavedQuestion {
   id: string;
-  question_type: "multiple_choice" | "descriptive";
+  question_type: "multiple_choice";
   content: string;
   options: string[];
   correct_answer: string;
@@ -26,7 +26,7 @@ export interface SavedQuestion {
 
 export interface IncorrectQuestion {
   id: string;
-  question_type: "multiple_choice" | "descriptive";
+  question_type: "multiple_choice";
   content: string;
   options: string[];
   correct_answer: string;

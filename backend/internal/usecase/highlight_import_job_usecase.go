@@ -2,7 +2,7 @@ package usecase
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -71,6 +71,10 @@ func (u *HighlightImportJobUsecase) processOne(ctx context.Context, item *domain
 		return nil // 別の実行がすでに処理中
 	}
 
+	return u.processClaimed(ctx, item)
+}
+
+func (u *HighlightImportJobUsecase) processClaimed(ctx context.Context, item *domain.HighlightImportQueue) error {
 	highlights, err := u.deserializePayload(item)
 	if err != nil {
 		return u.fail(ctx, item, fmt.Sprintf("deserialize payload: %v", err))
@@ -93,16 +97,12 @@ func (u *HighlightImportJobUsecase) processOne(ctx context.Context, item *domain
 }
 
 func (u *HighlightImportJobUsecase) deserializePayload(item *domain.HighlightImportQueue) ([]*domain.Highlight, error) {
-	var highlights []*domain.Highlight
-	if err := json.Unmarshal(item.RawPayload, &highlights); err != nil {
-		return nil, fmt.Errorf("unmarshal highlights: %w", err)
+	highlights, err := unmarshalHighlightImportPayload(item.RawPayload, item.UserID)
+	if err != nil {
+		return nil, err
 	}
 	if len(highlights) == 0 {
 		return nil, fmt.Errorf("empty highlights payload for queue_id=%s", item.ID)
-	}
-	// UserID の整合性確認
-	for i := range highlights {
-		highlights[i].UserID = item.UserID
 	}
 	return highlights, nil
 }
@@ -118,13 +118,23 @@ func (u *HighlightImportJobUsecase) fail(ctx context.Context, item *domain.Highl
 func (u *HighlightImportJobUsecase) ProcessSingle(ctx context.Context, queueID uuid.UUID, userID uuid.UUID) error {
 	item, err := u.queueRepo.GetByID(ctx, queueID)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil
+		}
 		return fmt.Errorf("highlight import job: get queue item: %w", err)
-	}
-	if item == nil {
-		return nil
 	}
 	if item.UserID != userID {
 		return domain.ErrForbidden
+	}
+	switch item.Status {
+	case domain.ImportQueueStatusCompleted, domain.ImportQueueStatusFailed:
+		return nil
+	case domain.ImportQueueStatusProcessing:
+		return u.processClaimed(ctx, item)
+	case domain.ImportQueueStatusEnqueueFailed:
+		if err := u.queueRepo.MarkQueued(ctx, item.ID); err != nil {
+			return fmt.Errorf("mark enqueue failed item queued: %w", err)
+		}
 	}
 	return u.processOne(ctx, item)
 }

@@ -197,13 +197,46 @@ func TestImportPasteReturnsCreatedID(t *testing.T) {
 		t.Fatal("expected id")
 	}
 	if resp.Duplicate {
-		t.Fatal("expected duplicated=false")
+		t.Fatal("expected duplicate=false")
 	}
 	if len(repo.bulkUpsertInput) != 1 {
 		t.Fatalf("expected one highlight to be persisted, got %d", len(repo.bulkUpsertInput))
 	}
 	if repo.bulkUpsertInput[0].Source != domain.HighlightSourcePaste {
 		t.Fatalf("unexpected source: %s", repo.bulkUpsertInput[0].Source)
+	}
+}
+
+func TestImportPasteDuplicateReturnsDuplicateKey(t *testing.T) {
+	e := echo.New()
+	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/highlights/paste", strings.NewReader(`{"content":"Duplicate idea","source_app":"web"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	if err := handler.ImportPaste(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if raw["duplicate"] != true {
+		t.Fatalf("expected duplicate=true, got %#v", raw["duplicate"])
+	}
+	if _, ok := raw["duplicated"]; ok {
+		t.Fatalf("expected duplicated key to be removed, got %#v", raw["duplicated"])
 	}
 }
 

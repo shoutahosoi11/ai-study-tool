@@ -83,6 +83,15 @@ func TestQuestionGenerationJobRepositoryIntegration(t *testing.T) {
 	if err := repo.MarkEnqueueFailed(ctx, job.ID, userID, "enqueue unavailable"); err != nil {
 		t.Fatalf("mark enqueue failed: %v", err)
 	}
+	_, err = repo.Create(ctx, domain.CreateQuestionGenerationJobInput{
+		UserID:       userID,
+		BookKey:      "book-1",
+		Reason:       domain.JobReasonHighlightBatchThreshold,
+		HighlightIDs: []uuid.UUID{insertQuestionGenerationJobHighlight(t, db, userID)},
+	})
+	if !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Fatalf("expected enqueue_failed duplicate to return ErrAlreadyExists, got %v", err)
+	}
 	if err := repo.MarkQueued(ctx, job.ID, userID); err != nil {
 		t.Fatalf("mark queued: %v", err)
 	}
@@ -90,12 +99,17 @@ func TestQuestionGenerationJobRepositoryIntegration(t *testing.T) {
 		t.Fatalf("mark completed: %v", err)
 	}
 
-	completed, err := repo.Get(ctx, job.ID, userID)
-	if err != nil {
-		t.Fatalf("get completed: %v", err)
+	var completedStatus string
+	var completedAt sql.NullTime
+	if err := db.QueryRowContext(ctx, `
+SELECT status, completed_at
+FROM question_generation_jobs
+WHERE id = $1 AND user_id = $2
+`, job.ID, userID).Scan(&completedStatus, &completedAt); err != nil {
+		t.Fatalf("read completed job: %v", err)
 	}
-	if completed.Status != domain.JobStatusCompleted || completed.CompletedAt == nil {
-		t.Fatalf("expected completed job, got %#v", completed)
+	if completedStatus != string(domain.JobStatusCompleted) || !completedAt.Valid {
+		t.Fatalf("expected completed job, got status=%s completed_at_valid=%v", completedStatus, completedAt.Valid)
 	}
 }
 
@@ -123,6 +137,7 @@ func applyQuestionGenerationJobMigrations(t *testing.T, db *sql.DB) {
 		"033_add_questions_superseded_at.sql",
 		"034_add_users_last_sync_at.sql",
 		"035_add_highlights_book_status_index.sql",
+		"044_harden_question_generation_jobs.sql",
 	} {
 		sqlBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "db", "migrations", file))
 		if err != nil {
@@ -138,6 +153,8 @@ func applyQuestionGenerationJobRollback(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
 DROP INDEX IF EXISTS idx_highlights_user_book_status;
+DROP INDEX IF EXISTS idx_highlights_user_updated_at;
+DROP INDEX IF EXISTS idx_questions_user_active_highlight;
 ALTER TABLE highlights DROP COLUMN IF EXISTS book_key;
 ALTER TABLE users DROP COLUMN IF EXISTS last_sync_at;
 DROP INDEX IF EXISTS idx_questions_active_by_highlight;
@@ -148,6 +165,15 @@ DROP INDEX IF EXISTS uq_question_generation_jobs_active;
 DROP TABLE IF EXISTS question_generation_jobs;
 `); err != nil {
 		t.Fatalf("rollback phase1 migrations: %v", err)
+	}
+}
+
+func resetIntegrationDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`
+TRUNCATE users, books RESTART IDENTITY CASCADE
+`); err != nil {
+		t.Fatalf("reset integration db: %v", err)
 	}
 }
 

@@ -23,7 +23,7 @@ Recommended starting resources:
 
 - CPU: `1`
 - Memory: `512Mi`
-- Request timeout: `60s`
+- Request timeout: `120s`
 - Min instances: `0` for cost control unless cold starts become a product issue.
 - Max instances: `10`
 - Concurrency: `80`
@@ -31,6 +31,59 @@ Recommended starting resources:
 Increase memory only after observing Cloud Run memory metrics. Increase timeout
 only for endpoints that truly need it; ingest and question sync should return
 quickly and let workers do longer-running work.
+
+## Runtime Configuration
+
+Use Secret Manager for sensitive values and plain environment variables only for
+non-sensitive routing and tuning values.
+
+Required secrets:
+
+- `DATABASE_URL`: Neon pooled connection string for Cloud Run runtime traffic.
+- `GEMINI_API_KEY`: Gemini API key.
+- `INTERNAL_TASK_SECRET`: fallback shared secret for `/internal/tasks/*` when
+  Cloud Tasks OIDC authentication is not configured.
+
+Optional secrets:
+
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+
+Required environment variables:
+
+- `CORS_ALLOWED_ORIGINS`
+- `APP_ENV=production`
+- `QUEUE_QUESTION_GENERATION`
+- `QUEUE_HIGHLIGHT_IMPORT`
+- `TASK_HANDLER_BASE_URL`
+- `INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT`: service account email used by Cloud
+  Tasks OIDC tokens. Leave empty only when using `INTERNAL_TASK_SECRET`.
+- `SHUTDOWN_TIMEOUT_SECONDS=90`
+
+With `--ingress=internal-and-cloud-load-balancing`, Cloud Tasks can call the
+default `run.app` URL from the same project. Use an external Application Load
+Balancer hostname only when task traffic is intentionally routed through that
+load balancer.
+
+For Neon, use the `-pooler` runtime URL in `DATABASE_URL`; use the direct Neon
+URL only for migrations through `MIGRATION_DATABASE_URL`. Keep
+`DB_MAX_OPEN_CONNS * max-instances` below the effective Neon/PgBouncer
+connection capacity. The current default of
+`DB_MAX_OPEN_CONNS=10` with `--max-instances=10` caps application-side database
+connections at roughly `100`.
+
+## Runtime Service Account IAM
+
+Grant the Cloud Run runtime service account only the resources the API uses:
+
+- `roles/secretmanager.secretAccessor` on `DATABASE_URL`, `GEMINI_API_KEY`, and
+  `INTERNAL_TASK_SECRET`, plus any enabled Stripe secrets.
+- `roles/cloudtasks.enqueuer` on the `question-generation` and
+  `highlight-import` Cloud Tasks queues.
+- `roles/logging.logWriter` if log client libraries are used directly.
+
+Use `deploy/setup-service-accounts.sh` after creating the required secrets and
+Cloud Tasks queues.
 
 ## Health Check
 
@@ -68,9 +121,10 @@ gcloud run deploy "${SERVICE}" \
   --concurrency=80 \
   --cpu=1 \
   --memory=512Mi \
-  --timeout=60s \
-  --set-env-vars="CORS_ALLOWED_ORIGINS=https://YOUR_FRONTEND_DOMAIN,GCS_BUCKET_NAME=YOUR_BUCKET,GCS_SIGNING_SERVICE_ACCOUNT=${RUNTIME_SA}" \
-  --set-secrets="DATABASE_URL=DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest"
+  --timeout=120s \
+  --ingress=internal-and-cloud-load-balancing \
+  --set-env-vars="CORS_ALLOWED_ORIGINS=https://YOUR_FRONTEND_DOMAIN,APP_ENV=production,QUEUE_QUESTION_GENERATION=projects/${PROJECT_ID}/locations/${REGION}/queues/question-generation,QUEUE_HIGHLIGHT_IMPORT=projects/${PROJECT_ID}/locations/${REGION}/queues/highlight-import,TASK_HANDLER_BASE_URL=https://YOUR_SERVICE_HOST,INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT=cloud-tasks-invoker@${PROJECT_ID}.iam.gserviceaccount.com,SHUTDOWN_TIMEOUT_SECONDS=90" \
+  --set-secrets="DATABASE_URL=DATABASE_URL:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,INTERNAL_TASK_SECRET=INTERNAL_TASK_SECRET:latest"
 ```
 
 If Cloudflare is the only public entrypoint, deploy with authenticated invoker
@@ -84,7 +138,8 @@ gcloud run deploy "${SERVICE}" \
   --no-allow-unauthenticated \
   --max-instances=10 \
   --concurrency=80 \
-  --timeout=60s
+  --timeout=120s \
+  --set-env-vars="SHUTDOWN_TIMEOUT_SECONDS=90"
 ```
 
 ## GitHub Actions Update
@@ -95,12 +150,15 @@ The deploy workflow should include the same flags:
 flags: >-
   --port=8080
   --allow-unauthenticated
+  --ingress=internal-and-cloud-load-balancing
   --service-account=${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
   --max-instances=10
   --concurrency=80
   --cpu=1
   --memory=512Mi
-  --timeout=60s
+  --timeout=120s
+env_vars: |-
+  SHUTDOWN_TIMEOUT_SECONDS=90
 ```
 
 When Cloudflare authenticated origin access is ready, replace

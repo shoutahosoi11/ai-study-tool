@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -68,7 +68,7 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 		if errors.Is(err, domain.ErrAllCopyProtected) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "コピー制限によりハイライトを取得できませんでした")
 		}
-		log.Printf("highlight import error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "import", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -78,6 +78,7 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 			QueueID:            result.QueueID.String(),
 			QueuedCount:        result.QueuedCount,
 			CopyProtectedCount: result.CopyProtectedCount,
+			InvalidItemCount:   result.InvalidItemCount,
 			Warning:            result.Warning,
 		})
 	}
@@ -92,6 +93,7 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 		SavedCount:         result.Saved,
 		DuplicateCount:     result.DuplicateCount,
 		CopyProtectedCount: result.CopyProtectedCount,
+		InvalidItemCount:   result.InvalidItemCount,
 		ResolvedASIN:       result.ResolvedASIN,
 		Highlights:         responses,
 		Warning:            result.Warning,
@@ -114,7 +116,7 @@ func (h *HighlightHandler) CheckExistingHashes(c echo.Context) error {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
-		log.Printf("highlight check hashes error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "check_existing_hashes", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -146,7 +148,7 @@ func (h *HighlightHandler) ImportShared(c echo.Context) error {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
 		}
-		log.Printf("highlight share import error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "import_shared", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -184,7 +186,7 @@ func (h *HighlightHandler) ImportPaste(c echo.Context) error {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid highlight input")
 		}
-		log.Printf("highlight paste import error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "import_paste", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -207,7 +209,7 @@ func (h *HighlightHandler) ListBooks(c echo.Context) error {
 
 	books, err := h.highlightUsecase.ListKindleBooks(c.Request().Context(), user.ID)
 	if err != nil {
-		log.Printf("highlight list books error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "list_books", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -234,7 +236,7 @@ func (h *HighlightHandler) ListByASIN(c echo.Context) error {
 
 	highlights, err := h.highlightUsecase.ListByASIN(c.Request().Context(), user.ID, asin)
 	if err != nil {
-		log.Printf("highlight list by asin error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "list_by_asin", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -262,7 +264,7 @@ func (h *HighlightHandler) ListByBookMetadata(c echo.Context) error {
 	bookAuthor := strings.TrimSpace(c.QueryParam("author"))
 	highlights, err := h.highlightUsecase.ListByBookMetadata(c.Request().Context(), user.ID, bookTitle, bookAuthor)
 	if err != nil {
-		log.Printf("highlight list by book metadata error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "list_by_book_metadata", "user_id", user.ID.String(), "has_author", bookAuthor != "", "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -297,7 +299,7 @@ func (h *HighlightHandler) UpdateExplanation(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "highlight not found")
 		}
-		log.Printf("highlight update explanation error: %v", err)
+		slog.Error("highlight_handler_error", "operation", "update_explanation", "user_id", user.ID.String(), "highlight_id", id.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 

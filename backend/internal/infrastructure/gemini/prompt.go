@@ -7,13 +7,8 @@ import (
 )
 
 func BuildBatchGeneratorPrompt(points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string) string {
-	typeInstruction := ""
-	switch questionType {
-	case domain.QuestionTypeMultipleChoice:
-		typeInstruction = "すべて4択選択問題にしてください。各 questions[i].options には必ず4つの選択肢を含めてください。"
-	default:
-		typeInstruction = "すべて4択選択問題にしてください。"
-	}
+	_ = questionType
+	typeInstruction := "すべて4択選択問題にしてください。各 questions[i].options には必ず4つの選択肢を含めてください。"
 
 	customPart := ""
 	if customInstruction != "" {
@@ -22,7 +17,10 @@ func BuildBatchGeneratorPrompt(points []domain.ExtractedPoint, questionType doma
 
 	var pointsSection string
 	for index, point := range points {
-		pointsSection += fmt.Sprintf("\n%d.\nハイライト本文: %s\nユーザー解説: %s\n", index+1, point.Point, point.Context)
+		pointsSection += fmt.Sprintf("\n%d.\nハイライト本文: %s\n", index+1, point.Point)
+		if point.Context != "" {
+			pointsSection += fmt.Sprintf("ユーザー解説: %s\n", point.Context)
+		}
 	}
 
 	return fmt.Sprintf(`以下の複数ハイライトから学習用の問題をまとめて作成してください。

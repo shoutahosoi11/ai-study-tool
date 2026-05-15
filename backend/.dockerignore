@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+*.log
+.git
+.gocache
+bin
+tmp
+coverage.out
+coverage.html
+.DS_Store

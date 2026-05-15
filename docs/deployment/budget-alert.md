@@ -11,7 +11,7 @@ Recommended starting monthly budget:
 - Early production: JPY 10,000 to 20,000.
 
 Choose the number based on expected Cloud Run, Artifact Registry, Secret
-Manager, Cloud Storage, logging, and Gemini usage. Set alert thresholds at:
+Manager, Cloud Tasks, logging, Neon, and Gemini usage. Set alert thresholds at:
 
 - 50%
 - 80%
