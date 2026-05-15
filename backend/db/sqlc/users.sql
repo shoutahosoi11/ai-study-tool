@@ -1,17 +1,17 @@
 -- name: GetUserByFirebaseUID :one
-SELECT id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count
+SELECT *
 FROM users
 WHERE firebase_uid = $1
 LIMIT 1;
 
 -- name: GetUserByID :one
-SELECT id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count
+SELECT *
 FROM users
 WHERE id = $1
 LIMIT 1;
 
 -- name: GetUserByUsername :one
-SELECT id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count
+SELECT *
 FROM users
 WHERE username = $1
 LIMIT 1;
@@ -31,25 +31,25 @@ INSERT INTO users (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, 'free'
 )
-RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count;
+RETURNING *;
 
 -- name: UpdateUser :one
 UPDATE users SET
-    username = $2,
-    display_name = $3,
-    avatar_url = $4,
-    bio = $5,
-    university = $6,
-    faculty = $7,
-    grade = $8,
-    country = $9,
+    username = CASE WHEN @set_username::boolean THEN @username::text ELSE username END,
+    display_name = CASE WHEN @set_display_name::boolean THEN @display_name::text ELSE display_name END,
+    avatar_url = CASE WHEN @set_avatar_url::boolean THEN sqlc.narg('avatar_url') ELSE avatar_url END,
+    bio = CASE WHEN @set_bio::boolean THEN sqlc.narg('bio') ELSE bio END,
+    university = CASE WHEN @set_university::boolean THEN sqlc.narg('university') ELSE university END,
+    faculty = CASE WHEN @set_faculty::boolean THEN sqlc.narg('faculty') ELSE faculty END,
+    grade = CASE WHEN @set_grade::boolean THEN sqlc.narg('grade') ELSE grade END,
+    country = CASE WHEN @set_country::boolean THEN sqlc.narg('country') ELSE country END,
     updated_at = NOW()
-WHERE id = $1
-RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count;
+WHERE id = @id
+RETURNING *;
 
 -- name: UpdateUserQuestionSettings :one
 UPDATE users SET
     default_question_count = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count;
+RETURNING *;

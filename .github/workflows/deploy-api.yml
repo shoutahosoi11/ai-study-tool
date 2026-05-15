@@ -4,8 +4,11 @@ on:
   push:
     branches:
       - main
-      - feature/initial-setup
-      - feature/firebase-storage
+    paths:
+      - 'backend/**'
+      - 'deploy/**'
+      - '.github/workflows/deploy-api.yml'
+      - 'Makefile'
   workflow_dispatch:
 
 permissions:
@@ -24,6 +27,10 @@ env:
   QUEUE_QUESTION_GENERATION: ${{ vars.QUEUE_QUESTION_GENERATION || '' }}
   QUEUE_HIGHLIGHT_IMPORT: ${{ vars.QUEUE_HIGHLIGHT_IMPORT || '' }}
   TASK_HANDLER_BASE_URL: ${{ vars.TASK_HANDLER_BASE_URL || '' }}
+  INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT: ${{ vars.INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT || '' }}
+  SHUTDOWN_TIMEOUT_SECONDS: ${{ vars.SHUTDOWN_TIMEOUT_SECONDS || '90' }}
+  ALLOW_DESTRUCTIVE_MIGRATIONS: ${{ vars.ALLOW_DESTRUCTIVE_MIGRATIONS || 'false' }}
+  SMOKE_TEST_BASE_URL: ${{ vars.CLOUD_RUN_SMOKE_TEST_URL || '' }}
 
 jobs:
   test-and-deploy-api:
@@ -32,12 +39,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Validate deployment variables
         shell: bash
         run: |
           set -euo pipefail
-          for name in PROJECT_ID REGION SERVICE GAR_REPOSITORY QUEUE_QUESTION_GENERATION QUEUE_HIGHLIGHT_IMPORT TASK_HANDLER_BASE_URL; do
+          for name in PROJECT_ID REGION SERVICE GAR_REPOSITORY STRIPE_PRICE_ID_MONTHLY STRIPE_SUCCESS_URL STRIPE_CANCEL_URL QUEUE_QUESTION_GENERATION QUEUE_HIGHLIGHT_IMPORT TASK_HANDLER_BASE_URL; do
             if [ -z "${!name}" ]; then
               echo "Missing GitHub Actions variable: ${name}"
               exit 1
@@ -49,14 +58,6 @@ jobs:
           fi
           if [ -z "${{ vars.CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}" ]; then
             echo "Missing GitHub Actions variable: CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"
-            exit 1
-          fi
-          if [ -z "${{ vars.GCS_BUCKET_NAME }}" ]; then
-            echo "Missing GitHub Actions variable: GCS_BUCKET_NAME"
-            exit 1
-          fi
-          if [ -z "${{ vars.GCS_SIGNING_SERVICE_ACCOUNT }}" ]; then
-            echo "Missing GitHub Actions variable: GCS_SIGNING_SERVICE_ACCOUNT"
             exit 1
           fi
           if [ -z "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]; then
@@ -76,7 +77,11 @@ jobs:
 
       - name: Test backend
         working-directory: backend
-        run: go test ./...
+        run: go test -race ./...
+
+      - name: Build backend
+        working-directory: backend
+        run: go build ./...
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -87,15 +92,34 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
 
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: Prepare Cloud Run secret bindings
         id: cloud-run-secrets
         shell: bash
         run: |
           set -euo pipefail
+          required_secrets=(DATABASE_URL GEMINI_API_KEY)
+          if [ -z "${INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT}" ]; then
+            required_secrets+=(INTERNAL_TASK_SECRET)
+          fi
+          for secret in "${required_secrets[@]}"; do
+            if ! gcloud secrets describe "${secret}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+              echo "Required GCP Secret Manager secret not found: ${secret}"
+              exit 1
+            fi
+          done
           {
             echo "secrets<<EOF"
             echo "DATABASE_URL=DATABASE_URL:latest"
             echo "GEMINI_API_KEY=GEMINI_API_KEY:latest"
+            if gcloud secrets describe INTERNAL_TASK_SECRET --project="${PROJECT_ID}" >/dev/null 2>&1; then
+              echo "INTERNAL_TASK_SECRET=INTERNAL_TASK_SECRET:latest"
+            elif [ -z "${INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT}" ]; then
+              echo "Required GCP Secret Manager secret not found: INTERNAL_TASK_SECRET"
+              exit 1
+            fi
             for secret in STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
               if gcloud secrets describe "${secret}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
                 echo "${secret}=${secret}:latest"
@@ -106,6 +130,50 @@ jobs:
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Check changed migrations are backward compatible
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${ALLOW_DESTRUCTIVE_MIGRATIONS}" = "true" ]; then
+            echo "ALLOW_DESTRUCTIVE_MIGRATIONS=true; skipping destructive migration guard."
+            exit 0
+          fi
+
+          changed_migrations="$(git diff --name-only HEAD^ HEAD -- backend/db/migrations || true)"
+          if [ -z "${changed_migrations}" ]; then
+            echo "No migration files changed in this commit."
+            exit 0
+          fi
+
+          destructive_pattern='(^|[[:space:];])(DROP[[:space:]]+TABLE|DROP[[:space:]]+COLUMN|ALTER[[:space:]]+TABLE[^;]*[[:space:]]DROP[[:space:]]+COLUMN|ALTER[[:space:]]+COLUMN[^;]*SET[[:space:]]+NOT[[:space:]]+NULL|RENAME[[:space:]]+COLUMN|RENAME[[:space:]]+TO)([[:space:];]|$)'
+          failed=0
+          while IFS= read -r migration; do
+            [ -z "${migration}" ] && continue
+            if grep -Eiq "${destructive_pattern}" "${migration}"; then
+              echo "Destructive or backward-incompatible migration detected: ${migration}" >&2
+              grep -Ein "${destructive_pattern}" "${migration}" >&2 || true
+              failed=1
+            fi
+          done <<< "${changed_migrations}"
+
+          if [ "${failed}" -ne 0 ]; then
+            echo "Split destructive migrations into a separate, planned rollout or set ALLOW_DESTRUCTIVE_MIGRATIONS=true intentionally." >&2
+            exit 1
+          fi
+
+      - name: Run database migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration_secret="MIGRATION_DATABASE_URL"
+          if ! gcloud secrets describe "${migration_secret}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+            migration_secret="DATABASE_URL"
+          fi
+          migration_database_url="$(gcloud secrets versions access latest \
+            --secret="${migration_secret}" \
+            --project="${PROJECT_ID}")"
+          bash backend/scripts/apply_migrations.sh "${migration_database_url}" backend/db/migrations
+
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
@@ -115,9 +183,22 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/${SERVICE}:${GITHUB_SHA}"
-          docker build -f backend/Dockerfile -t "${IMAGE}" backend
+          LATEST_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPOSITORY}/${SERVICE}:latest"
+          docker build --platform=linux/amd64 -f backend/Dockerfile -t "${IMAGE}" -t "${LATEST_IMAGE}" backend
           docker push "${IMAGE}"
+          docker push "${LATEST_IMAGE}"
           echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Capture current Cloud Run revision
+        id: current-revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_revision="$(gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.traffic[0].revisionName)' 2>/dev/null || true)"
+          echo "revision=${current_revision}" >> "${GITHUB_OUTPUT}"
 
       - name: Deploy API to Cloud Run
         id: deploy
@@ -129,15 +210,16 @@ jobs:
           image: ${{ steps.image.outputs.image }}
           env_vars: |-
             CORS_ALLOWED_ORIGINS=${{ vars.CORS_ALLOWED_ORIGINS }}
-            GCS_BUCKET_NAME=${{ vars.GCS_BUCKET_NAME }}
-            GCS_SIGNING_SERVICE_ACCOUNT=${{ vars.GCS_SIGNING_SERVICE_ACCOUNT }}
             APP_ENV=${{ env.APP_ENV }}
+            GCP_PROJECT_ID=${{ env.PROJECT_ID }}
             STRIPE_PRICE_ID_MONTHLY=${{ env.STRIPE_PRICE_ID_MONTHLY }}
             STRIPE_SUCCESS_URL=${{ env.STRIPE_SUCCESS_URL }}
             STRIPE_CANCEL_URL=${{ env.STRIPE_CANCEL_URL }}
             QUEUE_QUESTION_GENERATION=${{ env.QUEUE_QUESTION_GENERATION }}
             QUEUE_HIGHLIGHT_IMPORT=${{ env.QUEUE_HIGHLIGHT_IMPORT }}
             TASK_HANDLER_BASE_URL=${{ env.TASK_HANDLER_BASE_URL }}
+            INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT=${{ env.INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT }}
+            SHUTDOWN_TIMEOUT_SECONDS=${{ env.SHUTDOWN_TIMEOUT_SECONDS }}
           secrets: ${{ steps.cloud-run-secrets.outputs.secrets }}
           flags: >-
             --port=8080
@@ -148,7 +230,7 @@ jobs:
             --concurrency=80
             --cpu=1
             --memory=512Mi
-            --timeout=60s
+            --timeout=120s
 
       - name: Check deployed Cloud Run service
         shell: bash
@@ -162,3 +244,24 @@ jobs:
             echo "Cloud Run service is not Ready: ${ready_status}"
             exit 1
           fi
+
+      - name: Smoke test deployed API
+        if: env.SMOKE_TEST_BASE_URL != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${SMOKE_TEST_BASE_URL%/}"
+          curl --fail --silent --show-error --max-time 10 "${base_url}/health" >/dev/null
+          curl --fail --silent --show-error --max-time 10 "${base_url}/ready" >/dev/null
+
+      - name: Rollback Cloud Run traffic on failure
+        if: failure() && steps.current-revision.outputs.revision != ''
+        shell: bash
+        env:
+          PREVIOUS_REVISION: ${{ steps.current-revision.outputs.revision }}
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --to-revisions="${PREVIOUS_REVISION}=100"

@@ -53,11 +53,11 @@
   <rect x="32" y="338" width="146" height="20" rx="4" fill="#fff" stroke="#F48FB1"/>
   <text x="105" y="352" text-anchor="middle" font-size="9" fill="#880E4F">Firebase Auth Middleware</text>
 
-  <!-- Worker box (separate process) -->
+  <!-- Worker box (Cloud Tasks internal handler) -->
   <rect x="32" y="400" width="146" height="62" rx="6" fill="#EDE7F6" stroke="#7E57C2" stroke-width="1.5" stroke-dasharray="5,3"/>
-  <text x="105" y="420" text-anchor="middle" font-size="10" font-weight="bold" fill="#4527A0">cmd/question-worker</text>
-  <text x="105" y="436" text-anchor="middle" font-size="9" fill="#555">別プロセス / ポーリング型</text>
-  <text x="105" y="450" text-anchor="middle" font-size="9" fill="#555">非同期バッチ問題生成</text>
+  <text x="105" y="420" text-anchor="middle" font-size="10" font-weight="bold" fill="#4527A0">Cloud Tasks Handler</text>
+  <text x="105" y="436" text-anchor="middle" font-size="9" fill="#555">内部HTTP / job単位</text>
+  <text x="105" y="450" text-anchor="middle" font-size="9" fill="#555">非同期問題生成</text>
 
   <!-- ── Usecase contents ── -->
   <rect x="214" y="102" width="154" height="22" rx="4" fill="#FFE082"/>
@@ -109,7 +109,7 @@
   <rect x="404" y="372" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
   <text x="517" y="386" text-anchor="middle" font-size="9" fill="#1B5E20">LLMClient (GenerateQuestions / GradeAnswer)</text>
   <rect x="404" y="398" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
-  <text x="517" y="412" text-anchor="middle" font-size="9" fill="#1B5E20">StorageSigner (Upload / Download)</text>
+  <text x="517" y="412" text-anchor="middle" font-size="9" fill="#1B5E20">QuestionTaskEnqueuer · HighlightJobTrigger</text>
   <rect x="404" y="424" width="226" height="20" rx="4" fill="#fff" stroke="#81C784"/>
   <text x="517" y="438" text-anchor="middle" font-size="9" fill="#1B5E20">QuestionSourceResolver (interface)</text>
 
@@ -156,9 +156,9 @@
   <text x="884" y="163" font-size="8" fill="#555">  model: gemini-2.5-pro (pro)</text>
   <text x="884" y="176" font-size="8" fill="#555">  retry=2, timeout=90s</text>
   <rect x="884" y="190" width="176" height="20" rx="4" fill="#90CAF9"/>
-  <text x="972" y="204" text-anchor="middle" font-size="9" fill="#0D47A1">Google Cloud Storage (StorageSigner)</text>
-  <text x="884" y="224" font-size="8" fill="#555">  v4 Signed URL (upload / download)</text>
-  <text x="884" y="237" font-size="8" fill="#555">  user-namespaced path</text>
+  <text x="972" y="204" text-anchor="middle" font-size="9" fill="#0D47A1">Cloud Tasks (Async Workers)</text>
+  <text x="884" y="224" font-size="8" fill="#555">  question-generation / highlight-import</text>
+  <text x="884" y="237" font-size="8" fill="#555">  DB-backed idempotent processing</text>
   <rect x="884" y="252" width="176" height="20" rx="4" fill="#90CAF9"/>
   <text x="972" y="266" text-anchor="middle" font-size="9" fill="#0D47A1">Firebase Admin (TokenVerifier)</text>
   <text x="884" y="286" font-size="8" fill="#555">  VerifyIDToken + revoke check</text>
@@ -191,5 +191,5 @@
   <rect x="504" y="668" width="576" height="44" rx="8" fill="#fff" stroke="#ddd"/>
   <text x="516" y="685" font-size="11" font-weight="bold" fill="#333">DI (di/container.go)</text>
   <text x="516" y="700" font-size="10" fill="#555">全依存を main.go 起動時に組み立て。Repository / LLMClient は interface 経由で注入。</text>
-  <text x="516" y="712" font-size="10" fill="#888">Firebase / Gemini / GCS クライアントも同一コンテナで初期化。</text>
+  <text x="516" y="712" font-size="10" fill="#888">Firebase / Gemini / Cloud Tasks クライアントも同一コンテナで初期化。</text>
 </svg>

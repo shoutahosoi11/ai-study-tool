@@ -1,9 +1,12 @@
 package router
 
 import (
+	"os"
+
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/di"
+	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
 )
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
@@ -14,17 +17,21 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	registerUserRoutes(api, container, authMiddleware)
 	registerPostRoutes(api, container, authMiddleware)
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
-	registerQuestionRoutes(api, container, authMiddleware)
+	registerQuestionRoutes(api, container, authMiddleware, ingestRateLimit)
 	registerMonetizationRoutes(api, container, authMiddleware)
 	registerInternalTaskRoutes(e, container)
 	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook, echomiddleware.BodyLimit("1M"))
 }
 
 func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
-	internal := e.Group("/internal/tasks")
-	// Cloud Run ingress=internal-and-cloud-load-balancing and Cloud Tasks queue
-	// IAM protect these endpoints. OIDC verification can be added later without
-	// changing the usecase/repository contracts.
+	internal := e.Group("/internal/tasks", appmiddleware.RequireInternalTaskAuth(
+		os.Getenv("INTERNAL_TASK_SECRET"),
+		os.Getenv("TASK_HANDLER_BASE_URL"),
+		os.Getenv("INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT"),
+	))
+	// Cloud Run ingress and queue IAM are network/resource controls; the shared
+	// secret is a compatibility fallback. Prefer Cloud Tasks OIDC by setting
+	// INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT.
 	internal.POST("/question-generation", container.TaskHandler.HandleQuestionGeneration, echomiddleware.BodyLimit("4K"))
 	internal.POST("/highlight-import", container.TaskHandler.HandleHighlightImport, echomiddleware.BodyLimit("4K"))
 }
@@ -71,14 +78,19 @@ func registerHighlightRoutes(
 	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation, echomiddleware.BodyLimit("8K"))
 }
 
-func registerQuestionRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
+func registerQuestionRoutes(
+	api *echo.Group,
+	container *di.Container,
+	authMiddleware echo.MiddlewareFunc,
+	generationRateLimit echo.MiddlewareFunc,
+) {
 	questions := api.Group("/questions", authMiddleware)
 	questions.GET("", container.QuestionHandler.List)
 	questions.GET("/prepared", container.QuestionHandler.ListPrepared)
 	questions.GET("/saved", container.QuestionHandler.ListSaved)
 	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
-	questions.POST("/sync", container.QuestionHandler.SyncStock, echomiddleware.BodyLimit("1K"))
-	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate, echomiddleware.BodyLimit("4K"))
+	questions.POST("/sync", container.QuestionHandler.SyncStock, echomiddleware.BodyLimit("1K"), generationRateLimit)
+	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate, echomiddleware.BodyLimit("4K"), generationRateLimit)
 	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion, echomiddleware.BodyLimit("8K"))
 	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer, echomiddleware.BodyLimit("4K"))
 }

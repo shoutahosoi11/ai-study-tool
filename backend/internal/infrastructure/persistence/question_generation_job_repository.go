@@ -17,6 +17,8 @@ type QuestionGenerationJobRepository struct {
 	db *sql.DB
 }
 
+const defaultQuestionGenerationJobListLimit = 20
+
 func NewQuestionGenerationJobRepository(db *sql.DB) *QuestionGenerationJobRepository {
 	return &QuestionGenerationJobRepository{db: db}
 }
@@ -43,7 +45,8 @@ RETURNING id, user_id, book_key, status, reason, retry_count, last_error, create
 		return nil, wrapQuestionGenerationJobError("create", err)
 	}
 
-	for _, highlightID := range uniqueUUIDs(input.HighlightIDs) {
+	highlightIDs := uniqueUUIDs(input.HighlightIDs)
+	for _, highlightID := range highlightIDs {
 		if highlightID == uuid.Nil {
 			return nil, domain.ErrInvalidInput
 		}
@@ -60,25 +63,7 @@ ON CONFLICT (job_id, highlight_id) DO NOTHING
 		return nil, wrapQuestionGenerationJobError("commit create", err)
 	}
 
-	return r.Get(ctx, job.ID, input.UserID)
-}
-
-func (r *QuestionGenerationJobRepository) Get(ctx context.Context, jobID, userID uuid.UUID) (*domain.QuestionGenerationJob, error) {
-	job, err := scanQuestionGenerationJob(r.db.QueryRowContext(ctx, `
-SELECT id, user_id, book_key, status, reason, retry_count, last_error, created_at,
-       processing_started_at, completed_at, failed_at
-FROM question_generation_jobs
-WHERE id = $1
-  AND user_id = $2
-`, jobID, userID))
-	if err != nil {
-		return nil, wrapQuestionGenerationJobError("get", err)
-	}
-
-	if err := r.loadHighlightIDs(ctx, job); err != nil {
-		return nil, err
-	}
-
+	job.HighlightIDs = highlightIDs
 	return job, nil
 }
 
@@ -98,7 +83,7 @@ func (r *QuestionGenerationJobRepository) listByUserIDAndStatus(
 	action string,
 ) ([]*domain.QuestionGenerationJob, error) {
 	if limit <= 0 {
-		limit = 20
+		limit = defaultQuestionGenerationJobListLimit
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
@@ -121,13 +106,13 @@ LIMIT $3
 		if err != nil {
 			return nil, wrapQuestionGenerationJobError("scan "+action, err)
 		}
-		if err := r.loadHighlightIDs(ctx, job); err != nil {
-			return nil, err
-		}
 		jobs = append(jobs, job)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, wrapQuestionGenerationJobError("rows "+action, err)
+	}
+	if err := r.loadHighlightIDsForJobs(ctx, jobs); err != nil {
+		return nil, err
 	}
 	return jobs, nil
 }
@@ -136,7 +121,10 @@ func (r *QuestionGenerationJobRepository) ClaimQueued(ctx context.Context, jobID
 	job, err := scanQuestionGenerationJob(r.db.QueryRowContext(ctx, `
 UPDATE question_generation_jobs
 SET status = $3,
+    last_error = NULL,
     processing_started_at = NOW(),
+    completed_at = NULL,
+    failed_at = NULL,
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
@@ -158,31 +146,14 @@ RETURNING id, user_id, book_key, status, reason, retry_count, last_error, create
 	return job, true, nil
 }
 
-func (r *QuestionGenerationJobRepository) RequeueStaleProcessing(ctx context.Context, cutoff time.Time) (int, error) {
-	result, err := r.db.ExecContext(ctx, `
-UPDATE question_generation_jobs
-SET status = $1,
-    processing_started_at = NULL,
-    updated_at = NOW()
-WHERE status = $2
-  AND processing_started_at < $3
-`, string(domain.JobStatusQueued), string(domain.JobStatusProcessing), cutoff.UTC())
-	if err != nil {
-		return 0, wrapQuestionGenerationJobError("requeue stale processing", err)
-	}
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("question generation job repo: requeue stale processing rows affected: %w", err)
-	}
-	return int(rowsAffected), nil
-}
-
 func (r *QuestionGenerationJobRepository) MarkQueued(ctx context.Context, jobID, userID uuid.UUID) error {
 	return r.updateStatus(ctx, jobID, userID, `
 UPDATE question_generation_jobs
 SET status = $3,
     last_error = NULL,
     processing_started_at = NULL,
+    completed_at = NULL,
+    failed_at = NULL,
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
@@ -191,12 +162,15 @@ WHERE id = $1
 
 func (r *QuestionGenerationJobRepository) MarkCompleted(ctx context.Context, jobID, userID uuid.UUID) error {
 	return r.updateStatus(ctx, jobID, userID, `
-UPDATE question_generation_jobs
-SET status = $3,
-    completed_at = NOW(),
-    updated_at = NOW()
-WHERE id = $1
-  AND user_id = $2
+	UPDATE question_generation_jobs
+	SET status = $3,
+	    last_error = NULL,
+	    processing_started_at = NULL,
+	    completed_at = NOW(),
+	    failed_at = NULL,
+	    updated_at = NOW()
+	WHERE id = $1
+	  AND user_id = $2
 `, domain.JobStatusCompleted, "mark completed")
 }
 
@@ -205,6 +179,7 @@ func (r *QuestionGenerationJobRepository) MarkEnqueueFailed(ctx context.Context,
 UPDATE question_generation_jobs
 SET status = $3,
     last_error = LEFT($4, 500),
+    processing_started_at = NULL,
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
@@ -226,7 +201,8 @@ SET retry_count = retry_count + 1,
     status = CASE WHEN retry_count + 1 >= $3 THEN $4 ELSE $5 END,
     last_error = LEFT($6, 500),
     processing_started_at = NULL,
-    failed_at = CASE WHEN retry_count + 1 >= $3 THEN NOW() ELSE failed_at END,
+    completed_at = NULL,
+    failed_at = CASE WHEN retry_count + 1 >= $3 THEN NOW() ELSE NULL END,
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
@@ -284,6 +260,70 @@ ORDER BY highlight_id
 	}
 
 	job.HighlightIDs = highlightIDs
+	return nil
+}
+
+func (r *QuestionGenerationJobRepository) loadHighlightIDsForJobs(ctx context.Context, jobs []*domain.QuestionGenerationJob) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	jobIDs := make([]uuid.UUID, 0, len(jobs))
+	jobByID := make(map[uuid.UUID]*domain.QuestionGenerationJob, len(jobs))
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		job.HighlightIDs = make([]uuid.UUID, 0)
+		jobIDs = append(jobIDs, job.ID)
+		jobByID[job.ID] = job
+	}
+	if len(jobIDs) == 0 {
+		return nil
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+SELECT job_id::text, ARRAY_AGG(highlight_id::text ORDER BY highlight_id)::text[] AS highlight_ids
+FROM question_generation_job_highlights
+WHERE job_id::text = ANY($1)
+GROUP BY job_id
+`, pq.Array(uuidStrings(jobIDs)))
+	if err != nil {
+		return fmt.Errorf("question generation job repo: load job highlights batch: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			rawJobID        string
+			rawHighlightIDs pq.StringArray
+		)
+		if err := rows.Scan(&rawJobID, &rawHighlightIDs); err != nil {
+			return fmt.Errorf("question generation job repo: scan job highlights batch: %w", err)
+		}
+
+		jobID, err := uuid.Parse(rawJobID)
+		if err != nil {
+			return fmt.Errorf("question generation job repo: parse batch job id: %w", err)
+		}
+		job := jobByID[jobID]
+		if job == nil {
+			continue
+		}
+
+		highlightIDs := make([]uuid.UUID, 0, len(rawHighlightIDs))
+		for _, rawHighlightID := range rawHighlightIDs {
+			highlightID, err := uuid.Parse(rawHighlightID)
+			if err != nil {
+				return fmt.Errorf("question generation job repo: parse batch highlight id: %w", err)
+			}
+			highlightIDs = append(highlightIDs, highlightID)
+		}
+		job.HighlightIDs = highlightIDs
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("question generation job repo: rows job highlights batch: %w", err)
+	}
 	return nil
 }
 

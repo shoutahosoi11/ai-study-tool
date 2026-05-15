@@ -12,7 +12,6 @@ AI Study Tool is an AI-powered learning platform for highlight capture, question
 - Gemini API
 - Cloud Run + Secret Manager + GitHub Actions
 - Cloud Tasks for asynchronous question generation and highlight import workers
-- Cloud Storage signed URLs where direct object upload/download is needed
 - Stripe for subscription checkout and webhooks
 - Chrome Extension for Kindle Notebook highlight import
 
@@ -36,7 +35,7 @@ The project follows Clean Architecture:
 - `backend/cmd` contains application entrypoints.
 - `backend/internal/domain` contains core entities, constants, domain errors, and interfaces.
 - `backend/internal/usecase` contains application-specific business logic.
-- `backend/internal/infrastructure` contains adapters for PostgreSQL, Gemini, Firebase, Stripe, Cloud Tasks, Cloud Run, and Cloud Storage.
+- `backend/internal/infrastructure` contains adapters for PostgreSQL, Gemini, Firebase, Stripe, Cloud Tasks, and Cloud Run.
 - `backend/internal/repository/sqlcgen` contains sqlc-generated database access code.
 - `backend/internal/handler` contains HTTP handlers and request/response boundary logic.
 - `backend/internal/middleware` contains cross-cutting HTTP middleware.
@@ -46,6 +45,10 @@ The project follows Clean Architecture:
 - `extension` and `kindle-highlights-extension` contain browser-extension work for Kindle Notebook scraping and import experiments.
 
 Backend API routes are under `/api/v1`. Stripe webhooks are exposed at `/webhooks/stripe`. Cloud Tasks call internal endpoints under `/internal/tasks`.
+
+## User Signup
+
+`POST /api/v1/users/signup` is authenticated with Firebase ID Token. The endpoint is idempotent for the same Firebase UID and returns the existing app user on retry; profile changes after signup go through `PUT /api/v1/users/me`.
 
 ## Highlight Import
 
@@ -103,6 +106,7 @@ Production async work uses Cloud Tasks:
 - `QUEUE_QUESTION_GENERATION`
 - `QUEUE_HIGHLIGHT_IMPORT`
 - `TASK_HANDLER_BASE_URL`
+- `INTERNAL_TASK_SECRET`
 
 Queue setup script:
 
@@ -129,6 +133,9 @@ Production runtime dependencies:
 - Stripe
 
 Store the Neon connection string in the `DATABASE_URL` Secret Manager secret. Store sensitive API keys such as `GEMINI_API_KEY`, `STRIPE_SECRET_KEY`, and `STRIPE_WEBHOOK_SECRET` in Secret Manager.
+Store the internal task shared secret in `INTERNAL_TASK_SECRET`; Cloud Tasks
+includes it on `/internal/tasks/*` requests and the backend rejects missing or
+mismatched values.
 
 Cloud Run should be configured with bounded scale and internal ingress where Cloud Tasks/internal routing is used:
 
@@ -146,6 +153,13 @@ Deployment references:
 - [`docs/deployment/cloud-run.md`](docs/deployment/cloud-run.md)
 - [`docs/deployment/cloudflare.md`](docs/deployment/cloudflare.md)
 - [`docs/deployment/incident-runbook.md`](docs/deployment/incident-runbook.md)
+
+## Testing
+
+Test policy and commands are documented in [`docs/testing.md`](docs/testing.md).
+Use `make test` for a local repository-wide smoke, or the narrower
+`test:backend`, `test:frontend`, and `test:mobile` npm scripts when working in
+one surface.
 
 The React Native / Expo mobile app lives in [`mobile/`](mobile/README.md).
 

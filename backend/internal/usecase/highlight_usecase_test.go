@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -22,6 +23,20 @@ type mockImportHighlightRepository struct {
 	bulkUpsertTime   time.Time
 	existingHashes   []string
 	checkedHashes    []string
+}
+
+type mockHighlightImportJobTrigger struct {
+	err     error
+	called  bool
+	queueID uuid.UUID
+	userID  uuid.UUID
+}
+
+func (m *mockHighlightImportJobTrigger) TriggerHighlightImportJob(ctx context.Context, queueID uuid.UUID, userID uuid.UUID) error {
+	m.called = true
+	m.queueID = queueID
+	m.userID = userID
+	return m.err
 }
 
 func (m *mockImportHighlightRepository) BulkUpsert(ctx context.Context, highlights []*domain.Highlight) (int, error) {
@@ -200,6 +215,42 @@ func TestImportKindleHighlightsPartialCopyProtectedSetsWarning(t *testing.T) {
 	}
 }
 
+func TestImportKindleHighlightsSkipsInvalidItems(t *testing.T) {
+	userID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	repo := &mockImportHighlightRepository{
+		bulkUpsertSaved: 1,
+		bulkUpsertTime:  time.Date(2026, 4, 18, 13, 15, 0, 0, time.UTC),
+	}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
+		{
+			ASIN:    "B004",
+			Content: strings.Repeat("a", 301),
+		},
+		{
+			ASIN:    "B005",
+			Content: "Valid highlight",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Saved != 1 {
+		t.Fatalf("expected Saved=1, got %d", result.Saved)
+	}
+	if result.InvalidItemCount != 1 {
+		t.Fatalf("expected InvalidItemCount=1, got %d", result.InvalidItemCount)
+	}
+	if len(repo.bulkUpsertInput) != 1 || repo.bulkUpsertInput[0].Content != "Valid highlight" {
+		t.Fatalf("expected only valid highlight to be imported, got %#v", repo.bulkUpsertInput)
+	}
+	if result.Warning == nil || !strings.Contains(*result.Warning, "入力不備") {
+		t.Fatalf("expected invalid item warning, got %#v", result.Warning)
+	}
+}
+
 func TestImportKindleHighlightsAllCopyProtectedReturnsError(t *testing.T) {
 	userID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	repo := &mockImportHighlightRepository{}
@@ -217,6 +268,23 @@ func TestImportKindleHighlightsAllCopyProtectedReturnsError(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrAllCopyProtected) {
 		t.Fatalf("expected ErrAllCopyProtected, got %v", err)
+	}
+	if repo.bulkUpsertCalled {
+		t.Fatal("expected BulkUpsert not to be called")
+	}
+}
+
+func TestImportKindleHighlightsRejectsEmptyItems(t *testing.T) {
+	userID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	repo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	_, err := uc.ImportKindleHighlights(context.Background(), userID, nil)
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if errors.Is(err, domain.ErrAllCopyProtected) {
+		t.Fatalf("empty import should not be copy protected: %v", err)
 	}
 	if repo.bulkUpsertCalled {
 		t.Fatal("expected BulkUpsert not to be called")
@@ -311,6 +379,131 @@ func TestImportKindleHighlightsFutureHighlightedAtIsSanitized(t *testing.T) {
 	}
 }
 
+func TestImportKindleHighlightsExtremePastHighlightedAtIsSanitized(t *testing.T) {
+	userID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	oldTime := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+	repo := &mockImportHighlightRepository{
+		bulkUpsertSaved: 1,
+		bulkUpsertTime:  time.Date(2026, 4, 18, 15, 30, 0, 0, time.UTC),
+	}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	_, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
+		{
+			ASIN:          "B009",
+			Content:       "Old highlight",
+			HighlightedAt: &oldTime,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if repo.bulkUpsertInput[0].HighlightedAt != nil {
+		t.Fatalf("expected extreme past highlighted_at to be nil, got %#v", repo.bulkUpsertInput[0].HighlightedAt)
+	}
+}
+
+func TestImportKindleHighlightsQueuesValidatedPayload(t *testing.T) {
+	userID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	queueID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	repo := &mockImportHighlightRepository{}
+	queueRepo := &mockHighlightImportQueueRepository{enqueueID: queueID}
+	trigger := &mockHighlightImportJobTrigger{}
+	uc := usecase.NewHighlightUsecaseWithQueue(repo, queueRepo, trigger)
+
+	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
+		{
+			ASIN:    "B010",
+			Content: "  Queued highlight  ",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if repo.bulkUpsertCalled {
+		t.Fatal("expected BulkUpsert not to be called in queue mode")
+	}
+	if !queueRepo.enqueued {
+		t.Fatal("expected import to be enqueued")
+	}
+	if queueRepo.enqueuedUserID != userID {
+		t.Fatalf("unexpected enqueued user id: %s", queueRepo.enqueuedUserID)
+	}
+	if queueRepo.enqueuedSource != domain.ImportQueueSourceKindle {
+		t.Fatalf("unexpected queue source: %q", queueRepo.enqueuedSource)
+	}
+	if len(queueRepo.enqueuedPayload) == 0 {
+		t.Fatal("expected queue payload")
+	}
+	var payload struct {
+		Version    int `json:"version"`
+		Highlights []struct {
+			Content string `json:"content"`
+			UserID  string `json:"user_id"`
+		} `json:"highlights"`
+	}
+	if err := json.Unmarshal(queueRepo.enqueuedPayload, &payload); err != nil {
+		t.Fatalf("expected versioned queue payload: %v", err)
+	}
+	if payload.Version != 1 {
+		t.Fatalf("expected payload version 1, got %d", payload.Version)
+	}
+	if len(payload.Highlights) != 1 || payload.Highlights[0].Content != "Queued highlight" {
+		t.Fatalf("unexpected payload highlights: %#v", payload.Highlights)
+	}
+	if payload.Highlights[0].UserID != "" {
+		t.Fatalf("queue payload should not duplicate user id, got %q", payload.Highlights[0].UserID)
+	}
+	if !trigger.called {
+		t.Fatal("expected job trigger to be called")
+	}
+	if trigger.queueID != queueID || trigger.userID != userID {
+		t.Fatalf("unexpected trigger args: queue=%s user=%s", trigger.queueID, trigger.userID)
+	}
+	if result.QueueID != queueID {
+		t.Fatalf("unexpected queue id: %s", result.QueueID)
+	}
+	if result.QueuedCount != 1 {
+		t.Fatalf("expected queued_count=1, got %d", result.QueuedCount)
+	}
+}
+
+func TestImportKindleHighlightsFailsQueueWhenTriggerFails(t *testing.T) {
+	userID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	queueID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	repo := &mockImportHighlightRepository{}
+	queueRepo := &mockHighlightImportQueueRepository{enqueueID: queueID}
+	trigger := &mockHighlightImportJobTrigger{err: errors.New("cloud tasks unavailable")}
+	uc := usecase.NewHighlightUsecaseWithQueue(repo, queueRepo, trigger)
+
+	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
+		{
+			ASIN:    "B011",
+			Content: "Queued highlight",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected trigger error")
+	}
+	if result != nil {
+		t.Fatalf("expected nil result, got %#v", result)
+	}
+	if repo.bulkUpsertCalled {
+		t.Fatal("expected BulkUpsert not to be called in queue mode")
+	}
+	if !queueRepo.enqueueFailed {
+		t.Fatal("expected queue item to be marked enqueue_failed")
+	}
+	if queueRepo.enqueueFailedID != queueID {
+		t.Fatalf("unexpected enqueue_failed queue id: %s", queueRepo.enqueueFailedID)
+	}
+	if !strings.Contains(queueRepo.enqueueFailedError, "cloud tasks unavailable") {
+		t.Fatalf("expected enqueue_failed error to include trigger error, got %q", queueRepo.enqueueFailedError)
+	}
+}
+
 func TestImportSharedHighlightSavesMobileShareMetadata(t *testing.T) {
 	userID := uuid.MustParse("66666666-6666-6666-6666-666666666666")
 	sharedAt := time.Now().Add(-30 * time.Minute).UTC()
@@ -324,7 +517,7 @@ func TestImportSharedHighlightSavesMobileShareMetadata(t *testing.T) {
 		BookTitle:  " Deep Work ",
 		BookAuthor: " Cal Newport ",
 		Content:    "  Focus is a superpower.  ",
-		SourceApp:  "kindle",
+		SourceApp:  " Kindle ",
 		SourceURL:  "https://read.amazon.com/notebook",
 		SharedAt:   &sharedAt,
 	})
@@ -413,6 +606,23 @@ func TestImportSharedHighlightRejectsEmptyContent(t *testing.T) {
 
 	_, err := uc.ImportSharedHighlight(context.Background(), userID, usecase.ImportSharedHighlightInput{
 		Content: "   ",
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if repo.bulkUpsertCalled {
+		t.Fatal("expected BulkUpsert not to be called")
+	}
+}
+
+func TestImportSharedHighlightRejectsLongSourceApp(t *testing.T) {
+	userID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	repo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	_, err := uc.ImportSharedHighlight(context.Background(), userID, usecase.ImportSharedHighlightInput{
+		Content:   "Valid highlight",
+		SourceApp: strings.Repeat("a", 101),
 	})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)

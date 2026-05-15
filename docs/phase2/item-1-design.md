@@ -9,7 +9,7 @@
 ## 現状 (Before)
 
 ```go
-// cmd/main.go, cmd/question-worker/main.go, cmd/highlight-importer/main.go
+// cmd/main.go
 db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 ```
 
@@ -20,7 +20,7 @@ db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 ## 変更後 (After)
 
 ```go
-// 3つの cmd/*/main.go 共通
+// cmd/main.go
 db, err := dbinfra.Open(os.Getenv("DATABASE_URL"))
 ```
 
@@ -33,8 +33,6 @@ db, err := dbinfra.Open(os.Getenv("DATABASE_URL"))
 | ファイル | 変更内容 |
 |---------|---------|
 | `backend/cmd/main.go` | `dbinfra.Open()` を使用 |
-| `backend/cmd/question-worker/main.go` | 同上 |
-| `backend/cmd/highlight-importer/main.go` | 同上 |
 | `backend/.env.example` | ローカルと本番の記載を分かりやすく整備 |
 
 ## 新規ファイル

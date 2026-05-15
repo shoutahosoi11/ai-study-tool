@@ -25,19 +25,17 @@ type HighlightQuestionSyncReader interface {
 	ListUnusedHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*Highlight, error)
 	ListUsedHighlightsWithUncoveredPerspectives(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*Highlight, error)
 	ListQuestionGenerationCandidates(ctx context.Context, userID uuid.UUID, changedSince *time.Time) ([]QuestionGenerationBookCandidate, error)
+	ListQuestionGenerationCandidateByBookKey(ctx context.Context, userID uuid.UUID, bookKey string) (*QuestionGenerationBookCandidate, error)
 	ListPendingHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*Highlight, error)
 	MarkHighlightsProcessing(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error
+	MarkHighlightsPending(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error
 	MarkHighlightPendingForQuestion(ctx context.Context, userID uuid.UUID, questionID uuid.UUID) (string, error)
 }
 
 type HighlightGenerationLifecycle interface {
-	ListPendingUserStats(ctx context.Context) ([]PendingHighlightUserStat, error)
-	ClaimPendingByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*Highlight, error)
-	ClaimPendingByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*Highlight, error)
 	ListByIDs(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) ([]*Highlight, error)
-	RequeueStaleProcessing(ctx context.Context, cutoff time.Time) (int, error)
-	MarkGenerationCompleted(ctx context.Context, highlightIDs []uuid.UUID) error
-	MarkGenerationFailed(ctx context.Context, highlightIDs []uuid.UUID, lastError string, maxRetry int) error
+	MarkGenerationCompleted(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error
+	MarkGenerationFailed(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, lastError string, maxRetry int) error
 }
 
 type HighlightRepository interface {
@@ -45,7 +43,6 @@ type HighlightRepository interface {
 	HighlightReader
 	HighlightQuestionSyncReader
 	HighlightGenerationLifecycle
-	RequeueStaleProcessingByUserID(ctx context.Context, userID uuid.UUID, cutoff time.Time) (int, error)
 }
 
 type HighlightImportRepository interface {
@@ -55,5 +52,4 @@ type HighlightImportRepository interface {
 
 type QuestionSyncHighlightRepository interface {
 	HighlightQuestionSyncReader
-	RequeueStaleProcessingByUserID(ctx context.Context, userID uuid.UUID, cutoff time.Time) (int, error)
 }

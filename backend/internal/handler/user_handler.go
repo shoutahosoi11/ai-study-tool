@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -49,9 +52,13 @@ func (h *UserHandler) SignUp(c echo.Context) error {
 	// 既存ユーザー確認や username 重複確認
 	user, err := h.userUsecase.SignUp(c.Request().Context(), input)
 	if err != nil {
-		if errors.Is(err, domain.ErrAlreadyExists) {
-			return echo.NewHTTPError(http.StatusConflict, "user already exists")
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid user input")
 		}
+		if errors.Is(err, domain.ErrAlreadyExists) {
+			return echo.NewHTTPError(http.StatusConflict, "username already taken")
+		}
+		log.Printf("user signup error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -59,17 +66,9 @@ func (h *UserHandler) SignUp(c echo.Context) error {
 }
 
 func (h *UserHandler) GetMe(c echo.Context) error {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	user, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	user, err := resolveCurrentUser(c, h.userUsecase, "user")
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return err
 	}
 
 	return c.JSON(http.StatusOK, dto.ToMeResponse(user))
@@ -87,6 +86,7 @@ func (h *UserHandler) GetUser(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
+		log.Printf("user get public profile error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -94,35 +94,30 @@ func (h *UserHandler) GetUser(c echo.Context) error {
 }
 
 func (h *UserHandler) UpdateProfile(c echo.Context) error {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
 	// firebaseUID から me を取得しているのは、「誰のプロフィールを更新するか」を安全に確定
-	me, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	me, err := resolveCurrentUser(c, h.userUsecase, "user updateProfile")
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return err
 	}
-	// プロフィール更新リクエストを受け取る箱を作る
-	req := new(dto.UpdateProfileRequest)
-	// リクエストボディのJSONを req に詰める
-	if err := c.Bind(req); err != nil {
+	req, fields, err := decodeUpdateProfileRequest(c)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	input, err := buildUpdateUserInput(req)
+	input, err := buildUpdateUserInput(req, fields)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	// me.ID を使っているので、リクエスト側が勝手に他人のIDを指定して更新する形にはなっていません。
 	updated, err := h.userUsecase.UpdateProfile(c.Request().Context(), me.ID, input)
 	if err != nil {
-		if errors.Is(err, domain.ErrAlreadyExists) {
-			return echo.NewHTTPError(http.StatusConflict, "user already exists")
+		if errors.Is(err, domain.ErrInvalidInput) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid user input")
 		}
+		if errors.Is(err, domain.ErrAlreadyExists) {
+			return echo.NewHTTPError(http.StatusConflict, "username already taken")
+		}
+		log.Printf("user updateProfile error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -130,17 +125,9 @@ func (h *UserHandler) UpdateProfile(c echo.Context) error {
 }
 
 func (h *UserHandler) UpdateQuestionSettings(c echo.Context) error {
-	firebaseUID, ok := middleware.GetFirebaseUID(c)
-	if !ok {
-		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-	}
-
-	me, err := h.userUsecase.GetByFirebaseUID(c.Request().Context(), firebaseUID)
+	me, err := resolveCurrentUser(c, h.userUsecase, "user updateQuestionSettings")
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "user not found")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return err
 	}
 
 	req := new(dto.UpdateQuestionSettingsRequest)
@@ -158,6 +145,7 @@ func (h *UserHandler) UpdateQuestionSettings(c echo.Context) error {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid question settings")
 		}
+		log.Printf("user updateQuestionSettings error: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -165,8 +153,10 @@ func (h *UserHandler) UpdateQuestionSettings(c echo.Context) error {
 }
 
 func buildCreateUserInput(firebaseUID string, req *dto.SignUpRequest) (domain.CreateUserInput, error) {
-	username := strings.TrimSpace(req.Username)
-	if err := validateRequiredText(username, "username", 3, 50); err != nil {
+	firebaseUID = strings.TrimSpace(firebaseUID)
+
+	username := domain.NormalizeUsername(req.Username)
+	if err := validateUsername(username); err != nil {
 		return domain.CreateUserInput{}, err
 	}
 
@@ -206,47 +196,108 @@ func buildCreateUserInput(firebaseUID string, req *dto.SignUpRequest) (domain.Cr
 	}, nil
 }
 
-func buildUpdateUserInput(req *dto.UpdateProfileRequest) (domain.UpdateUserInput, error) {
-	username := strings.TrimSpace(req.Username)
-	if err := validateRequiredText(username, "username", 3, 50); err != nil {
-		return domain.UpdateUserInput{}, err
+func decodeUpdateProfileRequest(c echo.Context) (*dto.UpdateProfileRequest, map[string]bool, error) {
+	var raw map[string]json.RawMessage
+	decoder := json.NewDecoder(c.Request().Body)
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, nil, err
+	}
+	if raw == nil {
+		return nil, nil, errors.New("request body must be a JSON object")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, nil, errors.New("request body must contain a single JSON object")
 	}
 
-	displayName := strings.TrimSpace(req.DisplayName)
-	if err := validateRequiredText(displayName, "display_name", 1, 100); err != nil {
-		return domain.UpdateUserInput{}, err
-	}
-	avatarURL := normalizeOptionalText(req.AvatarURL)
-	if err := validateOptionalURL(avatarURL, "avatar_url", maxAvatarURLLength); err != nil {
-		return domain.UpdateUserInput{}, err
-	}
-	bio := normalizeOptionalText(req.Bio)
-	if err := validateOptionalText(bio, "bio", maxBioLength); err != nil {
-		return domain.UpdateUserInput{}, err
-	}
-	university := normalizeOptionalText(req.University)
-	if err := validateOptionalText(university, "university", 100); err != nil {
-		return domain.UpdateUserInput{}, err
-	}
-	faculty := normalizeOptionalText(req.Faculty)
-	if err := validateOptionalText(faculty, "faculty", 100); err != nil {
-		return domain.UpdateUserInput{}, err
-	}
-	country := normalizeOptionalText(req.Country)
-	if err := validateOptionalText(country, "country", 10); err != nil {
-		return domain.UpdateUserInput{}, err
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return domain.UpdateUserInput{
-		Username:    username,
-		DisplayName: displayName,
-		AvatarURL:   avatarURL,
-		Bio:         bio,
-		University:  university,
-		Faculty:     faculty,
-		Grade:       req.Grade,
-		Country:     country,
-	}, nil
+	req := new(dto.UpdateProfileRequest)
+	if err := json.Unmarshal(body, req); err != nil {
+		return nil, nil, err
+	}
+
+	fields := make(map[string]bool, len(raw))
+	for key := range raw {
+		fields[key] = true
+	}
+	return req, fields, nil
+}
+
+func buildUpdateUserInput(req *dto.UpdateProfileRequest, fields map[string]bool) (domain.UpdateUserInput, error) {
+	var input domain.UpdateUserInput
+	if fields["username"] {
+		username := domain.NormalizeUsername(req.Username)
+		if err := validateUsername(username); err != nil {
+			return domain.UpdateUserInput{}, err
+		}
+		input.Username = domain.SomeStringUpdate(username)
+	}
+	if fields["display_name"] {
+		displayName := strings.TrimSpace(req.DisplayName)
+		if err := validateRequiredText(displayName, "display_name", 1, 100); err != nil {
+			return domain.UpdateUserInput{}, err
+		}
+		input.DisplayName = domain.SomeStringUpdate(displayName)
+	}
+	if fields["avatar_url"] {
+		avatarURL := normalizeOptionalText(req.AvatarURL)
+		if err := validateOptionalURL(avatarURL, "avatar_url", maxAvatarURLLength); err != nil {
+			return domain.UpdateUserInput{}, err
+		}
+		input.AvatarURL = optionalStringUpdate(avatarURL)
+	}
+	if fields["bio"] {
+		bio := normalizeOptionalText(req.Bio)
+		if err := validateOptionalText(bio, "bio", maxBioLength); err != nil {
+			return domain.UpdateUserInput{}, err
+		}
+		input.Bio = optionalStringUpdate(bio)
+	}
+	if fields["university"] {
+		university := normalizeOptionalText(req.University)
+		if err := validateOptionalText(university, "university", 100); err != nil {
+			return domain.UpdateUserInput{}, err
+		}
+		input.University = optionalStringUpdate(university)
+	}
+	if fields["faculty"] {
+		faculty := normalizeOptionalText(req.Faculty)
+		if err := validateOptionalText(faculty, "faculty", 100); err != nil {
+			return domain.UpdateUserInput{}, err
+		}
+		input.Faculty = optionalStringUpdate(faculty)
+	}
+	if fields["grade"] {
+		input.Grade = optionalInt16Update(req.Grade)
+	}
+	if fields["country"] {
+		country := normalizeOptionalText(req.Country)
+		if err := validateOptionalText(country, "country", 10); err != nil {
+			return domain.UpdateUserInput{}, err
+		}
+		input.Country = optionalStringUpdate(country)
+	}
+	if !input.HasChanges() {
+		return domain.UpdateUserInput{}, errors.New("at least one profile field is required")
+	}
+	return input, nil
+}
+
+func optionalStringUpdate(value *string) domain.OptionalStringUpdate {
+	if value == nil {
+		return domain.NullStringUpdate()
+	}
+	return domain.SomeStringUpdate(*value)
+}
+
+func optionalInt16Update(value *int16) domain.OptionalInt16Update {
+	if value == nil {
+		return domain.NullInt16Update()
+	}
+	return domain.SomeInt16Update(*value)
 }
 
 func validateRequiredText(value, field string, minLen, maxLen int) error {
@@ -262,6 +313,22 @@ func validateRequiredText(value, field string, minLen, maxLen int) error {
 		return errors.New(field + " must be at most " + strconv.Itoa(maxLen) + " characters")
 	}
 
+	return nil
+}
+
+func validateUsername(username string) error {
+	if username == "" {
+		return errors.New("username is required")
+	}
+	if utf8.RuneCountInString(username) < domain.UsernameMinLength {
+		return errors.New("username must be at least " + strconv.Itoa(domain.UsernameMinLength) + " characters")
+	}
+	if utf8.RuneCountInString(username) > domain.UsernameMaxLength {
+		return errors.New("username must be at most " + strconv.Itoa(domain.UsernameMaxLength) + " characters")
+	}
+	if !domain.IsValidUsername(username) {
+		return errors.New("username may contain only lowercase letters, numbers, and underscores")
+	}
 	return nil
 }
 

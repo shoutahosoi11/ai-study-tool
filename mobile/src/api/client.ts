@@ -5,6 +5,7 @@ import { apiBaseURL } from '../config'
 
 export const apiClient = axios.create({
   baseURL: apiBaseURL,
+  timeout: 30_000,
 })
 
 apiClient.interceptors.request.use(async (config) => {

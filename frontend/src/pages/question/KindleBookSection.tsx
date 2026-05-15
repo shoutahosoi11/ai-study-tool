@@ -260,7 +260,6 @@ export function KindleBookSection({ onQuestionsGenerated }: Props) {
 
     try {
       const questions = await generateQuestions('kindle_book', sourceId, {
-        questionType: 'multiple_choice',
         questionCount: defaultQuestionCount,
         bookTitle: book.book_title,
         bookAuthor: book.book_author,

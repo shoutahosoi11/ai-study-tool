@@ -13,11 +13,12 @@ import (
 )
 
 type userRepository struct {
+	db      *sql.DB
 	queries *sqlcgen.Queries
 }
 
 func NewUserRepository(db *sql.DB) domain.UserRepository {
-	return &userRepository{queries: sqlcgen.New(db)}
+	return &userRepository{db: db, queries: sqlcgen.New(db)}
 }
 
 func (r *userRepository) GetByFirebaseUID(ctx context.Context, firebaseUID string) (*domain.User, error) {
@@ -37,7 +38,7 @@ func (r *userRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Use
 }
 
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
-	user, err := r.queries.GetUserByUsername(ctx, username)
+	user, err := r.queries.GetUserByUsername(ctx, domain.NormalizeUsername(username))
 	if err != nil {
 		return nil, wrapUserError("get by username", err)
 	}
@@ -64,15 +65,23 @@ func (r *userRepository) Create(ctx context.Context, input domain.CreateUserInpu
 
 func (r *userRepository) Update(ctx context.Context, id uuid.UUID, input domain.UpdateUserInput) (*domain.User, error) {
 	user, err := r.queries.UpdateUser(ctx, sqlcgen.UpdateUserParams{
-		ID:          id,
-		Username:    input.Username,
-		DisplayName: input.DisplayName,
-		AvatarUrl:   toNullString(input.AvatarURL),
-		Bio:         toNullString(input.Bio),
-		University:  toNullString(input.University),
-		Faculty:     toNullString(input.Faculty),
-		Grade:       toNullInt16(input.Grade),
-		Country:     toNullString(input.Country),
+		ID:             id,
+		SetUsername:    input.Username.Set,
+		Username:       stringUpdateValue(input.Username),
+		SetDisplayName: input.DisplayName.Set,
+		DisplayName:    stringUpdateValue(input.DisplayName),
+		SetAvatarUrl:   input.AvatarURL.Set,
+		AvatarUrl:      toUpdateNullString(input.AvatarURL),
+		SetBio:         input.Bio.Set,
+		Bio:            toUpdateNullString(input.Bio),
+		SetUniversity:  input.University.Set,
+		University:     toUpdateNullString(input.University),
+		SetFaculty:     input.Faculty.Set,
+		Faculty:        toUpdateNullString(input.Faculty),
+		SetGrade:       input.Grade.Set,
+		Grade:          toUpdateNullInt16(input.Grade),
+		SetCountry:     input.Country.Set,
+		Country:        toUpdateNullString(input.Country),
 	})
 	if err != nil {
 		return nil, wrapUserError("update", err)
@@ -128,6 +137,27 @@ func toNullString(value *string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: *value, Valid: true}
+}
+
+func stringUpdateValue(value domain.OptionalStringUpdate) string {
+	if value.Value == nil {
+		return ""
+	}
+	return *value.Value
+}
+
+func toUpdateNullString(value domain.OptionalStringUpdate) sql.NullString {
+	if value.Value == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *value.Value, Valid: true}
+}
+
+func toUpdateNullInt16(value domain.OptionalInt16Update) sql.NullInt16 {
+	if value.Value == nil {
+		return sql.NullInt16{}
+	}
+	return sql.NullInt16{Int16: *value.Value, Valid: true}
 }
 
 func fromNullString(value sql.NullString) *string {

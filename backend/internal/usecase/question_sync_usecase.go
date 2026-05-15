@@ -14,19 +14,18 @@ import (
 )
 
 const (
-	defaultQuestionSyncDailyLimit         = 100
-	defaultQuestionSyncStaleTimeout       = 10 * time.Minute
-	defaultQuestionSyncEnqueueFailedLimit = 20
+	defaultQuestionSyncDailyLimit   = 100
+	defaultQuestionSyncStaleTimeout = 10 * time.Minute
+	defaultQuestionSyncJobListLimit = 20
 )
 
 type QuestionSyncUsecase struct {
-	highlightRepo          domain.QuestionSyncHighlightRepository
-	questionRepo           domain.QuestionSyncQuestionRepository
-	jobRepo                domain.QuestionGenerationJobRepository
-	taskEnqueuer           domain.QuestionGenerationTaskEnqueuer
-	now                    func() time.Time
-	dailyLimit             int
-	staleProcessingTimeout time.Duration
+	highlightRepo domain.QuestionSyncHighlightRepository
+	questionRepo  domain.QuestionSyncQuestionRepository
+	jobRepo       domain.QuestionGenerationJobRepository
+	taskEnqueuer  domain.QuestionGenerationTaskEnqueuer
+	now           func() time.Time
+	dailyLimit    int
 }
 
 type QuestionStockBook struct {
@@ -51,23 +50,18 @@ func NewQuestionSyncUsecase(
 	taskEnqueuer domain.QuestionGenerationTaskEnqueuer,
 ) *QuestionSyncUsecase {
 	return &QuestionSyncUsecase{
-		highlightRepo:          highlightRepo,
-		questionRepo:           questionRepo,
-		jobRepo:                jobRepo,
-		taskEnqueuer:           taskEnqueuer,
-		now:                    time.Now,
-		dailyLimit:             readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit),
-		staleProcessingTimeout: readEnvDurationSecondsOrDefault("QUESTION_SYNC_STALE_PROCESSING_SECONDS", defaultQuestionSyncStaleTimeout),
+		highlightRepo: highlightRepo,
+		questionRepo:  questionRepo,
+		jobRepo:       jobRepo,
+		taskEnqueuer:  taskEnqueuer,
+		now:           time.Now,
+		dailyLimit:    readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit),
 	}
 }
 
 func (u *QuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domain.User) (*SyncQuestionStockResult, error) {
 	if user == nil {
 		return nil, domain.ErrNotFound
-	}
-
-	if err := u.requeueStaleJobs(ctx); err != nil {
-		return nil, err
 	}
 
 	result := &SyncQuestionStockResult{}
@@ -147,37 +141,19 @@ func (u *QuestionSyncUsecase) EvaluateBookAfterAnswer(ctx context.Context, user 
 		return fmt.Errorf("question sync usecase: mark answered highlight pending: %w", err)
 	}
 	if strings.TrimSpace(bookKey) == "" {
+		slog.Warn("question_sync_event=empty_book_key_after_answer", "user_id", user.ID.String(), "question_id", parsedQuestionID.String(), "highlight_id", highlightID.String())
 		return nil
 	}
 
-	candidates, err := u.highlightRepo.ListQuestionGenerationCandidates(ctx, user.ID, nil)
+	candidate, err := u.highlightRepo.ListQuestionGenerationCandidateByBookKey(ctx, user.ID, bookKey)
 	if err != nil {
-		return fmt.Errorf("question sync usecase: list candidates after answer: %w", err)
+		return fmt.Errorf("question sync usecase: list candidate after answer: %w", err)
 	}
-	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate.BookKey) != strings.TrimSpace(bookKey) {
-			continue
-		}
-		_, err := u.createJobIfNeeded(ctx, user.ID, candidate)
-		return err
-	}
-
-	return nil
-}
-
-func (u *QuestionSyncUsecase) requeueStaleJobs(ctx context.Context) error {
-	if u.jobRepo == nil || u.staleProcessingTimeout <= 0 {
+	if candidate == nil {
 		return nil
 	}
-
-	requeued, err := u.jobRepo.RequeueStaleProcessing(ctx, u.now().UTC().Add(-u.staleProcessingTimeout))
-	if err != nil {
-		return fmt.Errorf("question sync usecase: requeue stale jobs: %w", err)
-	}
-	if requeued > 0 {
-		slog.Info("question_generation_event=stale_jobs_requeued", "count", requeued)
-	}
-	return nil
+	_, err = u.createJobIfNeeded(ctx, user.ID, *candidate)
+	return err
 }
 
 func (u *QuestionSyncUsecase) skipIfDailyLimitReached(ctx context.Context, userID uuid.UUID) (bool, error) {
@@ -193,7 +169,7 @@ func (u *QuestionSyncUsecase) reenqueueFailedJobs(ctx context.Context, userID uu
 		return nil
 	}
 
-	jobs, err := u.jobRepo.ListEnqueueFailedByUserID(ctx, userID, defaultQuestionSyncEnqueueFailedLimit)
+	jobs, err := u.jobRepo.ListEnqueueFailedByUserID(ctx, userID, defaultQuestionSyncJobListLimit)
 	if err != nil {
 		return fmt.Errorf("question sync usecase: list enqueue failed jobs: %w", err)
 	}
@@ -202,14 +178,14 @@ func (u *QuestionSyncUsecase) reenqueueFailedJobs(ctx context.Context, userID uu
 		if job == nil {
 			continue
 		}
+		if err := u.jobRepo.MarkQueued(ctx, job.ID, job.UserID); err != nil {
+			return fmt.Errorf("question sync usecase: mark recovered job queued: %w", err)
+		}
 		if err := u.enqueueJob(ctx, job); err != nil {
 			if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, job.UserID, err.Error()); markErr != nil {
 				return fmt.Errorf("question sync usecase: mark enqueue failed retry: %w", markErr)
 			}
 			continue
-		}
-		if err := u.jobRepo.MarkQueued(ctx, job.ID, job.UserID); err != nil {
-			return fmt.Errorf("question sync usecase: mark recovered job queued: %w", err)
 		}
 		result.QueuedCount++
 	}
@@ -222,7 +198,7 @@ func (u *QuestionSyncUsecase) reenqueueQueuedJobs(ctx context.Context, userID uu
 		return nil
 	}
 
-	jobs, err := u.jobRepo.ListQueuedByUserID(ctx, userID, defaultQuestionSyncEnqueueFailedLimit)
+	jobs, err := u.jobRepo.ListQueuedByUserID(ctx, userID, defaultQuestionSyncJobListLimit)
 	if err != nil {
 		return fmt.Errorf("question sync usecase: list queued jobs: %w", err)
 	}
@@ -283,8 +259,13 @@ func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid
 	}
 
 	if err := u.enqueueJob(ctx, job); err != nil {
-		if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, job.UserID, err.Error()); markErr != nil {
+		markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, job.UserID, err.Error())
+		pendingErr := u.highlightRepo.MarkHighlightsPending(ctx, userID, highlightIDs)
+		if markErr != nil {
 			return false, fmt.Errorf("question sync usecase: mark enqueue failed: %w", markErr)
+		}
+		if pendingErr != nil {
+			return false, fmt.Errorf("question sync usecase: mark highlights pending after enqueue failure: %w", pendingErr)
 		}
 		slog.Error("question_generation_event=enqueue_failed",
 			"user_id", userID.String(),
@@ -330,6 +311,12 @@ func questionGenerationReason(candidate domain.QuestionGenerationBookCandidate) 
 
 func sortQuestionGenerationCandidates(candidates []domain.QuestionGenerationBookCandidate) {
 	sort.SliceStable(candidates, func(left, right int) bool {
+		if candidates[left].LatestHighlightAt.IsZero() {
+			return false
+		}
+		if candidates[right].LatestHighlightAt.IsZero() {
+			return true
+		}
 		return candidates[left].LatestHighlightAt.After(candidates[right].LatestHighlightAt)
 	})
 }

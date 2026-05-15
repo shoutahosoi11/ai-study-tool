@@ -73,6 +73,7 @@ type ImportHighlightsResponse struct {
 	ResolvedASIN   string               `json:"resolved_asin,omitempty"`
 	// 共通
 	CopyProtectedCount int     `json:"copy_protected_count,omitempty"`
+	InvalidItemCount   int     `json:"invalid_item_count,omitempty"`
 	Warning            *string `json:"warning,omitempty"`
 }
 
@@ -84,7 +85,7 @@ type ImportSharedHighlightResponse struct {
 
 type ImportPastedHighlightResponse struct {
 	ID        string `json:"id"`
-	Duplicate bool   `json:"duplicated"`
+	Duplicate bool   `json:"duplicate"`
 }
 
 type ListBookHighlightsResponse struct {

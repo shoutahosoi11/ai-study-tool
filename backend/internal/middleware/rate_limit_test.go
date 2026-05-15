@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
@@ -69,6 +70,9 @@ func TestRateLimitRejectsExceededRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	middleware.now = func() time.Time {
+		return time.Date(2026, 5, 15, 23, 59, 0, 0, time.UTC)
+	}
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -92,7 +96,7 @@ func TestRateLimitRejectsExceededRequest(t *testing.T) {
 	if httpErr.Code != http.StatusTooManyRequests {
 		t.Fatalf("unexpected status: %d", httpErr.Code)
 	}
-	if rec.Header().Get(echo.HeaderRetryAfter) != "86400" {
+	if rec.Header().Get(echo.HeaderRetryAfter) != "60" {
 		t.Fatalf("unexpected Retry-After: %s", rec.Header().Get(echo.HeaderRetryAfter))
 	}
 }

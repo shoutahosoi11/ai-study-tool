@@ -54,8 +54,6 @@ Go 1.21 の仕様:
 | ファイル | 変更内容 |
 |---------|---------|
 | `backend/cmd/main.go` | `logging.Setup()` を早期呼び出し |
-| `backend/cmd/question-worker/main.go` | 同上 |
-| `backend/cmd/highlight-importer/main.go` | 同上 |
 | `backend/internal/usecase/question_sync_usecase.go` | key イベントを slog attrs に移行 |
 | `backend/internal/usecase/question_worker_usecase.go` | 同上 |
 

@@ -14,10 +14,12 @@ type mockQuestionSyncHighlightRepository struct {
 	candidates             []domain.QuestionGenerationBookCandidate
 	pendingByBook          map[string][]*domain.Highlight
 	markedProcessing       []uuid.UUID
+	markedPending          []uuid.UUID
 	markedPendingBookKey   string
 	markedPendingQuestion  uuid.UUID
 	listCandidatesChanged  *time.Time
 	listCandidatesCalled   int
+	listCandidateBookKey   string
 	markPendingForQuestion func(ctx context.Context, userID uuid.UUID, questionID uuid.UUID) (string, error)
 }
 
@@ -33,14 +35,21 @@ func (m *mockQuestionSyncHighlightRepository) ListUsedHighlightsWithUncoveredPer
 	return []*domain.Highlight{}, nil
 }
 
-func (m *mockQuestionSyncHighlightRepository) RequeueStaleProcessingByUserID(ctx context.Context, userID uuid.UUID, cutoff time.Time) (int, error) {
-	return 0, nil
-}
-
 func (m *mockQuestionSyncHighlightRepository) ListQuestionGenerationCandidates(ctx context.Context, userID uuid.UUID, changedSince *time.Time) ([]domain.QuestionGenerationBookCandidate, error) {
 	m.listCandidatesCalled++
 	m.listCandidatesChanged = changedSince
 	return append([]domain.QuestionGenerationBookCandidate(nil), m.candidates...), nil
+}
+
+func (m *mockQuestionSyncHighlightRepository) ListQuestionGenerationCandidateByBookKey(ctx context.Context, userID uuid.UUID, bookKey string) (*domain.QuestionGenerationBookCandidate, error) {
+	m.listCandidateBookKey = bookKey
+	for _, candidate := range m.candidates {
+		if candidate.BookKey == bookKey {
+			candidateCopy := candidate
+			return &candidateCopy, nil
+		}
+	}
+	return nil, nil
 }
 
 func (m *mockQuestionSyncHighlightRepository) ListPendingHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*domain.Highlight, error) {
@@ -53,6 +62,11 @@ func (m *mockQuestionSyncHighlightRepository) ListPendingHighlightsByBook(ctx co
 
 func (m *mockQuestionSyncHighlightRepository) MarkHighlightsProcessing(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error {
 	m.markedProcessing = append(m.markedProcessing, highlightIDs...)
+	return nil
+}
+
+func (m *mockQuestionSyncHighlightRepository) MarkHighlightsPending(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error {
+	m.markedPending = append(m.markedPending, highlightIDs...)
 	return nil
 }
 
@@ -83,10 +97,6 @@ func (m *mockQuestionSyncQuestionRepository) ReserveDailyGeneratedCount(ctx cont
 
 func (m *mockQuestionSyncQuestionRepository) ReleaseDailyGeneratedCount(ctx context.Context, userID uuid.UUID, day time.Time, delta int) error {
 	return nil
-}
-
-func (m *mockQuestionSyncQuestionRepository) QueueHighlightsWithinDailyLimit(ctx context.Context, userID uuid.UUID, day time.Time, limit int, highlightIDs []uuid.UUID, questionCountByHighlightID map[uuid.UUID]int, requestedAt time.Time) ([]uuid.UUID, bool, error) {
-	return append([]uuid.UUID(nil), highlightIDs...), true, nil
 }
 
 func (m *mockQuestionSyncQuestionRepository) GetUserLastQuestionSyncAt(ctx context.Context, userID uuid.UUID) (*time.Time, error) {
@@ -123,7 +133,7 @@ type mockQuestionGenerationJobRepository struct {
 	markedCompleted     []uuid.UUID
 	markedEnqueueFailed []uuid.UUID
 	recordedFailures    []uuid.UUID
-	requeuedStale       int
+	callLog             *[]string
 }
 
 func (m *mockQuestionGenerationJobRepository) Create(ctx context.Context, input domain.CreateQuestionGenerationJobInput) (*domain.QuestionGenerationJob, error) {
@@ -141,10 +151,6 @@ func (m *mockQuestionGenerationJobRepository) Create(ctx context.Context, input 
 	}, nil
 }
 
-func (m *mockQuestionGenerationJobRepository) Get(ctx context.Context, jobID, userID uuid.UUID) (*domain.QuestionGenerationJob, error) {
-	return nil, domain.ErrNotFound
-}
-
 func (m *mockQuestionGenerationJobRepository) ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
 	return append([]*domain.QuestionGenerationJob(nil), m.enqueueFailedJobs...), nil
 }
@@ -158,11 +164,10 @@ func (m *mockQuestionGenerationJobRepository) ClaimQueued(ctx context.Context, j
 	return m.claimJob, m.claimOK, nil
 }
 
-func (m *mockQuestionGenerationJobRepository) RequeueStaleProcessing(ctx context.Context, cutoff time.Time) (int, error) {
-	return m.requeuedStale, nil
-}
-
 func (m *mockQuestionGenerationJobRepository) MarkQueued(ctx context.Context, jobID, userID uuid.UUID) error {
+	if m.callLog != nil {
+		*m.callLog = append(*m.callLog, "mark_queued")
+	}
 	m.markedQueued = append(m.markedQueued, jobID)
 	return nil
 }
@@ -173,6 +178,9 @@ func (m *mockQuestionGenerationJobRepository) MarkCompleted(ctx context.Context,
 }
 
 func (m *mockQuestionGenerationJobRepository) MarkEnqueueFailed(ctx context.Context, jobID, userID uuid.UUID, lastError string) error {
+	if m.callLog != nil {
+		*m.callLog = append(*m.callLog, "mark_enqueue_failed")
+	}
 	m.markedEnqueueFailed = append(m.markedEnqueueFailed, jobID)
 	return nil
 }
@@ -191,9 +199,13 @@ func (m *mockQuestionGenerationJobRepository) RecordFailure(ctx context.Context,
 type mockQuestionGenerationTaskEnqueuer struct {
 	err      error
 	enqueued []uuid.UUID
+	callLog  *[]string
 }
 
 func (m *mockQuestionGenerationTaskEnqueuer) EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID) error {
+	if m.callLog != nil {
+		*m.callLog = append(*m.callLog, "enqueue")
+	}
 	if m.err != nil {
 		return m.err
 	}
@@ -391,19 +403,24 @@ func TestSyncQuestionStockMarksEnqueueFailedWhenTaskEnqueueFails(t *testing.T) {
 	if len(jobRepo.markedEnqueueFailed) != 1 {
 		t.Fatalf("expected enqueue_failed mark, got %#v", jobRepo.markedEnqueueFailed)
 	}
+	if len(highlightRepo.markedPending) != domain.MaxHighlightsPerJob {
+		t.Fatalf("expected enqueue failure to return highlights to pending, got %d", len(highlightRepo.markedPending))
+	}
 }
 
 func TestSyncQuestionStockReenqueuesFailedJobsBeforeScanning(t *testing.T) {
 	userID := uuid.New()
 	jobID := uuid.New()
+	callLog := make([]string, 0)
 	jobRepo := &mockQuestionGenerationJobRepository{
+		callLog: &callLog,
 		enqueueFailedJobs: []*domain.QuestionGenerationJob{{
 			ID:     jobID,
 			UserID: userID,
 			Status: domain.JobStatusEnqueueFailed,
 		}},
 	}
-	uc := newQuestionSyncTestUsecase(&mockQuestionSyncHighlightRepository{}, &mockQuestionSyncQuestionRepository{}, jobRepo, &mockQuestionGenerationTaskEnqueuer{})
+	uc := newQuestionSyncTestUsecase(&mockQuestionSyncHighlightRepository{}, &mockQuestionSyncQuestionRepository{}, jobRepo, &mockQuestionGenerationTaskEnqueuer{callLog: &callLog})
 
 	result, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: userID})
 	if err != nil {
@@ -415,6 +432,9 @@ func TestSyncQuestionStockReenqueuesFailedJobsBeforeScanning(t *testing.T) {
 	}
 	if len(jobRepo.markedQueued) != 1 || jobRepo.markedQueued[0] != jobID {
 		t.Fatalf("expected failed job marked queued, got %#v", jobRepo.markedQueued)
+	}
+	if len(callLog) != 2 || callLog[0] != "mark_queued" || callLog[1] != "enqueue" {
+		t.Fatalf("expected enqueue_failed recovery to mark queued before enqueue, got %#v", callLog)
 	}
 }
 
@@ -479,6 +499,12 @@ func TestEvaluateBookAfterAnswerReturnsHighlightToPendingAndCreatesJob(t *testin
 	}
 	if highlightRepo.markedPendingQuestion != questionID {
 		t.Fatalf("expected marked pending question %s, got %s", questionID, highlightRepo.markedPendingQuestion)
+	}
+	if highlightRepo.listCandidateBookKey != "book-a" {
+		t.Fatalf("expected candidate lookup by book key, got %q", highlightRepo.listCandidateBookKey)
+	}
+	if highlightRepo.listCandidatesCalled != 0 {
+		t.Fatalf("expected no full candidate scan, got %d calls", highlightRepo.listCandidatesCalled)
 	}
 	if len(jobRepo.createdInputs) != 1 {
 		t.Fatalf("expected one follow-up job, got %#v", jobRepo.createdInputs)

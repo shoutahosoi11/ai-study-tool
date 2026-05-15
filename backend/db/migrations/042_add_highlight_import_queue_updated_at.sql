@@ -1,0 +1,2 @@
+ALTER TABLE highlight_import_queue
+ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();

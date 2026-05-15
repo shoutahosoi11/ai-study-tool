@@ -2,7 +2,6 @@ import { apiClient } from "./client";
 import type { AnswerResult, IncorrectQuestion, Question, SaveQuestionResult, SavedQuestion } from "../types/question";
 
 type GenerateQuestionsOptions = {
-  questionType?: "multiple_choice" | "descriptive";
   questionCount?: number;
   bookTitle?: string;
   bookAuthor?: string;

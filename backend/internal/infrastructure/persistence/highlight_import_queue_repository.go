@@ -43,11 +43,53 @@ func (r *HighlightImportQueueRepository) GetByID(ctx context.Context, id uuid.UU
 	item, err := scanHighlightImportQueue(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
+			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("highlight import queue: get by id: %w", err)
 	}
 	return item, nil
+}
+
+func (r *HighlightImportQueueRepository) ListRecoverableEnqueuesByUserID(
+	ctx context.Context,
+	userID uuid.UUID,
+	staleQueuedCutoff time.Time,
+	limit int,
+) ([]*domain.HighlightImportQueue, error) {
+	if limit <= 0 {
+		limit = domain.ImportQueueRecoverLimit
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, user_id, source, raw_payload, status, retry_count,
+		       COALESCE(last_error, ''), created_at,
+		       processing_started_at, completed_at, failed_at
+		FROM highlight_import_queue
+		WHERE user_id = $1
+		  AND (
+		    status = $2
+		    OR (status = $3 AND created_at < $4)
+		  )
+		ORDER BY created_at ASC
+		LIMIT $5
+	`, userID, string(domain.ImportQueueStatusEnqueueFailed), string(domain.ImportQueueStatusQueued), staleQueuedCutoff.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("highlight import queue: list recoverable enqueues: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]*domain.HighlightImportQueue, 0)
+	for rows.Next() {
+		item, err := scanHighlightImportQueue(rows)
+		if err != nil {
+			return nil, fmt.Errorf("highlight import queue: scan recoverable enqueue: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("highlight import queue: rows recoverable enqueues: %w", err)
+	}
+	return items, nil
 }
 
 func (r *HighlightImportQueueRepository) DequeueBatch(ctx context.Context, limit int) ([]*domain.HighlightImportQueue, error) {
@@ -92,10 +134,29 @@ func (r *HighlightImportQueueRepository) ClaimProcessing(ctx context.Context, id
 	return n > 0, nil
 }
 
+func (r *HighlightImportQueueRepository) MarkQueued(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE highlight_import_queue
+		SET status = 'queued',
+		    last_error = NULL,
+		    processing_started_at = NULL,
+		    failed_at = NULL,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		return fmt.Errorf("highlight import queue: mark queued: %w", err)
+	}
+	return nil
+}
+
 func (r *HighlightImportQueueRepository) MarkCompleted(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE highlight_import_queue
-		SET status = 'completed', completed_at = NOW()
+		SET status = 'completed',
+		    processing_started_at = NULL,
+		    completed_at = NOW(),
+		    updated_at = NOW()
 		WHERE id = $1
 	`, id)
 	if err != nil {
@@ -107,7 +168,11 @@ func (r *HighlightImportQueueRepository) MarkCompleted(ctx context.Context, id u
 func (r *HighlightImportQueueRepository) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE highlight_import_queue
-		SET status = 'failed', failed_at = NOW(), last_error = $2
+		SET status = 'failed',
+		    processing_started_at = NULL,
+		    failed_at = NOW(),
+		    last_error = LEFT($2, 500),
+		    updated_at = NOW()
 		WHERE id = $1
 	`, id, errMsg)
 	if err != nil {
@@ -116,11 +181,29 @@ func (r *HighlightImportQueueRepository) MarkFailed(ctx context.Context, id uuid
 	return nil
 }
 
+func (r *HighlightImportQueueRepository) MarkEnqueueFailed(ctx context.Context, id uuid.UUID, errMsg string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE highlight_import_queue
+		SET status = 'enqueue_failed',
+		    last_error = LEFT($2, 500),
+		    processing_started_at = NULL,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, id, errMsg)
+	if err != nil {
+		return fmt.Errorf("highlight import queue: mark enqueue failed: %w", err)
+	}
+	return nil
+}
+
 func (r *HighlightImportQueueRepository) RequeueWithRetry(ctx context.Context, id uuid.UUID, errMsg string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE highlight_import_queue
-		SET status = 'queued', retry_count = retry_count + 1, last_error = $2,
-		    processing_started_at = NULL
+		SET status = 'queued',
+		    retry_count = retry_count + 1,
+		    last_error = LEFT($2, 500),
+		    processing_started_at = NULL,
+		    updated_at = NOW()
 		WHERE id = $1
 	`, id, errMsg)
 	if err != nil {
@@ -132,8 +215,11 @@ func (r *HighlightImportQueueRepository) RequeueWithRetry(ctx context.Context, i
 func (r *HighlightImportQueueRepository) RequeueStale(ctx context.Context, cutoff time.Time) (int, error) {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE highlight_import_queue
-		SET status = 'queued', processing_started_at = NULL
-		WHERE status = 'processing' AND processing_started_at < $1
+		SET status = 'queued',
+		    processing_started_at = NULL,
+		    updated_at = NOW()
+		WHERE (status = 'processing' AND processing_started_at < $1)
+		   OR (status = 'queued' AND created_at < $1)
 	`, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("highlight import queue: requeue stale: %w", err)

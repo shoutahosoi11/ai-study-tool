@@ -15,9 +15,18 @@ PROJECT_ID="${PROJECT_ID:?Please set PROJECT_ID}"
 SERVICE_NAME="${SERVICE_NAME:?Please set SERVICE_NAME}"
 ALERT_EMAIL="${ALERT_EMAIL:-}"
 NOTIFICATION_CHANNEL="${NOTIFICATION_CHANNEL:-}"
+QUESTION_QUEUE_ID="${QUESTION_QUEUE_ID:-${QUEUE_QUESTION_GENERATION:-question-generation}}"
+HIGHLIGHT_QUEUE_ID="${HIGHLIGHT_QUEUE_ID:-${QUEUE_HIGHLIGHT_IMPORT:-highlight-import}}"
+QUESTION_QUEUE_ID="${QUESTION_QUEUE_ID##*/}"
+HIGHLIGHT_QUEUE_ID="${HIGHLIGHT_QUEUE_ID##*/}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "${WORK_DIR}"' EXIT
+DASHBOARD_CONFIG="${WORK_DIR}/dashboard.json"
 
 echo "==> Cloud Monitoring setup: project=${PROJECT_ID} service=${SERVICE_NAME}"
+echo "    Question queue: ${QUESTION_QUEUE_ID}"
+echo "    Highlight queue: ${HIGHLIGHT_QUEUE_ID}"
 
 # ── Step 1: API 有効化 ─────────────────────────────────────────────
 echo "--> Enabling Monitoring API..."
@@ -25,30 +34,44 @@ gcloud services enable monitoring.googleapis.com --project="$PROJECT_ID"
 
 # ── Step 2: 通知チャンネル作成（メール指定時） ────────────���────────
 if [ -n "$ALERT_EMAIL" ] && [ -z "$NOTIFICATION_CHANNEL" ]; then
-  echo "--> Creating email notification channel for ${ALERT_EMAIL}..."
-  NOTIFICATION_CHANNEL=$(gcloud beta monitoring channels create \
+  echo "--> Resolving email notification channel for ${ALERT_EMAIL}..."
+  NOTIFICATION_CHANNEL=$(gcloud beta monitoring channels list \
     --project="$PROJECT_ID" \
-    --display-name="AI Study Tool Alerts" \
-    --type=email \
-    --channel-labels="email_address=${ALERT_EMAIL}" \
-    --format="value(name)")
-  echo "    Created channel: ${NOTIFICATION_CHANNEL}"
+    --filter="type=\"email\" labels.email_address=\"${ALERT_EMAIL}\"" \
+    --format="value(name)" \
+    --limit=1)
+  if [ -n "$NOTIFICATION_CHANNEL" ]; then
+    echo "    Reusing channel: ${NOTIFICATION_CHANNEL}"
+  else
+    NOTIFICATION_CHANNEL=$(gcloud beta monitoring channels create \
+      --project="$PROJECT_ID" \
+      --display-name="AI Study Tool Alerts" \
+      --type=email \
+      --channel-labels="email_address=${ALERT_EMAIL}" \
+      --format="value(name)")
+    echo "    Created channel: ${NOTIFICATION_CHANNEL}"
+  fi
 fi
 
 # ── Step 3: ダッシュボード作成 ────────────────��────────────────────
 echo "--> Creating dashboard..."
+sed \
+  -e "s/__SERVICE_NAME__/${SERVICE_NAME//\//\\/}/g" \
+  -e "s/__QUESTION_QUEUE_ID__/${QUESTION_QUEUE_ID//\//\\/}/g" \
+  -e "s/__HIGHLIGHT_QUEUE_ID__/${HIGHLIGHT_QUEUE_ID//\//\\/}/g" \
+  "${SCRIPT_DIR}/dashboard.json" > "$DASHBOARD_CONFIG"
 if gcloud monitoring dashboards list --project="$PROJECT_ID" \
     --filter="displayName='AI Study Tool API'" --format="value(name)" | grep -q .; then
   DASHBOARD_NAME=$(gcloud monitoring dashboards list --project="$PROJECT_ID" \
     --filter="displayName='AI Study Tool API'" --format="value(name)")
   gcloud monitoring dashboards update "$DASHBOARD_NAME" \
     --project="$PROJECT_ID" \
-    --config-from-file="${SCRIPT_DIR}/dashboard.json"
+    --config-from-file="$DASHBOARD_CONFIG"
   echo "    Updated: ${DASHBOARD_NAME}"
 else
   gcloud monitoring dashboards create \
     --project="$PROJECT_ID" \
-    --config-from-file="${SCRIPT_DIR}/dashboard.json"
+    --config-from-file="$DASHBOARD_CONFIG"
   echo "    Created dashboard."
 fi
 
@@ -70,13 +93,14 @@ create_alert() {
   local threshold="$7"
   local duration="$8"
   local severity="$9"
+  local policy_file="${WORK_DIR}/${name}.json"
 
   local channels_json="[]"
   if [ -n "$NOTIFICATION_CHANNEL" ]; then
     channels_json="[\"${NOTIFICATION_CHANNEL}\"]"
   fi
 
-  cat <<EOF | gcloud monitoring policies create --project="$PROJECT_ID" --policy-from-file=/dev/stdin
+  cat > "$policy_file" <<EOF
 {
   "displayName": "${display_name}",
   "severity": "${severity}",
@@ -105,7 +129,24 @@ create_alert() {
   }
 }
 EOF
-  echo "    [OK] ${display_name}"
+
+  local policy_name
+  policy_name=$(gcloud monitoring policies list \
+    --project="$PROJECT_ID" \
+    --filter="displayName=\"${display_name}\"" \
+    --format="value(name)" \
+    --limit=1)
+  if [ -n "$policy_name" ]; then
+    gcloud monitoring policies update "$policy_name" \
+      --project="$PROJECT_ID" \
+      --policy-from-file="$policy_file"
+    echo "    [UPDATED] ${display_name}"
+  else
+    gcloud monitoring policies create \
+      --project="$PROJECT_ID" \
+      --policy-from-file="$policy_file"
+    echo "    [CREATED] ${display_name}"
+  fi
 }
 
 echo "--> Creating alert policies..."
@@ -128,7 +169,7 @@ create_alert \
   "[AI Study Tool] High P99 Latency" \
   "${RESOURCE_FILTER} metric.type=\"run.googleapis.com/request_latencies\"" \
   "ALIGN_PERCENTILE_99" \
-  "REDUCE_MAX" \
+  "REDUCE_MEAN" \
   "COMPARISON_GT" \
   "5000" \
   "300s" \

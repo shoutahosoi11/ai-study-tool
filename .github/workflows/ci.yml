@@ -35,8 +35,13 @@ jobs:
       - name: Run backend tests
         run: go test ./...
 
-      - name: Run race tests for usecases
-        run: go test -race ./internal/usecase
+      - name: Run backend integration tests when configured
+        env:
+          INTEGRATION_DATABASE_URL: ${{ secrets.INTEGRATION_DATABASE_URL }}
+        run: go test -count=1 ./internal/infrastructure/persistence -run Integration
+
+      - name: Run race tests for concurrency-sensitive packages
+        run: go test -race ./internal/usecase ./internal/middleware ./internal/infrastructure/cloudtasks
 
       - name: Build backend
         run: go build ./...
@@ -63,8 +68,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build frontend
-        run: npm run build
+      - name: Test frontend
+        run: npm test
 
   mobile:
     name: Mobile
@@ -88,8 +93,8 @@ jobs:
       - name: Install mobile dependencies
         run: npm ci
 
-      - name: Type-check mobile
-        run: npx tsc --noEmit
+      - name: Test mobile
+        run: npm test
 
   kindle-extension:
     name: Kindle Extension

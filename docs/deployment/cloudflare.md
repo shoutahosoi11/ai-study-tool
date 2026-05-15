@@ -7,7 +7,7 @@ Client
   -> Cloudflare DNS / WAF / Rate Limiting
   -> Authenticated Cloud Run origin
   -> Echo API
-  -> Neon PostgreSQL / Gemini / Cloud Storage
+  -> Neon PostgreSQL / Gemini / Cloud Tasks
 ```
 
 Cloudflare is the public edge. Cloud Run should eventually stop accepting

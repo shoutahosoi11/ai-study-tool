@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -17,10 +18,10 @@ type RateLimitStore interface {
 }
 
 type RateLimitMiddleware struct {
-	store      RateLimitStore
-	bucket     string
-	limit      int64
-	retryAfter time.Duration
+	store  RateLimitStore
+	bucket string
+	limit  int64
+	now    func() time.Time
 }
 
 func NewRateLimitMiddleware(store RateLimitStore, bucket string, limit int64) (*RateLimitMiddleware, error) {
@@ -35,10 +36,10 @@ func NewRateLimitMiddleware(store RateLimitStore, bucket string, limit int64) (*
 	}
 
 	return &RateLimitMiddleware{
-		store:      store,
-		bucket:     bucket,
-		limit:      limit,
-		retryAfter: defaultRateLimitRetryAfter,
+		store:  store,
+		bucket: bucket,
+		limit:  limit,
+		now:    time.Now,
 	}, nil
 }
 
@@ -55,10 +56,20 @@ func (m *RateLimitMiddleware) Limit(next echo.HandlerFunc) echo.HandlerFunc {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "rate limit service unavailable")
 		}
 		if exceeded {
-			c.Response().Header().Set(echo.HeaderRetryAfter, "86400")
+			c.Response().Header().Set(echo.HeaderRetryAfter, strconv.FormatInt(retryAfterUntilNextUTCDay(m.now()), 10))
 			return echo.NewHTTPError(http.StatusTooManyRequests, "rate limit exceeded")
 		}
 
 		return next(c)
 	}
+}
+
+func retryAfterUntilNextUTCDay(now time.Time) int64 {
+	utcNow := now.UTC()
+	nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
+	seconds := int64(nextDay.Sub(utcNow).Seconds())
+	if seconds <= 0 {
+		return int64(defaultRateLimitRetryAfter.Seconds())
+	}
+	return seconds
 }

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,12 +48,8 @@ func NewQuestionHandler(
 	qu QuestionUsecase,
 	questionSyncUsecase QuestionSyncUsecase,
 	userUsecase usecase.UserUsecaseInterface,
-	manualUsecases ...ManualGenerationUsecase,
+	manualUsecase ManualGenerationUsecase,
 ) *QuestionHandler {
-	var manualUsecase ManualGenerationUsecase
-	if len(manualUsecases) > 0 {
-		manualUsecase = manualUsecases[0]
-	}
 	return &QuestionHandler{
 		questionUsecase:     qu,
 		questionSyncUsecase: questionSyncUsecase,
@@ -69,6 +66,7 @@ func (h *QuestionHandler) List(c echo.Context) error {
 
 	questions, err := h.questionUsecase.ListQuestions(c.Request().Context(), user.ID.String(), defaultQuestionListLimit)
 	if err != nil {
+		slog.Error("question_handler_error", "operation", "list", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -88,6 +86,7 @@ func (h *QuestionHandler) ListSaved(c echo.Context) error {
 
 	savedQuestions, err := h.questionUsecase.ListSavedQuestions(c.Request().Context(), user.ID.String(), defaultQuestionHistoryLimit)
 	if err != nil {
+		slog.Error("question_handler_error", "operation", "list_saved", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -107,6 +106,7 @@ func (h *QuestionHandler) ListIncorrect(c echo.Context) error {
 
 	incorrectQuestions, err := h.questionUsecase.ListIncorrectQuestions(c.Request().Context(), user.ID.String(), defaultQuestionHistoryLimit)
 	if err != nil {
+		slog.Error("question_handler_error", "operation", "list_incorrect", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -126,9 +126,6 @@ func (h *QuestionHandler) ListPrepared(c echo.Context) error {
 
 	sourceType := domain.SourceType(strings.TrimSpace(c.QueryParam("source_type")))
 	sourceID := strings.TrimSpace(c.QueryParam("source_id"))
-	if sourceID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "source_id is required")
-	}
 	if err := validateQuestionSource(sourceType, sourceID); err != nil {
 		if errors.Is(err, domain.ErrInvalidSourceType) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid source type")
@@ -181,6 +178,7 @@ func (h *QuestionHandler) ListPrepared(c echo.Context) error {
 		if errors.Is(err, domain.ErrSourceTextUnavailable) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "source text is unavailable")
 		}
+		slog.Error("question_handler_error", "operation", "list_prepared", "user_id", user.ID.String(), "source_type", string(sourceType), "source_id", sourceID, "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -200,6 +198,14 @@ func (h *QuestionHandler) SyncStock(c echo.Context) error {
 
 	result, err := h.questionSyncUsecase.SyncQuestionStock(c.Request().Context(), user)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			slog.Error("question_handler_error", "operation", "sync_stock", "user_id", user.ID.String(), "error", err)
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "question sync temporarily unavailable")
+		}
+		slog.Error("question_handler_error", "operation", "sync_stock", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -235,7 +241,7 @@ func (h *QuestionHandler) ManualGenerate(c echo.Context) error {
 	if err := c.Bind(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	if len(req.HighlightIDs) < 5 {
+	if len(req.HighlightIDs) < domain.MinHighlightsForRefresh {
 		return echo.NewHTTPError(http.StatusBadRequest, "minimum 5 highlights required")
 	}
 	if len(req.HighlightIDs) > domain.MaxHighlightsPerJob {
@@ -262,6 +268,7 @@ func (h *QuestionHandler) ManualGenerate(c echo.Context) error {
 		if errors.Is(err, domain.ErrAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "generation job already exists")
 		}
+		slog.Error("question_handler_error", "operation", "manual_generate", "user_id", user.ID.String(), "book_key", strings.TrimSpace(req.BookKey), "highlight_count", len(req.HighlightIDs), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -304,6 +311,7 @@ func (h *QuestionHandler) SaveQuestion(c echo.Context) error {
 		if errors.Is(err, domain.ErrForbidden) {
 			return echo.NewHTTPError(http.StatusForbidden, "question notes are only available for your own questions")
 		}
+		slog.Error("question_handler_error", "operation", "save_question", "user_id", user.ID.String(), "question_id", questionID, "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 

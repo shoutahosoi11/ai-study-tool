@@ -12,15 +12,7 @@ import (
 )
 
 type stubTokenVerifier struct {
-	verifyFunc              func(ctx context.Context, idToken string) (*auth.Token, error)
-	verifyWithoutRevokeFunc func(ctx context.Context, idToken string) (*auth.Token, error)
-}
-
-func (s stubTokenVerifier) VerifyIDToken(ctx context.Context, idToken string) (*auth.Token, error) {
-	if s.verifyWithoutRevokeFunc != nil {
-		return s.verifyWithoutRevokeFunc(ctx, idToken)
-	}
-	return s.verifyFunc(ctx, idToken)
+	verifyFunc func(ctx context.Context, idToken string) (*auth.Token, error)
 }
 
 func (s stubTokenVerifier) VerifyIDTokenAndCheckRevoked(ctx context.Context, idToken string) (*auth.Token, error) {
@@ -44,8 +36,10 @@ func TestAuthenticateSetsFirebaseAuthOnSuccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
+	revocationCalls := 0
 	middleware, err := NewFirebaseMiddleware(stubTokenVerifier{
 		verifyFunc: func(ctx context.Context, idToken string) (*auth.Token, error) {
+			revocationCalls++
 			if idToken != "valid-token" {
 				t.Fatalf("unexpected token: %s", idToken)
 			}
@@ -81,6 +75,9 @@ func TestAuthenticateSetsFirebaseAuthOnSuccess(t *testing.T) {
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if revocationCalls != 1 {
+		t.Fatalf("unexpected revocation verify calls: %d", revocationCalls)
 	}
 }
 
@@ -242,10 +239,6 @@ func TestAuthenticateFailsClosedWhenRevocationCheckUnavailable(t *testing.T) {
 			}
 			return nil, errors.New("firebase auth backend unavailable")
 		},
-		verifyWithoutRevokeFunc: func(ctx context.Context, idToken string) (*auth.Token, error) {
-			t.Fatal("basic verification should not be called when revocation check fails")
-			return nil, nil
-		},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -266,6 +259,41 @@ func TestAuthenticateFailsClosedWhenRevocationCheckUnavailable(t *testing.T) {
 	}
 	if httpErr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected status: %d", httpErr.Code)
+	}
+}
+
+func TestAuthenticateChecksRevocationEveryRequest(t *testing.T) {
+	e := echo.New()
+	revocationCalls := 0
+	middleware, err := NewFirebaseMiddleware(stubTokenVerifier{
+		verifyFunc: func(ctx context.Context, idToken string) (*auth.Token, error) {
+			revocationCalls++
+			return &auth.Token{UID: "firebase-uid-123"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	handler := middleware.Authenticate(func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+		if err := handler(c); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("unexpected status: %d", rec.Code)
+		}
+	}
+
+	if revocationCalls != 2 {
+		t.Fatalf("expected revocation check on every request, got %d calls", revocationCalls)
 	}
 }
 

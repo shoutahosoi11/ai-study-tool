@@ -12,16 +12,39 @@ import (
 )
 
 type mockHighlightImportQueueRepository struct {
-	item           *domain.HighlightImportQueue
-	claimed        bool
-	completed      bool
-	failed         bool
-	requeued       bool
-	lastRetryError string
+	item               *domain.HighlightImportQueue
+	enqueueID          uuid.UUID
+	enqueueErr         error
+	enqueued           bool
+	enqueuedUserID     uuid.UUID
+	enqueuedSource     string
+	enqueuedPayload    []byte
+	claimed            bool
+	completed          bool
+	failed             bool
+	failedID           uuid.UUID
+	failedError        string
+	markedQueued       bool
+	enqueueFailed      bool
+	enqueueFailedID    uuid.UUID
+	enqueueFailedError string
+	requeued           bool
+	lastRetryError     string
+	recoverableItems   []*domain.HighlightImportQueue
 }
 
 func (m *mockHighlightImportQueueRepository) Enqueue(ctx context.Context, userID uuid.UUID, source string, payload []byte) (uuid.UUID, error) {
-	return uuid.Nil, errors.New("unexpected enqueue call")
+	m.enqueued = true
+	m.enqueuedUserID = userID
+	m.enqueuedSource = source
+	m.enqueuedPayload = append([]byte(nil), payload...)
+	if m.enqueueErr != nil {
+		return uuid.Nil, m.enqueueErr
+	}
+	if m.enqueueID == uuid.Nil {
+		return uuid.Nil, errors.New("unexpected enqueue call")
+	}
+	return m.enqueueID, nil
 }
 
 func (m *mockHighlightImportQueueRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.HighlightImportQueue, error) {
@@ -42,8 +65,22 @@ func (m *mockHighlightImportQueueRepository) MarkCompleted(ctx context.Context, 
 	return nil
 }
 
+func (m *mockHighlightImportQueueRepository) MarkQueued(ctx context.Context, id uuid.UUID) error {
+	m.markedQueued = true
+	return nil
+}
+
 func (m *mockHighlightImportQueueRepository) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) error {
 	m.failed = true
+	m.failedID = id
+	m.failedError = errMsg
+	return nil
+}
+
+func (m *mockHighlightImportQueueRepository) MarkEnqueueFailed(ctx context.Context, id uuid.UUID, errMsg string) error {
+	m.enqueueFailed = true
+	m.enqueueFailedID = id
+	m.enqueueFailedError = errMsg
 	return nil
 }
 
@@ -55,6 +92,10 @@ func (m *mockHighlightImportQueueRepository) RequeueWithRetry(ctx context.Contex
 
 func (m *mockHighlightImportQueueRepository) RequeueStale(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
+}
+
+func (m *mockHighlightImportQueueRepository) ListRecoverableEnqueuesByUserID(ctx context.Context, userID uuid.UUID, staleQueuedCutoff time.Time, limit int) ([]*domain.HighlightImportQueue, error) {
+	return m.recoverableItems, nil
 }
 
 func TestHighlightImportProcessSingleRejectsUserMismatch(t *testing.T) {
@@ -107,6 +148,64 @@ func TestHighlightImportProcessSingleRequeuesBeforeMaxRetry(t *testing.T) {
 	}
 	if queueRepo.failed {
 		t.Fatal("expected queue item not to be failed before max retry")
+	}
+}
+
+func TestHighlightImportProcessSingleResumesProcessingItem(t *testing.T) {
+	queueID := uuid.New()
+	userID := uuid.New()
+	startedAt := time.Now().UTC().Add(-time.Minute)
+	queueRepo := &mockHighlightImportQueueRepository{
+		item: &domain.HighlightImportQueue{
+			ID:                  queueID,
+			UserID:              userID,
+			RawPayload:          []byte(`[{"content":"highlight"}]`),
+			Status:              domain.ImportQueueStatusProcessing,
+			ProcessingStartedAt: &startedAt,
+		},
+	}
+	highlightRepo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightImportJobUsecase(queueRepo, highlightRepo)
+
+	if err := uc.ProcessSingle(context.Background(), queueID, userID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if queueRepo.claimed {
+		t.Fatal("processing item should be resumed without queued claim")
+	}
+	if !highlightRepo.bulkUpsertCalled {
+		t.Fatal("expected processing item payload to be imported")
+	}
+	if !queueRepo.completed {
+		t.Fatal("expected processing item to be completed")
+	}
+}
+
+func TestHighlightImportProcessSingleRecoversEnqueueFailedItem(t *testing.T) {
+	queueID := uuid.New()
+	userID := uuid.New()
+	queueRepo := &mockHighlightImportQueueRepository{
+		item: &domain.HighlightImportQueue{
+			ID:         queueID,
+			UserID:     userID,
+			RawPayload: []byte(`[{"content":"highlight"}]`),
+			Status:     domain.ImportQueueStatusEnqueueFailed,
+		},
+	}
+	highlightRepo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightImportJobUsecase(queueRepo, highlightRepo)
+
+	if err := uc.ProcessSingle(context.Background(), queueID, userID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !queueRepo.markedQueued {
+		t.Fatal("expected enqueue_failed item to be marked queued")
+	}
+	if !queueRepo.claimed {
+		t.Fatal("expected recovered item to be claimed")
+	}
+	if !highlightRepo.bulkUpsertCalled {
+		t.Fatal("expected recovered item payload to be imported")
 	}
 }
 

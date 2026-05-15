@@ -1,4 +1,4 @@
-.PHONY: db migrate backend worker dev
+.PHONY: db migrate backend test test-backend test-backend-race test-frontend test-mobile dev
 
 DB_URL ?= postgres://postgres:postgres@localhost:5432/ai_study_tool?sslmode=disable
 
@@ -16,8 +16,19 @@ migrate:
 backend:
 	cd backend && go run ./cmd/main.go
 
-worker:
-	cd backend && go run ./cmd/question-worker/...
+test: test-backend test-frontend test-mobile
+
+test-backend:
+	cd backend && go test ./... && go build ./...
+
+test-backend-race:
+	cd backend && go test -race ./internal/usecase ./internal/middleware ./internal/infrastructure/cloudtasks
+
+test-frontend:
+	cd frontend && npm test
+
+test-mobile:
+	cd mobile && npm test
 
 dev: db
 	@echo "==> Waiting for postgres..."
