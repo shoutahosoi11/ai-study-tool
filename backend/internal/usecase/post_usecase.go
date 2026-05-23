@@ -13,6 +13,11 @@ type PostUsecase struct {
 	postRepo domain.PostRepository
 }
 
+const (
+	maxPostQuestions       = 20
+	maxPostQuestionNoteLen = 300
+)
+
 func NewPostUsecase(postRepo domain.PostRepository) *PostUsecase {
 	return &PostUsecase{postRepo: postRepo}
 }
@@ -44,8 +49,17 @@ func (u *PostUsecase) CreatePost(ctx context.Context, input domain.CreatePostInp
 	if input.Type == "question" && input.QuestionCount <= 0 {
 		input.QuestionCount = len(input.Questions)
 	}
+	if len(input.Questions) > maxPostQuestions {
+		return nil, fmt.Errorf("validation: questions must be %d items or less", maxPostQuestions)
+	}
 	if len([]rune(input.Body)) > 280 {
 		return nil, fmt.Errorf("validation: body must be 280 characters or less")
+	}
+	for index := range input.Questions {
+		input.Questions[index].Note = strings.TrimSpace(input.Questions[index].Note)
+		if len([]rune(input.Questions[index].Note)) > maxPostQuestionNoteLen {
+			return nil, fmt.Errorf("validation: question note must be %d characters or less", maxPostQuestionNoteLen)
+		}
 	}
 	return u.postRepo.Create(ctx, input)
 }

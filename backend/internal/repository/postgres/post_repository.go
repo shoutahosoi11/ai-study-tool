@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/repository/sqlcgen"
 )
@@ -134,6 +135,11 @@ func (r *postRepository) Create(ctx context.Context, input domain.CreatePostInpu
 	if err != nil {
 		return nil, fmt.Errorf("post repo: begin tx: %w", err)
 	}
+	defer tx.Rollback()
+
+	if err := validatePostQuestionOwnership(ctx, tx, input.UserID, input); err != nil {
+		return nil, err
+	}
 
 	query := `
 INSERT INTO posts (user_id, question_id, book_id, field_id, body, book_title, question_count, type)
@@ -150,7 +156,6 @@ RETURNING id, user_id, question_id, book_id, field_id, body, book_title, questio
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("post repo: create post: %w", err)
 	}
 
@@ -159,7 +164,6 @@ RETURNING id, user_id, question_id, book_id, field_id, body, book_title, questio
 INSERT INTO post_questions (post_id, question_id, sort_order, note)
 VALUES ($1, $2, $3, $4)
 `, p.ID, question.QuestionID, question.SortOrder, nullableString(question.Note)); err != nil {
-			_ = tx.Rollback()
 			return nil, fmt.Errorf("post repo: create post question: %w", err)
 		}
 	}
@@ -168,6 +172,50 @@ VALUES ($1, $2, $3, $4)
 		return nil, fmt.Errorf("post repo: commit tx: %w", err)
 	}
 	return p, nil
+}
+
+func validatePostQuestionOwnership(ctx context.Context, tx *sql.Tx, userID uuid.UUID, input domain.CreatePostInput) error {
+	ids := make([]uuid.UUID, 0, len(input.Questions)+1)
+	if input.QuestionID != nil {
+		ids = append(ids, *input.QuestionID)
+	}
+	for _, question := range input.Questions {
+		ids = append(ids, question.QuestionID)
+	}
+	ids = uniquePostUUIDs(ids)
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var ownedCount int
+	if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM questions
+WHERE user_id = $1
+  AND id = ANY($2)
+`, userID, pq.Array(ids)).Scan(&ownedCount); err != nil {
+		return fmt.Errorf("post repo: validate question ownership: %w", err)
+	}
+	if ownedCount != len(ids) {
+		return domain.ErrForbidden
+	}
+	return nil
+}
+
+func uniquePostUUIDs(ids []uuid.UUID) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(ids))
+	unique := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique
 }
 
 func (r *postRepository) ListQuestionsByPostID(ctx context.Context, postID uuid.UUID) ([]*domain.PostedQuestion, error) {

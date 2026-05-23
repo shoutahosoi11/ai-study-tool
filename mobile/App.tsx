@@ -51,7 +51,7 @@ import {
   type SavedQuestion,
 } from './src/api/questions'
 import { createCheckoutSession } from './src/api/billing'
-import { awardAdTokens, fetchTokenBalance, type TokenBalance } from './src/api/tokens'
+import { fetchTokenBalance, type TokenBalance } from './src/api/tokens'
 import { getMe, signUpBackendUser, updateQuestionSettings, type MeResponse } from './src/api/users'
 import { admobConfig, apiBaseURL, isFirebaseConfigured, mobileConfigStatus } from './src/config'
 import {
@@ -669,19 +669,6 @@ export default function App() {
       setSettingsMessage(toReadableError(error, '既定の出題数の保存に失敗しました'))
     } finally {
       setSettingsBusy(false)
-    }
-  }
-
-  async function handleAwardTokens() {
-    setTokenLoading(true)
-    setTokenMessage('')
-    try {
-      setTokenBalance(await awardAdTokens())
-      setTokenMessage(`広告視聴トークンを +${3}問分受け取りました`)
-    } catch (error) {
-      setTokenMessage(toReadableError(error, 'トークン付与に失敗しました'))
-    } finally {
-      setTokenLoading(false)
     }
   }
 
@@ -1674,11 +1661,11 @@ export default function App() {
                         ) : null}
                         <View style={styles.buttonRow}>
                           <PrimaryButton
-                            label={tokenLoading ? '処理中...' : '広告を見て +3問'}
+                            label="広告連携準備中"
                             onPress={() => {
-                              void handleAwardTokens()
+                              setTokenMessage('広告トークンはサーバー検証付きの広告連携後に利用できます')
                             }}
-                            disabled={tokenLoading}
+                            disabled
                           />
                           <SecondaryButton
                             label="残高更新"

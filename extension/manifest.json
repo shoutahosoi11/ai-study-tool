@@ -8,8 +8,8 @@
     "https://read.amazon.co.jp/*",
     "https://www.amazon.co.jp/*",
     "https://amazon.co.jp/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -25,7 +25,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["http://localhost/*", "http://127.0.0.1/*"],
+      "matches": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
       "js": ["content/webapp.js"],
       "run_at": "document_idle"
     }

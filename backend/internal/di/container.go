@@ -20,19 +20,23 @@ import (
 )
 
 type Container struct {
-	UserHandler         *handler.UserHandler
-	PostHandler         *handler.PostHandler
-	QuestionHandler     *handler.QuestionHandler
-	AnswerHandler       *handler.AnswerHandler
-	SocialHandler       *handler.SocialHandler
-	HighlightHandler    *handler.HighlightHandler
-	TokenHandler        *handler.TokenHandler
-	StripeHandler       *handler.StripeHandler
-	TaskHandler         *handler.TaskHandler
-	FirebaseMiddleware  *middleware.FirebaseMiddleware
-	RateLimitMiddleware *middleware.RateLimitMiddleware
-	closeCloudTasks     []func() error
-	closeLLMClient      gemini.ClientCloser
+	UserHandler                   *handler.UserHandler
+	PostHandler                   *handler.PostHandler
+	QuestionHandler               *handler.QuestionHandler
+	AnswerHandler                 *handler.AnswerHandler
+	SocialHandler                 *handler.SocialHandler
+	HighlightHandler              *handler.HighlightHandler
+	TokenHandler                  *handler.TokenHandler
+	StripeHandler                 *handler.StripeHandler
+	TaskHandler                   *handler.TaskHandler
+	FirebaseMiddleware            *middleware.FirebaseMiddleware
+	IngestRateLimitMiddleware     *middleware.RateLimitMiddleware
+	GenerationRateLimitMiddleware *middleware.RateLimitMiddleware
+	PostRateLimitMiddleware       *middleware.RateLimitMiddleware
+	SocialRateLimitMiddleware     *middleware.RateLimitMiddleware
+	TokenRateLimitMiddleware      *middleware.RateLimitMiddleware
+	closeCloudTasks               []func() error
+	closeLLMClient                gemini.ClientCloser
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
@@ -72,7 +76,23 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	questionBudgetRepo := persistence.NewQuestionBudgetRepository(db)
 	billingRepo := persistence.NewBillingRepository(db)
 
-	rateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
+	ingestRateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
+	if err != nil {
+		return nil, err
+	}
+	generationRateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "generation", readEnvInt64OrDefault("QUESTION_GENERATION_DAILY_LIMIT", 50))
+	if err != nil {
+		return nil, err
+	}
+	postRateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "post", readEnvInt64OrDefault("POST_DAILY_LIMIT", 50))
+	if err != nil {
+		return nil, err
+	}
+	socialRateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "social", readEnvInt64OrDefault("SOCIAL_ACTION_DAILY_LIMIT", 500))
+	if err != nil {
+		return nil, err
+	}
+	tokenRateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "token_award", readEnvInt64OrDefault("TOKEN_AWARD_DAILY_LIMIT", 10))
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +117,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	}
 	highlightUsecase := usecase.NewHighlightUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
 	highlightImportJobUsecase := usecase.NewHighlightImportJobUsecase(importQueueRepo, highlightRepo)
-	tokenUsecase := usecase.NewTokenUsecase(questionBudgetRepo)
+	tokenUsecase := usecase.NewTokenUsecaseWithAdRewardSecret(questionBudgetRepo, os.Getenv("AD_REWARD_HMAC_SECRET"))
 	billingUsecase := usecase.NewBillingUsecase(
 		infrastripes.NewCheckoutClientFromEnv(),
 		infrastripes.NewWebhookValidatorFromEnv(),
@@ -120,19 +140,23 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		closeCloudTasks = append(closeCloudTasks, highlightJobTrigger.Close)
 	}
 	return &Container{
-		UserHandler:         userHandler,
-		PostHandler:         postHandler,
-		QuestionHandler:     questionHandler,
-		AnswerHandler:       answerHandler,
-		SocialHandler:       socialHandler,
-		HighlightHandler:    highlightHandler,
-		TokenHandler:        tokenHandler,
-		StripeHandler:       stripeHandler,
-		TaskHandler:         taskHandler,
-		FirebaseMiddleware:  firebaseMiddleware,
-		RateLimitMiddleware: rateLimitMiddleware,
-		closeCloudTasks:     closeCloudTasks,
-		closeLLMClient:      closeLLMClient,
+		UserHandler:                   userHandler,
+		PostHandler:                   postHandler,
+		QuestionHandler:               questionHandler,
+		AnswerHandler:                 answerHandler,
+		SocialHandler:                 socialHandler,
+		HighlightHandler:              highlightHandler,
+		TokenHandler:                  tokenHandler,
+		StripeHandler:                 stripeHandler,
+		TaskHandler:                   taskHandler,
+		FirebaseMiddleware:            firebaseMiddleware,
+		IngestRateLimitMiddleware:     ingestRateLimitMiddleware,
+		GenerationRateLimitMiddleware: generationRateLimitMiddleware,
+		PostRateLimitMiddleware:       postRateLimitMiddleware,
+		SocialRateLimitMiddleware:     socialRateLimitMiddleware,
+		TokenRateLimitMiddleware:      tokenRateLimitMiddleware,
+		closeCloudTasks:               closeCloudTasks,
+		closeLLMClient:                closeLLMClient,
 	}, nil
 }
 

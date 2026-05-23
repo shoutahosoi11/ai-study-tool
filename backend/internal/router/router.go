@@ -1,7 +1,9 @@
 package router
 
 import (
+	"log"
 	"os"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
@@ -12,22 +14,28 @@ import (
 func RegisterAPI(e *echo.Echo, container *di.Container) {
 	api := e.Group("/api/v1")
 	authMiddleware := container.FirebaseMiddleware.Authenticate
-	ingestRateLimit := container.RateLimitMiddleware.Limit
+	ingestRateLimit := container.IngestRateLimitMiddleware.Limit
+	generationRateLimit := container.GenerationRateLimitMiddleware.Limit
+	postRateLimit := container.PostRateLimitMiddleware.Limit
+	socialRateLimit := container.SocialRateLimitMiddleware.Limit
+	tokenRateLimit := container.TokenRateLimitMiddleware.Limit
 
-	registerUserRoutes(api, container, authMiddleware)
-	registerPostRoutes(api, container, authMiddleware)
+	registerUserRoutes(api, container, authMiddleware, socialRateLimit)
+	registerPostRoutes(api, container, authMiddleware, postRateLimit, socialRateLimit)
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
-	registerQuestionRoutes(api, container, authMiddleware, ingestRateLimit)
-	registerMonetizationRoutes(api, container, authMiddleware)
+	registerQuestionRoutes(api, container, authMiddleware, generationRateLimit)
+	registerMonetizationRoutes(api, container, authMiddleware, tokenRateLimit)
 	registerInternalTaskRoutes(e, container)
 	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook, echomiddleware.BodyLimit("1M"))
 }
 
 func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
-	internal := e.Group("/internal/tasks", appmiddleware.RequireInternalTaskAuth(
+	requireInternalTaskOIDCInProduction()
+	internal := e.Group("/internal/tasks", appmiddleware.RequireInternalTaskAuthWithSecretFallback(
 		os.Getenv("INTERNAL_TASK_SECRET"),
 		os.Getenv("TASK_HANDLER_BASE_URL"),
 		os.Getenv("INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT"),
+		allowInternalTaskSecretFallback(),
 	))
 	// Cloud Run ingress and queue IAM are network/resource controls; the shared
 	// secret is a compatibility fallback. Prefer Cloud Tasks OIDC by setting
@@ -36,28 +44,48 @@ func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
 	internal.POST("/highlight-import", container.TaskHandler.HandleHighlightImport, echomiddleware.BodyLimit("4K"))
 }
 
-func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
+func requireInternalTaskOIDCInProduction() {
+	if os.Getenv("APP_ENV") != "production" {
+		return
+	}
+	if strings.TrimSpace(os.Getenv("TASK_HANDLER_BASE_URL")) == "" ||
+		strings.TrimSpace(os.Getenv("INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT")) == "" {
+		log.Fatal("TASK_HANDLER_BASE_URL and INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT are required in production")
+	}
+}
+
+func allowInternalTaskSecretFallback() bool {
+	return os.Getenv("APP_ENV") != "production"
+}
+
+func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc, socialRateLimit echo.MiddlewareFunc) {
 	users := api.Group("/users", authMiddleware)
 	users.POST("/signup", container.UserHandler.SignUp, echomiddleware.BodyLimit("16K"))
 	users.GET("/me", container.UserHandler.GetMe)
 	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings, echomiddleware.BodyLimit("4K"))
 	users.GET("/:id", container.UserHandler.GetUser)
 	users.PUT("/me", container.UserHandler.UpdateProfile, echomiddleware.BodyLimit("16K"))
-	users.POST("/:id/follow", container.SocialHandler.Follow)
-	users.DELETE("/:id/follow", container.SocialHandler.Unfollow)
+	users.POST("/:id/follow", container.SocialHandler.Follow, socialRateLimit)
+	users.DELETE("/:id/follow", container.SocialHandler.Unfollow, socialRateLimit)
 }
 
-func registerPostRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
+func registerPostRoutes(
+	api *echo.Group,
+	container *di.Container,
+	authMiddleware echo.MiddlewareFunc,
+	postRateLimit echo.MiddlewareFunc,
+	socialRateLimit echo.MiddlewareFunc,
+) {
 	posts := api.Group("/posts", authMiddleware)
 	posts.GET("/timeline", container.PostHandler.GetTimeline)
 	posts.GET("/:id/questions", container.PostHandler.ListQuestions)
 	posts.GET("/:id", container.PostHandler.GetPost)
-	posts.POST("", container.PostHandler.CreatePost)
-	posts.POST("/:id/like", container.SocialHandler.Like)
-	posts.DELETE("/:id/like", container.SocialHandler.Unlike)
-	posts.POST("/:id/repost", container.SocialHandler.Repost)
-	posts.DELETE("/:id/repost", container.SocialHandler.Unrepost)
-	posts.POST("/:id/comments", container.SocialHandler.CreateComment)
+	posts.POST("", container.PostHandler.CreatePost, echomiddleware.BodyLimit("32K"), postRateLimit)
+	posts.POST("/:id/like", container.SocialHandler.Like, socialRateLimit)
+	posts.DELETE("/:id/like", container.SocialHandler.Unlike, socialRateLimit)
+	posts.POST("/:id/repost", container.SocialHandler.Repost, socialRateLimit)
+	posts.DELETE("/:id/repost", container.SocialHandler.Unrepost, socialRateLimit)
+	posts.POST("/:id/comments", container.SocialHandler.CreateComment, echomiddleware.BodyLimit("4K"), socialRateLimit)
 	posts.GET("/:id/comments", container.SocialHandler.ListComments)
 }
 
@@ -95,9 +123,9 @@ func registerQuestionRoutes(
 	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer, echomiddleware.BodyLimit("4K"))
 }
 
-func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc) {
+func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc, tokenRateLimit echo.MiddlewareFunc) {
 	tokens := api.Group("/tokens", authMiddleware)
-	tokens.POST("/award", container.TokenHandler.Award)
+	tokens.POST("/award", container.TokenHandler.Award, echomiddleware.BodyLimit("2K"), tokenRateLimit)
 	tokens.GET("/balance", container.TokenHandler.Balance)
 
 	checkout := api.Group("/checkout", authMiddleware)

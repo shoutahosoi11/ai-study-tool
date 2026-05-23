@@ -14,7 +14,7 @@ import (
 const InternalTaskSecretHeader = "X-Internal-Task-Secret"
 
 func RequireInternalTaskSecret(secret string) echo.MiddlewareFunc {
-	return RequireInternalTaskAuth(secret, "", "")
+	return RequireInternalTaskAuthWithSecretFallback(secret, "", "", true)
 }
 
 type internalTaskIDTokenValidator interface {
@@ -25,18 +25,23 @@ var newInternalTaskIDTokenValidator = func(ctx context.Context) (internalTaskIDT
 	return idtoken.NewValidator(ctx)
 }
 
-func RequireInternalTaskAuth(secret string, handlerBaseURL string, expectedServiceAccount string) echo.MiddlewareFunc {
+func RequireInternalTaskAuthWithSecretFallback(secret string, handlerBaseURL string, expectedServiceAccount string, allowSecretFallback bool) echo.MiddlewareFunc {
 	expected := strings.TrimSpace(secret)
 	baseURL := strings.TrimRight(strings.TrimSpace(handlerBaseURL), "/")
 	expectedEmail := strings.TrimSpace(expectedServiceAccount)
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if baseURL != "" && hasBearerToken(c.Request()) {
-				if err := validateInternalTaskOIDC(c.Request().Context(), c.Request(), baseURL, expectedEmail); err != nil {
+			if baseURL != "" {
+				if hasBearerToken(c.Request()) {
+					if err := validateInternalTaskOIDC(c.Request().Context(), c.Request(), baseURL, expectedEmail); err != nil {
+						return echo.NewHTTPError(http.StatusUnauthorized, "invalid internal task authentication")
+					}
+					return next(c)
+				}
+				if !allowSecretFallback {
 					return echo.NewHTTPError(http.StatusUnauthorized, "invalid internal task authentication")
 				}
-				return next(c)
 			}
 
 			if expected == "" {
