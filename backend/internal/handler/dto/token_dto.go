@@ -2,6 +2,13 @@ package dto
 
 import "github.com/shout/ai-study-tool/backend/internal/domain"
 
+type AwardAdTokensRequest struct {
+	Provider   string `json:"provider"`
+	Nonce      string `json:"nonce"`
+	RewardedAt string `json:"rewarded_at"`
+	Signature  string `json:"signature"`
+}
+
 type TokenBalanceResponse struct {
 	AvailableTokens int    `json:"available_tokens"`
 	FreeUsedToday   int    `json:"free_used_today"`

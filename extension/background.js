@@ -3,6 +3,10 @@ var BRIDGE_STORAGE_KEY = 'aiStudyToolBridgeMessage';
 var WEBAPP_PORT_NAME = 'ai-study-tool-webapp';
 var webappPorts = {};
 var NOTEBOOK_TAB_TIMEOUT_MS = 45000;
+var ALLOWED_WEBAPP_ORIGINS = {
+  'http://localhost:3000': true,
+  'http://127.0.0.1:3000': true
+};
 
 console.log('[kindle-sync][background] service worker loaded');
 
@@ -13,6 +17,10 @@ chrome.runtime.onConnect.addListener(function (port) {
     ? port.sender.tab.id
     : null;
   if (tabId === null) return;
+  if (!isAllowedWebappSender(port.sender)) {
+    try { port.disconnect(); } catch (_) {}
+    return;
+  }
 
   console.log('[kindle-sync][background] port connected', { tabId: tabId });
   webappPorts[tabId] = port;
@@ -33,12 +41,12 @@ chrome.runtime.onConnect.addListener(function (port) {
     });
 
     if (message.type === 'LIST_BOOKS_REQUEST') {
-      handleListBooksRequest(message, { tab: { id: tabId } });
+      handleListBooksRequest(message, port.sender);
       return;
     }
 
     if (message.type === 'SYNC_BOOK_REQUEST') {
-      handleSyncBookRequest(message, { tab: { id: tabId } });
+      handleSyncBookRequest(message, port.sender);
     }
   });
 });
@@ -57,6 +65,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
   });
 
   if (message.type === 'LIST_BOOKS_REQUEST') {
+    if (!isAllowedWebappSender(sender)) return;
     handleListBooksRequest(message, sender);
     if (typeof sendResponse === 'function') {
       sendResponse({ ok: true, stage: 'background_received' });
@@ -64,6 +73,7 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     return;
   }
   if (message.type === 'SYNC_BOOK_REQUEST') {
+    if (!isAllowedWebappSender(sender)) return;
     handleSyncBookRequest(message, sender);
     if (typeof sendResponse === 'function') {
       sendResponse({ ok: true, stage: 'background_received' });
@@ -86,6 +96,20 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
     handleNotebookError(message, sender);
   }
 });
+
+function getSenderOrigin(sender) {
+  var url = sender && sender.tab && sender.tab.url ? String(sender.tab.url) : '';
+  if (!url) return '';
+  try {
+    return new URL(url).origin;
+  } catch (_) {
+    return '';
+  }
+}
+
+function isAllowedWebappSender(sender) {
+  return Boolean(ALLOWED_WEBAPP_ORIGINS[getSenderOrigin(sender)]);
+}
 
 function handleListBooksRequest(message, sender) {
   var webappTabId = sender.tab && typeof sender.tab.id === 'number' ? sender.tab.id : null;
@@ -136,7 +160,8 @@ function handleListBooksRequest(message, sender) {
 
 function handleSyncBookRequest(message, sender) {
   var webappTabId = sender.tab && typeof sender.tab.id === 'number' ? sender.tab.id : null;
-  if (webappTabId === null || !message.bookId || !message.token || !message.appOrigin) return;
+  var appOrigin = getSenderOrigin(sender);
+  if (webappTabId === null || !message.bookId || !message.token || !appOrigin) return;
 
   sendToWebapp(webappTabId, {
     type: 'SYNC_BOOK_PROGRESS',
@@ -202,7 +227,7 @@ function handleSyncBookRequest(message, sender) {
       bookId: message.bookId,
       asin: message.asin,
       token: message.token,
-      appOrigin: message.appOrigin,
+      appOrigin: appOrigin,
       webappTabId: webappTabId,
       timeoutId: setTimeout(function () {
         handleNotebookTabTimeout(tab.id);
@@ -464,7 +489,7 @@ function closeTab(tabId) {
 
 function buildImportURL(appOrigin) {
   try {
-    return new URL('/api/highlights/import', appOrigin).toString();
+    return new URL('/api/v1/highlights/import', appOrigin).toString();
   } catch (_) {
     return '';
   }
@@ -472,7 +497,7 @@ function buildImportURL(appOrigin) {
 
 function buildHashCheckURL(appOrigin) {
   try {
-    return new URL('/api/highlights/sync/check', appOrigin).toString();
+    return new URL('/api/v1/highlights/sync/check', appOrigin).toString();
   } catch (_) {
     return '';
   }

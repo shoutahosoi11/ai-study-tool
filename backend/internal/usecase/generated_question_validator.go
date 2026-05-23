@@ -38,10 +38,17 @@ func normalizeGeneratedQuestion(input domain.GeneratedQuestion, questionType dom
 		if len(normalized.Options) != requiredMultipleChoiceOptionCount {
 			return domain.GeneratedQuestion{}, fmt.Errorf("%w: invalid generated options", domain.ErrInvalidInput)
 		}
+		hasCorrectAnswer := false
 		for _, option := range normalized.Options {
 			if !validGeneratedText(option, maxGeneratedQuestionOptionLength) {
 				return domain.GeneratedQuestion{}, fmt.Errorf("%w: invalid generated option", domain.ErrInvalidInput)
 			}
+			if option == normalized.CorrectAnswer {
+				hasCorrectAnswer = true
+			}
+		}
+		if !hasCorrectAnswer {
+			return domain.GeneratedQuestion{}, fmt.Errorf("%w: generated correct answer is not in options", domain.ErrInvalidInput)
 		}
 	}
 

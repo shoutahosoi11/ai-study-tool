@@ -33,6 +33,7 @@ type Props = {
 
 const LIST_URL = 'https://read.amazon.co.jp/notebook#mode=list'
 const RUN_COOLDOWN_MS = 60 * 1000
+const TRUSTED_KINDLE_HOSTS = new Set(['read.amazon.co.jp', 'www.amazon.co.jp', 'amazon.co.jp'])
 
 function buildSyncURL(asin: string) {
   const normalizedASIN = asin.trim()
@@ -41,6 +42,18 @@ function buildSyncURL(asin: string) {
   }
 
   return `https://read.amazon.co.jp/notebook?asin=${encodeURIComponent(normalizedASIN)}#mode=sync`
+}
+
+function isTrustedKindleURL(url?: string) {
+  if (!url) {
+    return false
+  }
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' && TRUSTED_KINDLE_HOSTS.has(parsed.hostname.toLowerCase())
+  } catch {
+    return false
+  }
 }
 
 function normalizeBook(raw: KindleNotebookBook): KindleNotebookBook | null {
@@ -112,7 +125,6 @@ export function MobileKindleAutoSync({ enabled, onImported, onStatusChange }: Pr
   const syncedRef = useRef(0)
   const failedRef = useRef(0)
   const currentModeRef = useRef<'list' | 'sync'>('list')
-
   const injectedJavaScript = useMemo(() => buildKindleSyncInjectedScript(), [])
 
   const emitStatus = useCallback(
@@ -317,6 +329,9 @@ export function MobileKindleAutoSync({ enabled, onImported, onStatusChange }: Pr
 
   const handleMessage = useCallback(
     async (event: WebViewMessageEvent) => {
+      if (!isTrustedKindleURL(event.nativeEvent.url)) {
+        return
+      }
       let message: KindleNotebookMessage | null = null
       try {
         message = JSON.parse(event.nativeEvent.data) as KindleNotebookMessage
@@ -385,12 +400,13 @@ export function MobileKindleAutoSync({ enabled, onImported, onStatusChange }: Pr
       onNavigationStateChange={(navigationState) => {
         handleNavigationStateChange(navigationState.url)
       }}
+      onShouldStartLoadWithRequest={(request) => isTrustedKindleURL(request.url)}
       injectedJavaScript={injectedJavaScript}
       javaScriptEnabled
       domStorageEnabled
       sharedCookiesEnabled
       thirdPartyCookiesEnabled
-      originWhitelist={['https://*']}
+      originWhitelist={['https://read.amazon.co.jp/*', 'https://www.amazon.co.jp/*', 'https://amazon.co.jp/*']}
       style={loginModalVisible ? styles.loginWebView : styles.hiddenWebView}
     />
   )

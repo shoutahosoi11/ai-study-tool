@@ -3,10 +3,12 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
@@ -25,13 +27,26 @@ func (r *questionBudgetRepository) GetBalance(ctx context.Context, userID uuid.U
 	return r.readBalance(ctx, userID, plan, now)
 }
 
-func (r *questionBudgetRepository) AwardAdTokens(ctx context.Context, userID uuid.UUID, now time.Time) (*domain.QuestionTokenBalance, error) {
+func (r *questionBudgetRepository) AwardAdTokens(ctx context.Context, userID uuid.UUID, claim domain.AdRewardClaim, now time.Time) (*domain.QuestionTokenBalance, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("question budget repo: begin award: %w", err)
 	}
 	defer tx.Rollback()
 
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO ad_reward_claims (user_id, provider, nonce, rewarded_at)
+VALUES ($1, $2, $3, $4)
+`, userID, claim.Provider, claim.Nonce, claim.RewardedAt); err != nil {
+		if isUniqueViolation(err) {
+			return nil, domain.ErrAlreadyExists
+		}
+		return nil, fmt.Errorf("question budget repo: insert ad reward claim: %w", err)
+	}
+
+	// The reward claim is committed only when the token award succeeds. If the
+	// daily ad limit is already reached, the rollback keeps the same signed claim
+	// retryable after the user's budget window changes.
 	budgetDate := questionBudgetDate(now)
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO question_daily_budgets (user_id, budget_date, ad_views_today)
@@ -62,6 +77,11 @@ VALUES ($1, $2)
 		return nil, fmt.Errorf("question budget repo: commit award: %w", err)
 	}
 	return r.readBalance(ctx, userID, "free", now)
+}
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 func (r *questionBudgetRepository) ReserveQuestions(ctx context.Context, userID uuid.UUID, plan string, questionCount int, now time.Time) (*domain.QuestionTokenBalance, error) {

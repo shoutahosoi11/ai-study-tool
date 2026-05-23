@@ -253,6 +253,9 @@ func (h *PostHandler) CreatePost(c echo.Context) error {
 		if strings.HasPrefix(err.Error(), "validation:") {
 			return echo.NewHTTPError(http.StatusBadRequest, strings.TrimPrefix(err.Error(), "validation: "))
 		}
+		if errors.Is(err, domain.ErrForbidden) {
+			return echo.NewHTTPError(http.StatusForbidden, "questions are not available for this user")
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 

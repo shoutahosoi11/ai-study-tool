@@ -102,7 +102,7 @@ func TestRequireInternalTaskAuthAcceptsOIDC(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := RequireInternalTaskAuth("", "https://api.example.com", "task-invoker@example.iam.gserviceaccount.com")(func(c echo.Context) error {
+	handler := RequireInternalTaskAuthWithSecretFallback("", "https://api.example.com", "task-invoker@example.iam.gserviceaccount.com", true)(func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
 
@@ -111,5 +111,29 @@ func TestRequireInternalTaskAuthAcceptsOIDC(t *testing.T) {
 	}
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+func TestRequireInternalTaskAuthRejectsSecretWhenFallbackDisabled(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/internal/tasks/question-generation", nil)
+	req.Header.Set(InternalTaskSecretHeader, "secret-value")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	handler := RequireInternalTaskAuthWithSecretFallback(
+		"secret-value",
+		"https://api.example.com",
+		"task-invoker@example.iam.gserviceaccount.com",
+		false,
+	)(func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	if err := handler(c); err != nil {
+		e.HTTPErrorHandler(err, c)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
