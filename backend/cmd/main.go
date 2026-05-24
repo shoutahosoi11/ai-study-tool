@@ -61,11 +61,6 @@ func main() {
 	configureServerTimeouts(e)
 	e.Use(requestLogger())
 	e.Use(echomiddleware.Recover())
-	e.Use(echomiddleware.CORSWithConfig(echomiddleware.CORSConfig{
-		AllowOrigins: allowedOrigins(),
-		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders: []string{"Authorization", "Content-Type"},
-	}))
 
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
@@ -193,33 +188,6 @@ func readinessHandler(db *sql.DB) echo.HandlerFunc {
 
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	}
-}
-
-func allowedOrigins() []string {
-	raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
-	if raw == "" {
-		if os.Getenv("APP_ENV") == "production" {
-			log.Fatal("CORS_ALLOWED_ORIGINS is required in production")
-		}
-		return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
-	}
-
-	parts := strings.Split(raw, ",")
-	origins := make([]string, 0, len(parts))
-	for _, part := range parts {
-		origin := strings.TrimSpace(part)
-		if origin != "" {
-			origins = append(origins, origin)
-		}
-	}
-	if len(origins) == 0 {
-		if os.Getenv("APP_ENV") == "production" {
-			log.Fatal("CORS_ALLOWED_ORIGINS must include at least one origin in production")
-		}
-		return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
-	}
-
-	return origins
 }
 
 func configureDatabasePool(db *sql.DB) {

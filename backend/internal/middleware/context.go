@@ -3,6 +3,7 @@ package middleware
 import (
 	"firebase.google.com/go/v4/auth"
 	"github.com/labstack/echo/v4"
+	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
 const (
@@ -24,8 +25,34 @@ func GetFirebaseToken(c echo.Context) (*auth.Token, bool) {
 	return token, ok && token != nil
 }
 
+func GetAuthClaims(c echo.Context) (map[string]any, bool) {
+	switch token := c.Get(ContextFirebaseTokenKey).(type) {
+	case *auth.Token:
+		if token == nil || token.Claims == nil {
+			return nil, false
+		}
+		return token.Claims, true
+	case *domain.AuthToken:
+		if token == nil || token.Claims == nil {
+			return nil, false
+		}
+		return token.Claims, true
+	default:
+		return nil, false
+	}
+}
+
 // setFirebaseAuth は認証結果を downstream の handler で使えるよう Context に保存する。
 func setFirebaseAuth(c echo.Context, token *auth.Token) {
+	if token == nil {
+		return
+	}
+
+	c.Set(ContextFirebaseUIDKey, token.UID)
+	c.Set(ContextFirebaseTokenKey, token)
+}
+
+func setSessionAuth(c echo.Context, token *domain.AuthToken) {
 	if token == nil {
 		return
 	}

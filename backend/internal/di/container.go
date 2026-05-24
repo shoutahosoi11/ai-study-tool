@@ -28,8 +28,13 @@ type Container struct {
 	HighlightHandler              *handler.HighlightHandler
 	TokenHandler                  *handler.TokenHandler
 	StripeHandler                 *handler.StripeHandler
+	AuthHandler                   *handler.AuthHandler
 	TaskHandler                   *handler.TaskHandler
 	FirebaseMiddleware            *middleware.FirebaseMiddleware
+	SessionAuthMiddleware         *middleware.SessionAuthMiddleware
+	CSRFMiddleware                *middleware.CSRFMiddleware
+	HybridAuthMiddleware          *middleware.HybridAuthMiddleware
+	SecurityHeadersMiddleware     *middleware.SecurityHeadersMiddleware
 	IngestRateLimitMiddleware     *middleware.RateLimitMiddleware
 	GenerationRateLimitMiddleware *middleware.RateLimitMiddleware
 	PostRateLimitMiddleware       *middleware.RateLimitMiddleware
@@ -57,6 +62,15 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessionCookieClient := infrafb.NewSessionCookieClient(authClient)
+	appEnv := os.Getenv("APP_ENV")
+	sessionAuthMiddleware, err := middleware.NewSessionAuthMiddleware(sessionCookieClient, appEnv)
+	if err != nil {
+		return nil, err
+	}
+	csrfMiddleware := middleware.NewCSRFMiddleware(appEnv)
+	hybridAuthMiddleware := middleware.NewHybridAuthMiddleware(sessionAuthMiddleware, firebaseMiddleware, appEnv)
+	securityHeadersMiddleware := middleware.NewSecurityHeadersMiddleware(appEnv, os.Getenv("CSP_REPORT_URI"))
 
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")
 
@@ -131,6 +145,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
 	tokenHandler := handler.NewTokenHandler(tokenUsecase, userUsecase)
 	stripeHandler := handler.NewStripeHandler(billingUsecase, userUsecase)
+	authHandler := handler.NewAuthHandler(sessionCookieClient, appEnv, os.Getenv("SESSION_COOKIE_DOMAIN"))
 	taskHandler := handler.NewTaskHandler(questionWorkerUsecase, highlightImportJobUsecase)
 	closeCloudTasks := make([]func() error, 0, 2)
 	if questionTaskEnqueuer != nil {
@@ -148,8 +163,13 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		HighlightHandler:              highlightHandler,
 		TokenHandler:                  tokenHandler,
 		StripeHandler:                 stripeHandler,
+		AuthHandler:                   authHandler,
 		TaskHandler:                   taskHandler,
 		FirebaseMiddleware:            firebaseMiddleware,
+		SessionAuthMiddleware:         sessionAuthMiddleware,
+		CSRFMiddleware:                csrfMiddleware,
+		HybridAuthMiddleware:          hybridAuthMiddleware,
+		SecurityHeadersMiddleware:     securityHeadersMiddleware,
 		IngestRateLimitMiddleware:     ingestRateLimitMiddleware,
 		GenerationRateLimitMiddleware: generationRateLimitMiddleware,
 		PostRateLimitMiddleware:       postRateLimitMiddleware,
