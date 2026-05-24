@@ -69,7 +69,10 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 	csrfMiddleware := middleware.NewCSRFMiddleware(appEnv)
-	hybridAuthMiddleware := middleware.NewHybridAuthMiddleware(sessionAuthMiddleware, firebaseMiddleware, appEnv)
+	hybridAuthMiddleware, err := middleware.NewHybridAuthMiddleware(sessionAuthMiddleware, firebaseMiddleware, csrfMiddleware, appEnv)
+	if err != nil {
+		return nil, err
+	}
 	securityHeadersMiddleware := middleware.NewSecurityHeadersMiddleware(appEnv, os.Getenv("CSP_REPORT_URI"))
 
 	geminiAPIKey := os.Getenv("GEMINI_API_KEY")

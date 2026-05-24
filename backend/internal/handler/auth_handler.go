@@ -25,6 +25,8 @@ type AuthHandler struct {
 	cookieDomain   string
 	now            func() time.Time
 	randomToken    func() (string, error)
+	idTokenError   func(error) bool
+	sessionError   func(error) bool
 }
 
 type sessionRequest struct {
@@ -43,6 +45,8 @@ func NewAuthHandler(sessionManager domain.SessionCookieManager, appEnv string, c
 		cookieDomain:   strings.TrimSpace(cookieDomain),
 		now:            time.Now,
 		randomToken:    generateCSRFToken,
+		idTokenError:   middleware.IsFirebaseIDTokenClientError,
+		sessionError:   middleware.IsFirebaseSessionCookieClientError,
 	}
 }
 
@@ -61,7 +65,7 @@ func (h *AuthHandler) Refresh(c echo.Context) error {
 	}
 	currentToken, err := h.sessionManager.VerifySessionCookieAndCheckRevoked(c.Request().Context(), sessionCookie.Value)
 	if err != nil {
-		return sessionAuthHTTPError(err)
+		return h.sessionAuthHTTPError(err)
 	}
 	if currentToken == nil || currentToken.UID == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
@@ -87,7 +91,7 @@ func (h *AuthHandler) LogoutAll(c echo.Context) error {
 
 	token, err := h.sessionManager.VerifySessionCookieAndCheckRevoked(c.Request().Context(), sessionCookie.Value)
 	if err != nil {
-		return sessionAuthHTTPError(err)
+		return h.sessionAuthHTTPError(err)
 	}
 	if token == nil || token.UID == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
@@ -108,7 +112,7 @@ func (h *AuthHandler) issueSession(c echo.Context, idToken string, expectedUID s
 
 	token, err := h.sessionManager.VerifyIDToken(c.Request().Context(), idToken)
 	if err != nil {
-		return idTokenHTTPError(err)
+		return h.idTokenHTTPError(err)
 	}
 	if token == nil || token.UID == "" {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
@@ -203,15 +207,15 @@ func generateCSRFToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-func idTokenHTTPError(err error) *echo.HTTPError {
-	if middleware.IsFirebaseIDTokenClientError(err) {
+func (h *AuthHandler) idTokenHTTPError(err error) *echo.HTTPError {
+	if h.idTokenError != nil && h.idTokenError(err) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid id token")
 	}
-	return echo.NewHTTPError(http.StatusUnauthorized, "invalid id token")
+	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 }
 
-func sessionAuthHTTPError(err error) *echo.HTTPError {
-	if middleware.IsFirebaseSessionCookieClientError(err) {
+func (h *AuthHandler) sessionAuthHTTPError(err error) *echo.HTTPError {
+	if h.sessionError != nil && h.sessionError(err) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid, expired, or revoked session")
 	}
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")

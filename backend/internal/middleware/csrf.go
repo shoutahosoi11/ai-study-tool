@@ -23,14 +23,6 @@ func (m *CSRFMiddleware) Protect(next echo.HandlerFunc) echo.HandlerFunc {
 			return next(c)
 		}
 
-		if c.Path() == "/api/v1/auth/session" {
-			return next(c)
-		}
-
-		if !hasSessionCookie(c, m.appEnv) {
-			return next(c)
-		}
-
 		headerToken := strings.TrimSpace(c.Request().Header.Get("X-CSRF-Token"))
 		cookie, err := c.Cookie(CSRFCookieName())
 		if err != nil || strings.TrimSpace(cookie.Value) == "" || headerToken == "" {

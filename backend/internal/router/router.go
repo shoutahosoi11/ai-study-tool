@@ -12,16 +12,7 @@ import (
 )
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
-	e.Use(container.SecurityHeadersMiddleware.Secure)
-	e.Use(echomiddleware.CORSWithConfig(echomiddleware.CORSConfig{
-		AllowOrigins:     allowedOrigins(),
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Authorization", "Content-Type", "X-CSRF-Token"},
-		AllowCredentials: true,
-	}))
-
 	api := e.Group("/api/v1")
-	api.Use(container.CSRFMiddleware.Protect)
 	authMiddleware := container.HybridAuthMiddleware.Authenticate
 	ingestRateLimit := container.IngestRateLimitMiddleware.Limit
 	generationRateLimit := container.GenerationRateLimitMiddleware.Limit
@@ -42,9 +33,9 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 func registerAuthRoutes(api *echo.Group, container *di.Container) {
 	auth := api.Group("/auth")
 	auth.POST("/session", container.AuthHandler.CreateSession, echomiddleware.BodyLimit("4K"))
-	auth.POST("/refresh", container.AuthHandler.Refresh, echomiddleware.BodyLimit("4K"))
-	auth.POST("/logout", container.AuthHandler.Logout, echomiddleware.BodyLimit("1K"))
-	auth.POST("/logout-all", container.AuthHandler.LogoutAll, echomiddleware.BodyLimit("1K"))
+	auth.POST("/refresh", container.AuthHandler.Refresh, echomiddleware.BodyLimit("4K"), container.CSRFMiddleware.Protect)
+	auth.POST("/logout", container.AuthHandler.Logout, echomiddleware.BodyLimit("1K"), container.CSRFMiddleware.Protect)
+	auth.POST("/logout-all", container.AuthHandler.LogoutAll, echomiddleware.BodyLimit("1K"), container.CSRFMiddleware.Protect)
 }
 
 func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
@@ -74,36 +65,6 @@ func requireInternalTaskOIDCInProduction() {
 
 func allowInternalTaskSecretFallback() bool {
 	return os.Getenv("APP_ENV") != "production"
-}
-
-func allowedOrigins() []string {
-	raw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
-	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
-	}
-	if raw == "" {
-		if os.Getenv("APP_ENV") == "production" {
-			log.Fatal("ALLOWED_ORIGINS is required in production")
-		}
-		return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
-	}
-
-	parts := strings.Split(raw, ",")
-	origins := make([]string, 0, len(parts))
-	for _, part := range parts {
-		origin := strings.TrimSpace(part)
-		if origin != "" {
-			origins = append(origins, origin)
-		}
-	}
-	if len(origins) == 0 {
-		if os.Getenv("APP_ENV") == "production" {
-			log.Fatal("ALLOWED_ORIGINS must include at least one origin in production")
-		}
-		return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
-	}
-
-	return origins
 }
 
 func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc, socialRateLimit echo.MiddlewareFunc) {

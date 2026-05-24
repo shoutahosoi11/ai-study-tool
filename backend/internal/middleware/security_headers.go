@@ -39,6 +39,8 @@ func (m *SecurityHeadersMiddleware) contentSecurityPolicy() string {
 		"script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: https:",
+		// Add Stripe.js or other browser SDK origins here when the web client
+		// starts calling those providers directly.
 		"connect-src 'self' https://*.googleapis.com https://*.firebaseio.com",
 		"frame-ancestors 'none'",
 		"base-uri 'self'",

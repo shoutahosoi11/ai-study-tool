@@ -91,12 +91,16 @@ func TestCreateSessionIssuesSessionAndCSRFCookies(t *testing.T) {
 }
 
 func TestCreateSessionRejectsInvalidIDToken(t *testing.T) {
+	invalidErr := errors.New("invalid token")
 	manager := &stubSessionCookieManager{
 		verifyIDTokenFunc: func(ctx context.Context, idToken string) (*domain.AuthToken, error) {
-			return nil, errors.New("invalid token")
+			return nil, invalidErr
 		},
 	}
 	handler := NewAuthHandler(manager, "development", "")
+	handler.idTokenError = func(err error) bool {
+		return err == invalidErr
+	}
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/session", strings.NewReader(`{"id_token":"bad"}`))
@@ -106,6 +110,24 @@ func TestCreateSessionRejectsInvalidIDToken(t *testing.T) {
 
 	err := handler.CreateSession(c)
 	assertHTTPErrorCode(t, err, http.StatusUnauthorized)
+}
+
+func TestCreateSessionReturnsServiceUnavailableForVerifierFailure(t *testing.T) {
+	manager := &stubSessionCookieManager{
+		verifyIDTokenFunc: func(ctx context.Context, idToken string) (*domain.AuthToken, error) {
+			return nil, errors.New("firebase unavailable")
+		},
+	}
+	handler := NewAuthHandler(manager, "development", "")
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/session", strings.NewReader(`{"id_token":"id-token"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := handler.CreateSession(c)
+	assertHTTPErrorCode(t, err, http.StatusServiceUnavailable)
 }
 
 func TestCreateSessionRejectsOldAuthTime(t *testing.T) {
@@ -125,6 +147,109 @@ func TestCreateSessionRejectsOldAuthTime(t *testing.T) {
 	c := e.NewContext(req, rec)
 
 	err := handler.CreateSession(c)
+	assertHTTPErrorCode(t, err, http.StatusUnauthorized)
+}
+
+func TestCreateSessionFailsClosedForInvalidTokenResult(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	testCases := []struct {
+		name  string
+		token *domain.AuthToken
+	}{
+		{name: "NilToken"},
+		{name: "EmptyUID", token: &domain.AuthToken{AuthTime: now}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := &stubSessionCookieManager{
+				verifyIDTokenFunc: func(ctx context.Context, idToken string) (*domain.AuthToken, error) {
+					return tc.token, nil
+				},
+			}
+			handler := NewAuthHandler(manager, "development", "")
+			handler.now = func() time.Time { return now }
+
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/session", strings.NewReader(`{"id_token":"id-token"}`))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+
+			err := handler.CreateSession(c)
+			assertHTTPErrorCode(t, err, http.StatusServiceUnavailable)
+		})
+	}
+}
+
+func TestCreateSessionReturnsServiceUnavailableWhenCookieOrCSRFGenerationFails(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	testCases := []struct {
+		name                    string
+		createSessionCookieFunc func(ctx context.Context, idToken string, expiresIn time.Duration) (string, error)
+		randomToken             func() (string, error)
+	}{
+		{
+			name: "SessionCookieFailure",
+			createSessionCookieFunc: func(ctx context.Context, idToken string, expiresIn time.Duration) (string, error) {
+				return "", errors.New("firebase unavailable")
+			},
+			randomToken: func() (string, error) { return "csrf-token", nil },
+		},
+		{
+			name: "CSRFGenerationFailure",
+			createSessionCookieFunc: func(ctx context.Context, idToken string, expiresIn time.Duration) (string, error) {
+				return "session-cookie", nil
+			},
+			randomToken: func() (string, error) { return "", errors.New("entropy unavailable") },
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manager := &stubSessionCookieManager{
+				verifyIDTokenFunc: func(ctx context.Context, idToken string) (*domain.AuthToken, error) {
+					return &domain.AuthToken{UID: "firebase-uid-1", AuthTime: now.Add(-time.Minute)}, nil
+				},
+				createSessionCookieFunc: tc.createSessionCookieFunc,
+			}
+			handler := NewAuthHandler(manager, "development", "")
+			handler.now = func() time.Time { return now }
+			handler.randomToken = tc.randomToken
+
+			e := echo.New()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/session", strings.NewReader(`{"id_token":"id-token"}`))
+			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+			rec := httptest.NewRecorder()
+			c := e.NewContext(req, rec)
+
+			err := handler.CreateSession(c)
+			assertHTTPErrorCode(t, err, http.StatusServiceUnavailable)
+		})
+	}
+}
+
+func TestRefreshRejectsIDTokenUIDMismatch(t *testing.T) {
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	manager := &stubSessionCookieManager{
+		verifySessionCookieAndRevokedFunc: func(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
+			return &domain.AuthToken{UID: "session-uid"}, nil
+		},
+		verifyIDTokenFunc: func(ctx context.Context, idToken string) (*domain.AuthToken, error) {
+			return &domain.AuthToken{UID: "other-uid", AuthTime: now.Add(-time.Minute)}, nil
+		},
+	}
+	handler := NewAuthHandler(manager, "development", "")
+	handler.now = func() time.Time { return now }
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{"id_token":"id-token"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.AddCookie(&http.Cookie{Name: middleware.SessionCookieName("development"), Value: "session-cookie"})
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := handler.Refresh(c)
 	assertHTTPErrorCode(t, err, http.StatusUnauthorized)
 }
 
