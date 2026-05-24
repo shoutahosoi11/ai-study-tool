@@ -232,9 +232,6 @@ func TestCreateSessionReturnsServiceUnavailableWhenCookieOrCSRFGenerationFails(t
 func TestRefreshRejectsIDTokenUIDMismatch(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
 	manager := &stubSessionCookieManager{
-		verifySessionCookieAndRevokedFunc: func(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
-			return &domain.AuthToken{UID: "session-uid"}, nil
-		},
 		verifyIDTokenFunc: func(ctx context.Context, idToken string) (*domain.AuthToken, error) {
 			return &domain.AuthToken{UID: "other-uid", AuthTime: now.Add(-time.Minute)}, nil
 		},
@@ -246,6 +243,20 @@ func TestRefreshRejectsIDTokenUIDMismatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{"id_token":"id-token"}`))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	req.AddCookie(&http.Cookie{Name: middleware.SessionCookieName("development"), Value: "session-cookie"})
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "session-uid")
+
+	err := handler.Refresh(c)
+	assertHTTPErrorCode(t, err, http.StatusUnauthorized)
+}
+
+func TestRefreshRequiresSessionAuthContext(t *testing.T) {
+	handler := NewAuthHandler(&stubSessionCookieManager{}, "development", "")
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", strings.NewReader(`{"id_token":"id-token"}`))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -281,12 +292,6 @@ func TestLogoutClearsCookies(t *testing.T) {
 func TestLogoutAllRevokesRefreshTokens(t *testing.T) {
 	revokedUID := ""
 	manager := &stubSessionCookieManager{
-		verifySessionCookieAndRevokedFunc: func(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
-			if sessionCookie != "session-cookie" {
-				t.Fatalf("unexpected session cookie: %s", sessionCookie)
-			}
-			return &domain.AuthToken{UID: "firebase-uid-1"}, nil
-		},
 		revokeRefreshTokensFunc: func(ctx context.Context, uid string) error {
 			revokedUID = uid
 			return nil
@@ -299,6 +304,7 @@ func TestLogoutAllRevokesRefreshTokens(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: middleware.SessionCookieName("development"), Value: "session-cookie"})
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
 
 	if err := handler.LogoutAll(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -306,6 +312,18 @@ func TestLogoutAllRevokesRefreshTokens(t *testing.T) {
 	if revokedUID != "firebase-uid-1" {
 		t.Fatalf("unexpected revoked uid: %s", revokedUID)
 	}
+}
+
+func TestLogoutAllRequiresSessionAuthContext(t *testing.T) {
+	handler := NewAuthHandler(&stubSessionCookieManager{}, "development", "")
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout-all", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := handler.LogoutAll(c)
+	assertHTTPErrorCode(t, err, http.StatusUnauthorized)
 }
 
 func findCookie(cookies []*http.Cookie, name string) *http.Cookie {

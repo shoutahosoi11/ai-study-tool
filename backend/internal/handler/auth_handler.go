@@ -26,7 +26,6 @@ type AuthHandler struct {
 	now            func() time.Time
 	randomToken    func() (string, error)
 	idTokenError   func(error) bool
-	sessionError   func(error) bool
 }
 
 type sessionRequest struct {
@@ -46,7 +45,6 @@ func NewAuthHandler(sessionManager domain.SessionCookieManager, appEnv string, c
 		now:            time.Now,
 		randomToken:    generateCSRFToken,
 		idTokenError:   middleware.IsFirebaseIDTokenClientError,
-		sessionError:   middleware.IsFirebaseSessionCookieClientError,
 	}
 }
 
@@ -59,23 +57,16 @@ func (h *AuthHandler) CreateSession(c echo.Context) error {
 }
 
 func (h *AuthHandler) Refresh(c echo.Context) error {
-	sessionCookie, err := c.Cookie(middleware.SessionCookieName(h.appEnv))
-	if err != nil || strings.TrimSpace(sessionCookie.Value) == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing session cookie")
-	}
-	currentToken, err := h.sessionManager.VerifySessionCookieAndCheckRevoked(c.Request().Context(), sessionCookie.Value)
-	if err != nil {
-		return h.sessionAuthHTTPError(err)
-	}
-	if currentToken == nil || currentToken.UID == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
+	currentUID, ok := middleware.GetFirebaseUID(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 
 	req := new(sessionRequest)
 	if err := c.Bind(req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request")
 	}
-	return h.issueSession(c, strings.TrimSpace(req.IDToken), currentToken.UID)
+	return h.issueSession(c, strings.TrimSpace(req.IDToken), currentUID)
 }
 
 func (h *AuthHandler) Logout(c echo.Context) error {
@@ -84,20 +75,12 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 }
 
 func (h *AuthHandler) LogoutAll(c echo.Context) error {
-	sessionCookie, err := c.Cookie(middleware.SessionCookieName(h.appEnv))
-	if err != nil || strings.TrimSpace(sessionCookie.Value) == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing session cookie")
+	currentUID, ok := middleware.GetFirebaseUID(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
 	}
 
-	token, err := h.sessionManager.VerifySessionCookieAndCheckRevoked(c.Request().Context(), sessionCookie.Value)
-	if err != nil {
-		return h.sessionAuthHTTPError(err)
-	}
-	if token == nil || token.UID == "" {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
-	}
-
-	if err := h.sessionManager.RevokeRefreshTokens(c.Request().Context(), token.UID); err != nil {
+	if err := h.sessionManager.RevokeRefreshTokens(c.Request().Context(), currentUID); err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 	}
 
@@ -210,13 +193,6 @@ func generateCSRFToken() (string, error) {
 func (h *AuthHandler) idTokenHTTPError(err error) *echo.HTTPError {
 	if h.idTokenError != nil && h.idTokenError(err) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid id token")
-	}
-	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
-}
-
-func (h *AuthHandler) sessionAuthHTTPError(err error) *echo.HTTPError {
-	if h.sessionError != nil && h.sessionError(err) {
-		return echo.NewHTTPError(http.StatusUnauthorized, "invalid, expired, or revoked session")
 	}
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 }

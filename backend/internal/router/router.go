@@ -33,9 +33,21 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 func registerAuthRoutes(api *echo.Group, container *di.Container) {
 	auth := api.Group("/auth")
 	auth.POST("/session", container.AuthHandler.CreateSession, echomiddleware.BodyLimit("4K"))
-	auth.POST("/refresh", container.AuthHandler.Refresh, echomiddleware.BodyLimit("4K"), container.CSRFMiddleware.Protect)
-	auth.POST("/logout", container.AuthHandler.Logout, echomiddleware.BodyLimit("1K"), container.CSRFMiddleware.Protect)
-	auth.POST("/logout-all", container.AuthHandler.LogoutAll, echomiddleware.BodyLimit("1K"), container.CSRFMiddleware.Protect)
+	auth.POST("/refresh", container.AuthHandler.Refresh,
+		echomiddleware.BodyLimit("4K"),
+		container.CSRFMiddleware.Protect,
+		container.SessionAuthMiddleware.Authenticate,
+	)
+	auth.POST("/logout", container.AuthHandler.Logout,
+		echomiddleware.BodyLimit("1K"),
+		container.CSRFMiddleware.Protect,
+		container.SessionAuthMiddleware.Authenticate,
+	)
+	auth.POST("/logout-all", container.AuthHandler.LogoutAll,
+		echomiddleware.BodyLimit("1K"),
+		container.CSRFMiddleware.Protect,
+		container.SessionAuthMiddleware.Authenticate,
+	)
 }
 
 func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
