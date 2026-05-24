@@ -16,6 +16,9 @@ func NewCSRFMiddleware(appEnv string) *CSRFMiddleware {
 	return &CSRFMiddleware{appEnv: strings.TrimSpace(appEnv)}
 }
 
+// Protect verifies CSRF with the double submit cookie pattern.
+// Callers must apply it only to Session Cookie authentication paths; Bearer
+// compatibility during the hybrid period is controlled by HybridAuthMiddleware.
 func (m *CSRFMiddleware) Protect(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		switch c.Request().Method {
