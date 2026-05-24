@@ -24,6 +24,10 @@ var isFirebaseIDTokenClientError = func(err error) bool {
 		auth.IsTenantIDMismatch(err)
 }
 
+func IsFirebaseIDTokenClientError(err error) bool {
+	return isFirebaseIDTokenClientError(err)
+}
+
 type FirebaseMiddleware struct {
 	verifier TokenVerifier
 }

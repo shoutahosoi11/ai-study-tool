@@ -13,13 +13,14 @@ import (
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
 	api := e.Group("/api/v1")
-	authMiddleware := container.FirebaseMiddleware.Authenticate
+	authMiddleware := container.HybridAuthMiddleware.Authenticate
 	ingestRateLimit := container.IngestRateLimitMiddleware.Limit
 	generationRateLimit := container.GenerationRateLimitMiddleware.Limit
 	postRateLimit := container.PostRateLimitMiddleware.Limit
 	socialRateLimit := container.SocialRateLimitMiddleware.Limit
 	tokenRateLimit := container.TokenRateLimitMiddleware.Limit
 
+	registerAuthRoutes(api, container)
 	registerUserRoutes(api, container, authMiddleware, socialRateLimit)
 	registerPostRoutes(api, container, authMiddleware, postRateLimit, socialRateLimit)
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
@@ -27,6 +28,26 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	registerMonetizationRoutes(api, container, authMiddleware, tokenRateLimit)
 	registerInternalTaskRoutes(e, container)
 	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook, echomiddleware.BodyLimit("1M"))
+}
+
+func registerAuthRoutes(api *echo.Group, container *di.Container) {
+	auth := api.Group("/auth")
+	auth.POST("/session", container.AuthHandler.CreateSession, echomiddleware.BodyLimit("4K"))
+	auth.POST("/refresh", container.AuthHandler.Refresh,
+		echomiddleware.BodyLimit("4K"),
+		container.CSRFMiddleware.Protect,
+		container.SessionAuthMiddleware.Authenticate,
+	)
+	auth.POST("/logout", container.AuthHandler.Logout,
+		echomiddleware.BodyLimit("1K"),
+		container.CSRFMiddleware.Protect,
+		container.SessionAuthMiddleware.Authenticate,
+	)
+	auth.POST("/logout-all", container.AuthHandler.LogoutAll,
+		echomiddleware.BodyLimit("1K"),
+		container.CSRFMiddleware.Protect,
+		container.SessionAuthMiddleware.Authenticate,
+	)
 }
 
 func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {

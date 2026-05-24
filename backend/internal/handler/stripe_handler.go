@@ -35,8 +35,8 @@ func (h *StripeHandler) CreateCheckoutSession(c echo.Context) error {
 	}
 
 	email := ""
-	if token, ok := middleware.GetFirebaseToken(c); ok && token != nil {
-		if claimEmail, ok := token.Claims["email"].(string); ok {
+	if claims, ok := middleware.GetAuthClaims(c); ok {
+		if claimEmail, ok := claims["email"].(string); ok {
 			email = strings.TrimSpace(claimEmail)
 		}
 	}
