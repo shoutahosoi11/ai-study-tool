@@ -30,7 +30,7 @@ func (v *WebhookValidator) ConstructEvent(payload []byte, signatureHeader string
 		return domain.StripeWebhookEvent{}, err
 	}
 
-	result := domain.StripeWebhookEvent{Type: string(event.Type)}
+	result := domain.StripeWebhookEvent{ID: event.ID, Type: string(event.Type)}
 	switch event.Type {
 	case "checkout.session.completed":
 		var session stripeapi.CheckoutSession
@@ -48,6 +48,7 @@ func (v *WebhookValidator) ConstructEvent(payload []byte, signatureHeader string
 		if session.Subscription != nil {
 			result.SubscriptionID = session.Subscription.ID
 		}
+		result.Status = "active"
 	case "customer.subscription.updated", "customer.subscription.deleted":
 		var subscription stripeapi.Subscription
 		if err := json.Unmarshal(event.Data.Raw, &subscription); err != nil {
@@ -57,6 +58,10 @@ func (v *WebhookValidator) ConstructEvent(payload []byte, signatureHeader string
 			result.CustomerID = subscription.Customer.ID
 		}
 		result.SubscriptionID = subscription.ID
+		result.Status = normalizeStripeSubscriptionStatus(subscription.Status)
+		if len(subscription.Items.Data) > 0 && subscription.Items.Data[0].Price != nil {
+			result.ProductID = subscription.Items.Data[0].Price.ID
+		}
 		if subscription.CurrentPeriodEnd > 0 {
 			expiresAt := time.Unix(subscription.CurrentPeriodEnd, 0)
 			result.ExpiresAt = &expiresAt
@@ -75,6 +80,21 @@ func (v *WebhookValidator) ConstructEvent(payload []byte, signatureHeader string
 	}
 
 	return result, nil
+}
+
+func normalizeStripeSubscriptionStatus(status stripeapi.SubscriptionStatus) string {
+	switch status {
+	case stripeapi.SubscriptionStatusActive:
+		return "active"
+	case stripeapi.SubscriptionStatusTrialing:
+		return "trialing"
+	case stripeapi.SubscriptionStatusPastDue, stripeapi.SubscriptionStatusUnpaid, stripeapi.SubscriptionStatusIncomplete, stripeapi.SubscriptionStatusIncompleteExpired:
+		return "past_due"
+	case stripeapi.SubscriptionStatusCanceled:
+		return "canceled"
+	default:
+		return "expired"
+	}
 }
 
 func checkoutUserID(session stripeapi.CheckoutSession) (uuid.UUID, error) {

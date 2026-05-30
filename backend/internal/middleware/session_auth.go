@@ -8,13 +8,13 @@ import (
 	firebaseauth "firebase.google.com/go/v4/auth"
 	"github.com/labstack/echo/v4"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
+	appsession "github.com/shout/ai-study-tool/backend/internal/session"
 )
 
 const (
-	developmentAppEnv = "development"
-	sessionCookieName = "session"
-	hostSessionCookie = "__Host-session"
-	csrfCookieName    = "csrf_token"
+	sessionCookieName = appsession.DevelopmentSessionCookieName
+	hostSessionCookie = appsession.HostSessionCookieName
+	csrfCookieName    = appsession.CSRFCookieName
 )
 
 var isFirebaseSessionCookieClientError = func(err error) bool {
@@ -64,10 +64,7 @@ func (m *SessionAuthMiddleware) Authenticate(next echo.HandlerFunc) echo.Handler
 }
 
 func SessionCookieName(appEnv string) string {
-	if strings.TrimSpace(appEnv) == developmentAppEnv {
-		return sessionCookieName
-	}
-	return hostSessionCookie
+	return appsession.CookieName(appEnv)
 }
 
 func CSRFCookieName() string {
@@ -75,7 +72,7 @@ func CSRFCookieName() string {
 }
 
 func SecureCookie(appEnv string) bool {
-	return strings.TrimSpace(appEnv) != developmentAppEnv
+	return appsession.SecureCookie(appEnv)
 }
 
 func firebaseSessionCookieError(err error) *echo.HTTPError {

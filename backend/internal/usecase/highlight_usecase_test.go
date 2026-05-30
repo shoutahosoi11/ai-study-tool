@@ -16,13 +16,19 @@ import (
 )
 
 type mockImportHighlightRepository struct {
-	bulkUpsertSaved  int
-	bulkUpsertErr    error
-	bulkUpsertCalled bool
-	bulkUpsertInput  []*domain.Highlight
-	bulkUpsertTime   time.Time
-	existingHashes   []string
-	checkedHashes    []string
+	bulkUpsertSaved         int
+	bulkUpsertErr           error
+	bulkUpsertCalled        bool
+	bulkUpsertInput         []*domain.Highlight
+	bulkUpsertTime          time.Time
+	existingHashes          []string
+	checkedHashes           []string
+	updateExplanationCalled bool
+	updateExplanationID     uuid.UUID
+	updateExplanationUserID uuid.UUID
+	updateExplanationValue  *string
+	updateExplanationResult *domain.Highlight
+	updateExplanationErr    error
 }
 
 type mockHighlightImportJobTrigger struct {
@@ -82,7 +88,17 @@ func (m *mockImportHighlightRepository) ListBooksWithHighlightsByUserID(ctx cont
 }
 
 func (m *mockImportHighlightRepository) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation *string) (*domain.Highlight, error) {
-	return nil, errors.New("not implemented")
+	m.updateExplanationCalled = true
+	m.updateExplanationID = id
+	m.updateExplanationUserID = userID
+	m.updateExplanationValue = explanation
+	if m.updateExplanationErr != nil {
+		return nil, m.updateExplanationErr
+	}
+	if m.updateExplanationResult != nil {
+		return m.updateExplanationResult, nil
+	}
+	return &domain.Highlight{ID: id, UserID: userID, Explanation: explanation}, nil
 }
 
 func (m *mockImportHighlightRepository) markHighlightPersisted(highlight *domain.Highlight, offset int) {
@@ -722,6 +738,30 @@ func TestListExistingContentHashesRejectsInvalidHash(t *testing.T) {
 	_, err := uc.ListExistingContentHashes(context.Background(), userID, []string{"not-a-sha256"})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestUpdateExplanationPassesAuthenticatedUserToRepository(t *testing.T) {
+	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	highlightID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	repo := &mockImportHighlightRepository{}
+	uc := usecase.NewHighlightUsecase(repo)
+
+	_, err := uc.UpdateExplanation(context.Background(), highlightID, userID, " safe explanation ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !repo.updateExplanationCalled {
+		t.Fatal("expected repository update to be called")
+	}
+	if repo.updateExplanationID != highlightID {
+		t.Fatalf("unexpected highlight id: %s", repo.updateExplanationID)
+	}
+	if repo.updateExplanationUserID != userID {
+		t.Fatalf("unexpected user id: %s", repo.updateExplanationUserID)
+	}
+	if repo.updateExplanationValue == nil || *repo.updateExplanationValue != "safe explanation" {
+		t.Fatalf("unexpected explanation value: %#v", repo.updateExplanationValue)
 	}
 }
 

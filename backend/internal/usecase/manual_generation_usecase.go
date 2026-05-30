@@ -16,6 +16,7 @@ type ManualGenerationUsecase struct {
 	budgetRepo    domain.QuestionBudgetRepository
 	taskEnqueuer  domain.QuestionGenerationTaskEnqueuer
 	now           func() time.Time
+	queueLimits   questionGenerationQueueLimits
 }
 
 type manualGenerationHighlightReader interface {
@@ -34,6 +35,7 @@ func NewManualGenerationUsecase(
 		budgetRepo:    budgetRepo,
 		taskEnqueuer:  taskEnqueuer,
 		now:           time.Now,
+		queueLimits:   questionGenerationQueueLimitsFromEnv(""),
 	}
 }
 
@@ -57,6 +59,10 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 		if highlight == nil || strings.TrimSpace(highlight.Content) == "" {
 			return nil, domain.ErrInvalidInput
 		}
+	}
+
+	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, user.ID, bookKey); err != nil {
+		return nil, err
 	}
 
 	job, err := u.jobRepo.Create(ctx, domain.CreateQuestionGenerationJobInput{

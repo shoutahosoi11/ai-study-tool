@@ -100,6 +100,13 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 	})
 }
 
+func (h *HighlightHandler) ImportExtension(c echo.Context) error {
+	// Extension imports intentionally reuse the normal import path after
+	// route-level scope and rate-limit checks, so downstream generation rules
+	// remain backend-owned.
+	return h.Import(c)
+}
+
 func (h *HighlightHandler) CheckExistingHashes(c echo.Context) error {
 	user, err := h.currentUser(c)
 	if err != nil {

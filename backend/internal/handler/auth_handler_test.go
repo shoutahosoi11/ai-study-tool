@@ -14,6 +14,8 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
 )
 
+const testAuthHandlerCSRFSecret = "auth-handler-csrf-secret"
+
 type stubSessionCookieManager struct {
 	verifyIDTokenFunc                 func(ctx context.Context, idToken string) (*domain.AuthToken, error)
 	createSessionCookieFunc           func(ctx context.Context, idToken string, expiresIn time.Duration) (string, error)
@@ -55,7 +57,12 @@ func TestCreateSessionIssuesSessionAndCSRFCookies(t *testing.T) {
 	}
 	handler := NewAuthHandler(manager, "production", "")
 	handler.now = func() time.Time { return now }
-	handler.randomToken = func() (string, error) { return "csrf-token", nil }
+	handler.csrfSecret = testAuthHandlerCSRFSecret
+	handler.randomToken = func() (string, error) { return "csrf-raw", nil }
+	expectedCSRFToken, err := middleware.SignCSRFToken(testAuthHandlerCSRFSecret, "firebase-uid-1", "csrf-raw")
+	if err != nil {
+		t.Fatalf("unexpected csrf sign error: %v", err)
+	}
 
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/session", strings.NewReader(`{"id_token":"id-token"}`))
@@ -82,10 +89,10 @@ func TestCreateSessionIssuesSessionAndCSRFCookies(t *testing.T) {
 	if csrfCookie == nil {
 		t.Fatal("expected csrf cookie")
 	}
-	if csrfCookie.Value != "csrf-token" || csrfCookie.HttpOnly || !csrfCookie.Secure || csrfCookie.Path != "/" {
+	if csrfCookie.Value != expectedCSRFToken || csrfCookie.HttpOnly || !csrfCookie.Secure || csrfCookie.Path != "/" {
 		t.Fatalf("unexpected csrf cookie: %#v", csrfCookie)
 	}
-	if !strings.Contains(rec.Body.String(), `"csrf_token":"csrf-token"`) || !strings.Contains(rec.Body.String(), `"uid":"firebase-uid-1"`) {
+	if !strings.Contains(rec.Body.String(), `"csrf_token":"`+expectedCSRFToken+`"`) || !strings.Contains(rec.Body.String(), `"uid":"firebase-uid-1"`) {
 		t.Fatalf("unexpected response body: %s", rec.Body.String())
 	}
 }
@@ -215,6 +222,7 @@ func TestCreateSessionReturnsServiceUnavailableWhenCookieOrCSRFGenerationFails(t
 			}
 			handler := NewAuthHandler(manager, "development", "")
 			handler.now = func() time.Time { return now }
+			handler.csrfSecret = testAuthHandlerCSRFSecret
 			handler.randomToken = tc.randomToken
 
 			e := echo.New()
@@ -286,6 +294,30 @@ func TestLogoutClearsCookies(t *testing.T) {
 	csrfCookie := findCookie(rec.Result().Cookies(), middleware.CSRFCookieName())
 	if csrfCookie == nil || csrfCookie.MaxAge != -1 {
 		t.Fatalf("expected deleted csrf cookie, got %#v", csrfCookie)
+	}
+}
+
+func TestLogoutDoesNotRevokeRefreshTokens(t *testing.T) {
+	revokeCalled := false
+	manager := &stubSessionCookieManager{
+		revokeRefreshTokensFunc: func(ctx context.Context, uid string) error {
+			revokeCalled = true
+			return nil
+		},
+	}
+	handler := NewAuthHandler(manager, "development", "")
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	if err := handler.Logout(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if revokeCalled {
+		t.Fatal("normal logout must only clear current browser cookies; logout-all performs Firebase revocation")
 	}
 }
 

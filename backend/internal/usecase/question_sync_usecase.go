@@ -26,6 +26,7 @@ type QuestionSyncUsecase struct {
 	taskEnqueuer  domain.QuestionGenerationTaskEnqueuer
 	now           func() time.Time
 	dailyLimit    int
+	queueLimits   questionGenerationQueueLimits
 }
 
 type QuestionStockBook struct {
@@ -56,6 +57,7 @@ func NewQuestionSyncUsecase(
 		taskEnqueuer:  taskEnqueuer,
 		now:           time.Now,
 		dailyLimit:    readEnvIntOrDefault("QUESTION_SYNC_DAILY_LIMIT", defaultQuestionSyncDailyLimit),
+		queueLimits:   questionGenerationQueueLimitsFromEnv(""),
 	}
 }
 
@@ -239,6 +241,17 @@ func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid
 	}
 	if len(highlightIDs) == 0 {
 		return false, nil
+	}
+
+	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, userID, candidate.BookKey); err != nil {
+		if errors.Is(err, domain.ErrQuestionQueueDepthExceeded) {
+			slog.Warn("question_generation_event=queue_depth_exceeded",
+				"user_id", userID.String(),
+				"book_key", candidate.BookKey,
+			)
+			return false, nil
+		}
+		return false, err
 	}
 
 	job, err := u.jobRepo.Create(ctx, domain.CreateQuestionGenerationJobInput{

@@ -39,3 +39,6 @@ npm run android
 - Share intent does not work in Expo Go.
 - `ios/` and `android/` are generated and ignored in git.
 - The mobile app expects the backend migration `028_add_highlights_mobile_share_metadata.sql` to be applied.
+- API requests call Firebase Auth `getIdToken()` immediately before the request and send it as `Authorization: Bearer <ID token>`. The app does not store Firebase refresh tokens itself.
+- API requests send `X-Firebase-AppCheck`, `X-Platform`, and `X-App-Version` when `EXPO_PUBLIC_APP_VERSION` is configured. The app intentionally omits `X-App-Version` instead of defaulting to a fake value; production backend can reject missing versions, and the header is meaningful only together with Firebase ID Token auth and App Check.
+- Biometric unlock should be treated only as a local app lock. Do not send biometric success headers as server authorization; sensitive backend operations rely on Firebase `auth_time`.

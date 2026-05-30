@@ -212,6 +212,82 @@ func TestGenerateQuestions_GeneratesFromResolvedKindleHighlights(t *testing.T) {
 	}
 }
 
+func TestSaveQuestionPassesAuthenticatedUserToRepository(t *testing.T) {
+	repo := &mockQuestionRepository{
+		findByID: func(ctx context.Context, id string) (*domain.Question, *domain.QuestionMeta, *domain.QuestionStats, error) {
+			if id != "question-1" {
+				t.Fatalf("unexpected question id: %s", id)
+			}
+			return &domain.Question{ID: id}, &domain.QuestionMeta{CreatorID: "user-1"}, nil, nil
+		},
+		saveForUser: func(ctx context.Context, userID, questionID, note string) error {
+			if userID != "user-1" {
+				t.Fatalf("unexpected user id: %s", userID)
+			}
+			if questionID != "question-1" {
+				t.Fatalf("unexpected question id: %s", questionID)
+			}
+			if note != "my note" {
+				t.Fatalf("unexpected note: %q", note)
+			}
+			return nil
+		},
+	}
+	uc := usecase.NewQuestionUsecase(repo, &mockLLMClient{}, &mockQuestionSourceResolver{})
+
+	if err := uc.SaveQuestion(context.Background(), "user-1", "question-1", " my note "); err != nil {
+		t.Fatalf("SaveQuestion failed: %v", err)
+	}
+}
+
+func TestSaveQuestionRejectsNoteOnOtherUsersQuestion(t *testing.T) {
+	called := false
+	repo := &mockQuestionRepository{
+		findByID: func(ctx context.Context, id string) (*domain.Question, *domain.QuestionMeta, *domain.QuestionStats, error) {
+			return &domain.Question{ID: id}, &domain.QuestionMeta{CreatorID: "owner-user"}, nil, nil
+		},
+		saveForUser: func(ctx context.Context, userID, questionID, note string) error {
+			called = true
+			return nil
+		},
+	}
+	uc := usecase.NewQuestionUsecase(repo, &mockLLMClient{}, &mockQuestionSourceResolver{})
+
+	err := uc.SaveQuestion(context.Background(), "other-user", "question-1", "not allowed")
+	if !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("expected ErrForbidden, got %v", err)
+	}
+	if called {
+		t.Fatal("SaveForUser must not be called for another user's noted question")
+	}
+}
+
+func TestListSavedAndIncorrectQuestionsUseAuthenticatedUser(t *testing.T) {
+	var savedUserID string
+	var incorrectUserID string
+	repo := &mockQuestionRepository{
+		listSavedByUserID: func(ctx context.Context, userID string, limit int) ([]*domain.SavedQuestion, error) {
+			savedUserID = userID
+			return nil, nil
+		},
+		listIncorrectByUserID: func(ctx context.Context, userID string, limit int) ([]*domain.IncorrectQuestion, error) {
+			incorrectUserID = userID
+			return nil, nil
+		},
+	}
+	uc := usecase.NewQuestionUsecase(repo, &mockLLMClient{}, &mockQuestionSourceResolver{})
+
+	if _, err := uc.ListSavedQuestions(context.Background(), "current-user", 20); err != nil {
+		t.Fatalf("ListSavedQuestions failed: %v", err)
+	}
+	if _, err := uc.ListIncorrectQuestions(context.Background(), "current-user", 20); err != nil {
+		t.Fatalf("ListIncorrectQuestions failed: %v", err)
+	}
+	if savedUserID != "current-user" || incorrectUserID != "current-user" {
+		t.Fatalf("expected current user for saved/incorrect lists, got saved=%q incorrect=%q", savedUserID, incorrectUserID)
+	}
+}
+
 func TestGenerateQuestions_UsesFlashForFreePlan(t *testing.T) {
 	ctx := context.Background()
 	var usedModel string

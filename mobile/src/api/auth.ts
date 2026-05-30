@@ -17,6 +17,14 @@ export type MobileAuthUser = User
 
 let authInstance: Auth | null = null
 
+export function getOrCreateFirebaseApp() {
+  if (!isFirebaseConfigured()) {
+    throw new Error('Firebase configuration is missing in mobile/.env')
+  }
+
+  return getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
+}
+
 function getOrCreateAuth(): Auth {
   if (!isFirebaseConfigured()) {
     throw new Error('Firebase configuration is missing in mobile/.env')
@@ -26,7 +34,7 @@ function getOrCreateAuth(): Auth {
     return authInstance
   }
 
-  const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
+  const app = getOrCreateFirebaseApp()
 
   try {
     authInstance = initializeAuth(app, {

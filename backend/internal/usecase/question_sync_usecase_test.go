@@ -124,6 +124,9 @@ func (m *mockQuestionSyncQuestionRepository) SupersedeActiveQuestionsForHighligh
 type mockQuestionGenerationJobRepository struct {
 	createErr           error
 	createdInputs       []domain.CreateQuestionGenerationJobInput
+	pendingByUser       int
+	pendingByBook       int
+	pendingGlobal       int
 	queuedJobs          []*domain.QuestionGenerationJob
 	enqueueFailedJobs   []*domain.QuestionGenerationJob
 	claimJob            *domain.QuestionGenerationJob
@@ -134,6 +137,18 @@ type mockQuestionGenerationJobRepository struct {
 	markedEnqueueFailed []uuid.UUID
 	recordedFailures    []uuid.UUID
 	callLog             *[]string
+}
+
+func (m *mockQuestionGenerationJobRepository) CountPendingByUserID(ctx context.Context, userID uuid.UUID) (int, error) {
+	return m.pendingByUser, nil
+}
+
+func (m *mockQuestionGenerationJobRepository) CountPendingByBookKey(ctx context.Context, userID uuid.UUID, bookKey string) (int, error) {
+	return m.pendingByBook, nil
+}
+
+func (m *mockQuestionGenerationJobRepository) CountPending(ctx context.Context) (int, error) {
+	return m.pendingGlobal, nil
 }
 
 func (m *mockQuestionGenerationJobRepository) Create(ctx context.Context, input domain.CreateQuestionGenerationJobInput) (*domain.QuestionGenerationJob, error) {
@@ -269,6 +284,78 @@ func TestSyncQuestionStockCreatesJobForConditionA(t *testing.T) {
 	}
 	if len(enqueuer.enqueued) != 1 {
 		t.Fatalf("expected task enqueue once, got %d", len(enqueuer.enqueued))
+	}
+}
+
+func TestSyncQuestionStockSkipsJobWhenUserPendingLimitExceeded(t *testing.T) {
+	userID := uuid.New()
+	highlightRepo := &mockQuestionSyncHighlightRepository{
+		candidates: []domain.QuestionGenerationBookCandidate{{
+			BookKey:               "book-a",
+			PendingHighlightCount: 10,
+			LatestHighlightAt:     time.Now(),
+		}},
+		pendingByBook: map[string][]*domain.Highlight{
+			"book-a": makePendingHighlights(userID, 10),
+		},
+	}
+	jobRepo := &mockQuestionGenerationJobRepository{pendingByUser: defaultQuestionJobMaxPendingPerUser}
+	uc := newQuestionSyncTestUsecase(highlightRepo, &mockQuestionSyncQuestionRepository{}, jobRepo, &mockQuestionGenerationTaskEnqueuer{})
+
+	result, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("SyncQuestionStock failed: %v", err)
+	}
+	if result.QueuedCount != 0 || len(jobRepo.createdInputs) != 0 {
+		t.Fatalf("expected user queue depth to reject job, result=%#v created=%#v", result, jobRepo.createdInputs)
+	}
+}
+
+func TestSyncQuestionStockSkipsJobWhenBookPendingLimitExceeded(t *testing.T) {
+	userID := uuid.New()
+	highlightRepo := &mockQuestionSyncHighlightRepository{
+		candidates: []domain.QuestionGenerationBookCandidate{{
+			BookKey:               "book-a",
+			PendingHighlightCount: 10,
+			LatestHighlightAt:     time.Now(),
+		}},
+		pendingByBook: map[string][]*domain.Highlight{
+			"book-a": makePendingHighlights(userID, 10),
+		},
+	}
+	jobRepo := &mockQuestionGenerationJobRepository{pendingByBook: defaultQuestionJobMaxPendingPerBook}
+	uc := newQuestionSyncTestUsecase(highlightRepo, &mockQuestionSyncQuestionRepository{}, jobRepo, &mockQuestionGenerationTaskEnqueuer{})
+
+	result, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("SyncQuestionStock failed: %v", err)
+	}
+	if result.QueuedCount != 0 || len(jobRepo.createdInputs) != 0 {
+		t.Fatalf("expected book queue depth to reject job, result=%#v created=%#v", result, jobRepo.createdInputs)
+	}
+}
+
+func TestSyncQuestionStockSkipsJobWhenGlobalPendingLimitExceeded(t *testing.T) {
+	userID := uuid.New()
+	highlightRepo := &mockQuestionSyncHighlightRepository{
+		candidates: []domain.QuestionGenerationBookCandidate{{
+			BookKey:               "book-a",
+			PendingHighlightCount: 10,
+			LatestHighlightAt:     time.Now(),
+		}},
+		pendingByBook: map[string][]*domain.Highlight{
+			"book-a": makePendingHighlights(userID, 10),
+		},
+	}
+	jobRepo := &mockQuestionGenerationJobRepository{pendingGlobal: defaultQuestionJobMaxPendingGlobal}
+	uc := newQuestionSyncTestUsecase(highlightRepo, &mockQuestionSyncQuestionRepository{}, jobRepo, &mockQuestionGenerationTaskEnqueuer{})
+
+	result, err := uc.SyncQuestionStock(context.Background(), &domain.User{ID: userID})
+	if err != nil {
+		t.Fatalf("SyncQuestionStock failed: %v", err)
+	}
+	if result.QueuedCount != 0 || len(jobRepo.createdInputs) != 0 {
+		t.Fatalf("expected global queue depth to reject job, result=%#v created=%#v", result, jobRepo.createdInputs)
 	}
 }
 

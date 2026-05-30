@@ -4,10 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	_ "github.com/lib/pq"
+	appconfig "github.com/shout/ai-study-tool/backend/internal/config"
 )
 
 // Open validates TLS settings and returns a *sql.DB.
@@ -20,7 +20,7 @@ func Open(databaseURL string) (*sql.DB, error) {
 }
 
 func validateTLS(databaseURL string) error {
-	if os.Getenv("APP_ENV") != "production" {
+	if !appconfig.CurrentAppEnv().IsProduction() {
 		return nil
 	}
 

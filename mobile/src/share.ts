@@ -20,7 +20,7 @@ export function emptyShareDraft(): ShareDraft {
 
 export function draftFromShareIntent(shareIntent: ShareIntent): ShareDraft {
   const text = normalizeText(shareIntent.text)
-  const url = normalizeText(shareIntent.webUrl)
+  const url = normalizeURL(normalizeText(shareIntent.webUrl))
   const sourceApp = detectSourceApp(text, url)
   const title = sanitizeMetaTitle(normalizeText(shareIntent.meta?.title), sourceApp)
   const parsedText = parseSharedText(text, url, title, sourceApp)
@@ -373,9 +373,13 @@ function normalizeURL(value: string): string {
   }
 
   try {
-    return new URL(value).toString()
+    const parsed = new URL(value)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString()
+    }
+    return ''
   } catch {
-    return value.trim()
+    return ''
   }
 }
 

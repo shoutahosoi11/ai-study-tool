@@ -54,6 +54,7 @@ import { createCheckoutSession } from './src/api/billing'
 import { fetchTokenBalance, type TokenBalance } from './src/api/tokens'
 import { getMe, signUpBackendUser, updateQuestionSettings, type MeResponse } from './src/api/users'
 import { admobConfig, apiBaseURL, isFirebaseConfigured, mobileConfigStatus } from './src/config'
+import { safeHttpUrl } from './src/utils/safe-url'
 import {
   createPostComment,
   createQuestionPost,
@@ -677,7 +678,11 @@ export default function App() {
     setTokenMessage('')
     try {
       const session = await createCheckoutSession()
-      await Linking.openURL(session.url)
+      const checkoutURL = safeHttpUrl(session.url)
+      if (!checkoutURL) {
+        throw new Error('invalid_checkout_url')
+      }
+      await Linking.openURL(checkoutURL)
     } catch (error) {
       setTokenMessage(toReadableError(error, 'Checkout の開始に失敗しました'))
     } finally {

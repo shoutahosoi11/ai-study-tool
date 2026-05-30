@@ -44,17 +44,12 @@ func NewFirebaseMiddleware(verifier TokenVerifier) (*FirebaseMiddleware, error) 
 // 認証に成功したユーザー情報を echo.Context に保存して次の handler に渡す。
 func (m *FirebaseMiddleware) Authenticate(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		authHeader := strings.TrimSpace(c.Request().Header.Get("Authorization"))
-		if authHeader == "" {
-			return echo.NewHTTPError(http.StatusUnauthorized, "missing authorization header")
-		}
-
-		parts := strings.Fields(authHeader)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+		idToken, ok := bearerToken(c)
+		if !ok {
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid authorization header format")
 		}
 
-		token, err := m.verifier.VerifyIDTokenAndCheckRevoked(c.Request().Context(), parts[1])
+		token, err := m.verifier.VerifyIDTokenAndCheckRevoked(c.Request().Context(), idToken)
 		if err != nil {
 			return firebaseAuthError(err)
 		}
@@ -78,4 +73,18 @@ func firebaseAuthError(err error) *echo.HTTPError {
 	}
 
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
+}
+
+func bearerToken(c echo.Context) (string, bool) {
+	authHeader := strings.TrimSpace(c.Request().Header.Get("Authorization"))
+	if authHeader == "" {
+		return "", false
+	}
+
+	parts := strings.Fields(authHeader)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") || strings.TrimSpace(parts[1]) == "" {
+		return "", false
+	}
+
+	return parts[1], true
 }

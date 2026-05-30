@@ -31,5 +31,6 @@ type AdRewardClaim struct {
 type QuestionBudgetRepository interface {
 	GetBalance(ctx context.Context, userID uuid.UUID, plan string, now time.Time) (*QuestionTokenBalance, error)
 	AwardAdTokens(ctx context.Context, userID uuid.UUID, claim AdRewardClaim, now time.Time) (*QuestionTokenBalance, error)
+	AwardAdMobSSVTokens(ctx context.Context, event AdMobSSVEvent, now time.Time) (*QuestionTokenBalance, error)
 	ReserveQuestions(ctx context.Context, userID uuid.UUID, plan string, questionCount int, now time.Time) (*QuestionTokenBalance, error)
 }

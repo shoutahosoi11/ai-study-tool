@@ -742,11 +742,18 @@ RETURNING id`
 	}
 
 	var genID uuid.UUID
-	err = r.db.QueryRowContext(ctx, query, uID, sourceType, sID, promptUsed, modelUsed).Scan(&genID)
+	err = r.db.QueryRowContext(ctx, query, uID, sourceType, sID, promptUsedForStorage(promptUsed), modelUsed).Scan(&genID)
 	if err != nil {
 		return "", fmt.Errorf("question repo: save generation: %w", err)
 	}
 	return genID.String(), nil
+}
+
+func promptUsedForStorage(promptUsed string) string {
+	if promptUsed == "" {
+		return ""
+	}
+	return "[redacted]"
 }
 
 func (r *questionRepository) SaveForUser(ctx context.Context, userID, questionID, note string) error {

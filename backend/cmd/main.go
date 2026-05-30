@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
+	appconfig "github.com/shout/ai-study-tool/backend/internal/config"
 	"github.com/shout/ai-study-tool/backend/internal/di"
 	dbinfra "github.com/shout/ai-study-tool/backend/internal/infrastructure/db"
 	"github.com/shout/ai-study-tool/backend/internal/logging"
@@ -34,7 +36,7 @@ const (
 )
 
 func main() {
-	if os.Getenv("APP_ENV") != "production" && godotenv.Load() != nil {
+	if !appconfig.CurrentAppEnv().IsProduction() && godotenv.Load() != nil {
 		log.Println("No .env file found, using environment variables")
 	}
 
@@ -58,6 +60,11 @@ func main() {
 	defer container.Close()
 
 	e := echo.New()
+	// Cloud Run terminates TCP at Google's frontend, so RemoteAddr is a shared
+	// frontend address and cannot be used directly for per-client rate limits.
+	// Cloud Run appends the client address to X-Forwarded-For; use the rightmost
+	// valid value and fall back to RemoteAddr for local/non-proxy execution.
+	e.IPExtractor = cloudRunIPExtractor
 	configureServerTimeouts(e)
 	e.Use(requestLogger())
 	e.Use(echomiddleware.Recover())
@@ -104,6 +111,22 @@ func main() {
 	}
 }
 
+func cloudRunIPExtractor(req *http.Request) string {
+	xff := req.Header.Get(echo.HeaderXForwardedFor)
+	if xff != "" {
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			value := strings.TrimSpace(parts[i])
+			value = strings.TrimPrefix(value, "[")
+			value = strings.TrimSuffix(value, "]")
+			if ip := net.ParseIP(value); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+	return echo.ExtractIPDirect()(req)
+}
+
 func pingDatabase(db *sql.DB) error {
 	ctx, cancel := context.WithTimeout(context.Background(), startupDatabaseTimeout)
 	defer cancel()
@@ -144,7 +167,7 @@ func requestLogger() echo.MiddlewareFunc {
 			args := []any{
 				"method", req.Method,
 				"path", path,
-				"uri", req.URL.RequestURI(),
+				"request_path", req.URL.Path,
 				"status", status,
 				"latency_ms", time.Since(startedAt).Milliseconds(),
 				"bytes_in", req.ContentLength,
@@ -203,7 +226,7 @@ func allowedOrigins() []string {
 		raw = strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	}
 	if raw == "" {
-		if os.Getenv("APP_ENV") == "production" {
+		if appconfig.CurrentAppEnv().IsProduction() {
 			log.Fatal("ALLOWED_ORIGINS is required in production")
 		}
 		return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
@@ -218,7 +241,7 @@ func allowedOrigins() []string {
 		}
 	}
 	if len(origins) == 0 {
-		if os.Getenv("APP_ENV") == "production" {
+		if appconfig.CurrentAppEnv().IsProduction() {
 			log.Fatal("ALLOWED_ORIGINS must include at least one origin in production")
 		}
 		return []string{"http://localhost:3000", "http://127.0.0.1:3000"}
