@@ -67,6 +67,45 @@ ON CONFLICT (job_id, highlight_id) DO NOTHING
 	return job, nil
 }
 
+func (r *QuestionGenerationJobRepository) CountPendingByUserID(ctx context.Context, userID uuid.UUID) (int, error) {
+	var count int
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)::int
+FROM question_generation_jobs
+WHERE user_id = $1
+  AND status = ANY($2)
+`, userID, pq.Array(pendingQuestionGenerationJobStatuses())).Scan(&count); err != nil {
+		return 0, wrapQuestionGenerationJobError("count pending by user", err)
+	}
+	return count, nil
+}
+
+func (r *QuestionGenerationJobRepository) CountPendingByBookKey(ctx context.Context, userID uuid.UUID, bookKey string) (int, error) {
+	var count int
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)::int
+FROM question_generation_jobs
+WHERE user_id = $1
+  AND book_key = $2
+  AND status = ANY($3)
+`, userID, strings.TrimSpace(bookKey), pq.Array(pendingQuestionGenerationJobStatuses())).Scan(&count); err != nil {
+		return 0, wrapQuestionGenerationJobError("count pending by book", err)
+	}
+	return count, nil
+}
+
+func (r *QuestionGenerationJobRepository) CountPending(ctx context.Context) (int, error) {
+	var count int
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)::int
+FROM question_generation_jobs
+WHERE status = ANY($1)
+`, pq.Array(pendingQuestionGenerationJobStatuses())).Scan(&count); err != nil {
+		return 0, wrapQuestionGenerationJobError("count pending", err)
+	}
+	return count, nil
+}
+
 func (r *QuestionGenerationJobRepository) ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
 	return r.listByUserIDAndStatus(ctx, userID, domain.JobStatusEnqueueFailed, limit, "list enqueue failed")
 }
@@ -409,4 +448,12 @@ func wrapQuestionGenerationJobError(action string, err error) error {
 	}
 
 	return fmt.Errorf("question generation job repo: %s: %w", action, err)
+}
+
+func pendingQuestionGenerationJobStatuses() []string {
+	return []string{
+		string(domain.JobStatusQueued),
+		string(domain.JobStatusProcessing),
+		string(domain.JobStatusEnqueueFailed),
+	}
 }

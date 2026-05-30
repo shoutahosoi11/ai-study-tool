@@ -5,6 +5,9 @@ const env = {
   firebaseProjectID: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID ?? '',
   firebaseMessagingSenderID: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? '',
   firebaseAppID: process.env.EXPO_PUBLIC_FIREBASE_APP_ID ?? '',
+  firebaseAppCheckSiteKey: process.env.EXPO_PUBLIC_FIREBASE_APPCHECK_SITE_KEY ?? '',
+  firebaseAppCheckDebugToken: process.env.EXPO_PUBLIC_FIREBASE_APPCHECK_DEBUG_TOKEN ?? '',
+  appVersion: process.env.EXPO_PUBLIC_APP_VERSION ?? '',
   admobRewardedAdUnitID:
     process.env.EXPO_PUBLIC_ADMOB_REWARDED_AD_UNIT_ID ?? 'ca-app-pub-3940256099942544/5224354917',
   admobNativeAdUnitIDFeed:
@@ -30,6 +33,16 @@ export const firebaseConfig = {
   messagingSenderId: env.firebaseMessagingSenderID.trim(),
   appId: env.firebaseAppID.trim(),
 }
+
+export const firebaseAppCheckConfig = {
+  siteKey: env.firebaseAppCheckSiteKey.trim(),
+  debugToken: env.firebaseAppCheckDebugToken.trim(),
+}
+
+// Version headers are advisory until paired with Firebase ID Token auth and App
+// Check. If build tooling does not inject a version, omit the header rather
+// than sending a misleading fixed fallback such as "1.0.0".
+export const mobileAppVersion = env.appVersion.trim()
 
 export function isFirebaseConfigured(): boolean {
   return Object.values(firebaseConfig).every((value) => value.length > 0)

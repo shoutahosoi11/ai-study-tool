@@ -46,6 +46,12 @@ The project follows Clean Architecture:
 
 Backend API routes are under `/api/v1`. Stripe webhooks are exposed at `/webhooks/stripe`. Cloud Tasks call internal endpoints under `/internal/tasks`.
 
+## Security Documentation
+
+- [Security Architecture](docs/security-architecture.md)
+- [Client Security Model](docs/security-clients.md)
+- [Security Runbook](docs/security-runbook.md)
+
 ## User Signup
 
 `POST /api/v1/users/signup` is authenticated with Firebase ID Token. The endpoint is idempotent for the same Firebase UID and returns the existing app user on retry; profile changes after signup go through `PUT /api/v1/users/me`.

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/shout/ai-study-tool/backend/internal/handler"
+	infraadmob "github.com/shout/ai-study-tool/backend/internal/infrastructure/admob"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/cloudtasks"
 	infrafb "github.com/shout/ai-study-tool/backend/internal/infrastructure/firebase"
 	"github.com/shout/ai-study-tool/backend/internal/infrastructure/gemini"
@@ -20,28 +21,31 @@ import (
 )
 
 type Container struct {
-	UserHandler                   *handler.UserHandler
-	PostHandler                   *handler.PostHandler
-	QuestionHandler               *handler.QuestionHandler
-	AnswerHandler                 *handler.AnswerHandler
-	SocialHandler                 *handler.SocialHandler
-	HighlightHandler              *handler.HighlightHandler
-	TokenHandler                  *handler.TokenHandler
-	StripeHandler                 *handler.StripeHandler
-	AuthHandler                   *handler.AuthHandler
-	TaskHandler                   *handler.TaskHandler
-	FirebaseMiddleware            *middleware.FirebaseMiddleware
-	SessionAuthMiddleware         *middleware.SessionAuthMiddleware
-	CSRFMiddleware                *middleware.CSRFMiddleware
-	HybridAuthMiddleware          *middleware.HybridAuthMiddleware
-	SecurityHeadersMiddleware     *middleware.SecurityHeadersMiddleware
-	IngestRateLimitMiddleware     *middleware.RateLimitMiddleware
-	GenerationRateLimitMiddleware *middleware.RateLimitMiddleware
-	PostRateLimitMiddleware       *middleware.RateLimitMiddleware
-	SocialRateLimitMiddleware     *middleware.RateLimitMiddleware
-	TokenRateLimitMiddleware      *middleware.RateLimitMiddleware
-	closeCloudTasks               []func() error
-	closeLLMClient                gemini.ClientCloser
+	UserHandler                     *handler.UserHandler
+	PostHandler                     *handler.PostHandler
+	QuestionHandler                 *handler.QuestionHandler
+	AnswerHandler                   *handler.AnswerHandler
+	SocialHandler                   *handler.SocialHandler
+	HighlightHandler                *handler.HighlightHandler
+	TokenHandler                    *handler.TokenHandler
+	StripeHandler                   *handler.StripeHandler
+	AuthHandler                     *handler.AuthHandler
+	ExtensionHandler                *handler.ExtensionHandler
+	TaskHandler                     *handler.TaskHandler
+	FirebaseMiddleware              *middleware.FirebaseMiddleware
+	SessionAuthMiddleware           *middleware.SessionAuthMiddleware
+	CSRFMiddleware                  *middleware.CSRFMiddleware
+	HybridAuthMiddleware            *middleware.HybridAuthMiddleware
+	SecurityHeadersMiddleware       *middleware.SecurityHeadersMiddleware
+	IngestRateLimitMiddleware       *middleware.RateLimitMiddleware
+	GenerationRateLimitMiddleware   *middleware.RateLimitMiddleware
+	PostRateLimitMiddleware         *middleware.RateLimitMiddleware
+	SocialRateLimitMiddleware       *middleware.RateLimitMiddleware
+	TokenRateLimitMiddleware        *middleware.RateLimitMiddleware
+	PairingStartRateLimitMiddleware *middleware.ShortWindowRateLimitMiddleware
+	AdMobSSVRateLimitMiddleware     *middleware.ShortWindowRateLimitMiddleware
+	closeCloudTasks                 []func() error
+	closeLLMClient                  gemini.ClientCloser
 }
 
 func NewContainer(db *sql.DB) (*Container, error) {
@@ -68,8 +72,42 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	csrfMiddleware := middleware.NewCSRFMiddleware(appEnv)
-	hybridAuthMiddleware, err := middleware.NewHybridAuthMiddleware(sessionAuthMiddleware, firebaseMiddleware, csrfMiddleware, appEnv)
+	extensionTokenRepo := persistence.NewExtensionTokenRepository(db)
+	extensionPairingRepo := persistence.NewExtensionPairingRepository(db)
+	extensionAuthMiddleware, err := middleware.NewExtensionAuthMiddleware(extensionTokenRepo)
+	if err != nil {
+		return nil, err
+	}
+	csrfMiddleware, err := middleware.NewCSRFMiddlewareFromEnv(appEnv)
+	if err != nil {
+		return nil, err
+	}
+	appCheckEnforced, err := middleware.AppCheckEnforcementEnabledFromEnv(appEnv)
+	if err != nil {
+		return nil, err
+	}
+	var appCheckVerifier middleware.AppCheckVerifier
+	if appCheckEnforced {
+		appCheckClient, err := firebaseApp.AppCheck(ctx)
+		if err != nil {
+			return nil, err
+		}
+		appCheckVerifier = infrafb.NewAppCheckVerifier(appCheckClient)
+	}
+	appCheckMiddleware, err := middleware.NewAppCheckMiddlewareFromEnv(appEnv, appCheckVerifier)
+	if err != nil {
+		return nil, err
+	}
+	appVersionMiddleware := middleware.NewAppVersionMiddlewareFromEnv(appEnv)
+	hybridAuthMiddleware, err := middleware.NewHybridAuthMiddleware(
+		sessionAuthMiddleware,
+		firebaseMiddleware,
+		extensionAuthMiddleware,
+		csrfMiddleware,
+		appEnv,
+		appCheckMiddleware.Require,
+		appVersionMiddleware.Check,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +129,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	rateLimitRepo := persistence.NewRateLimitRepository(db)
 	questionJobRepo := persistence.NewQuestionGenerationJobRepository(db)
 	questionBudgetRepo := persistence.NewQuestionBudgetRepository(db)
+	globalLLMBudgetRepo := persistence.NewGlobalLLMBudgetRepository(db)
 	billingRepo := persistence.NewBillingRepository(db)
 
 	ingestRateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
@@ -113,12 +152,35 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
+	pairingStartRateLimitMiddleware, err := middleware.NewShortWindowRateLimitMiddleware(
+		rateLimitRepo,
+		"extension_pairing_start",
+		readEnvInt64OrDefault("EXTENSION_PAIRING_START_PER_MINUTE_LIMIT", 20),
+		middleware.ClientIPRateLimitIdentifier,
+	)
+	if err != nil {
+		return nil, err
+	}
+	adMobSSVRateLimitMiddleware, err := middleware.NewShortWindowRateLimitMiddleware(
+		rateLimitRepo,
+		"admob_ssv",
+		readEnvInt64OrDefault("ADMOB_SSV_PER_MINUTE_LIMIT", 120),
+		middleware.ClientIPRateLimitIdentifier,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	userUsecase := usecase.NewUserUsecase(userRepo)
 	postUsecase := usecase.NewPostUsecase(postRepo)
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
 	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
-	questionWorkerUsecase := usecase.NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, questionJobRepo, geminiClient)
+	globalLLMBudgetUsecase, err := usecase.NewGlobalLLMBudgetUsecaseFromEnv(globalLLMBudgetRepo, appEnv)
+	if err != nil {
+		return nil, err
+	}
+	questionWorkerUsecase := usecase.NewQuestionWorkerUsecaseWithJobRepository(highlightRepo, questionRepo, questionJobRepo, geminiClient).
+		WithGlobalLLMBudget(globalLLMBudgetUsecase)
 	questionTaskEnqueuer, err := cloudtasks.NewQuestionGenerationEnqueuerFromEnv(ctx)
 	if err != nil {
 		return nil, err
@@ -134,12 +196,13 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	}
 	highlightUsecase := usecase.NewHighlightUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
 	highlightImportJobUsecase := usecase.NewHighlightImportJobUsecase(importQueueRepo, highlightRepo)
-	tokenUsecase := usecase.NewTokenUsecaseWithAdRewardSecret(questionBudgetRepo, os.Getenv("AD_REWARD_HMAC_SECRET"))
+	tokenUsecase := usecase.NewTokenUsecaseWithAdRewardSecretAndEnv(questionBudgetRepo, infraadmob.NewSSVVerifierFromEnv(), os.Getenv("AD_REWARD_HMAC_SECRET"), appEnv)
 	billingUsecase := usecase.NewBillingUsecase(
 		infrastripes.NewCheckoutClientFromEnv(),
 		infrastripes.NewWebhookValidatorFromEnv(),
 		billingRepo,
 	)
+	extensionUsecase := usecase.NewExtensionUsecase(extensionPairingRepo, rateLimitRepo)
 	userHandler := handler.NewUserHandler(userUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
 	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)
@@ -149,6 +212,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	tokenHandler := handler.NewTokenHandler(tokenUsecase, userUsecase)
 	stripeHandler := handler.NewStripeHandler(billingUsecase, userUsecase)
 	authHandler := handler.NewAuthHandler(sessionCookieClient, appEnv, os.Getenv("SESSION_COOKIE_DOMAIN"))
+	extensionHandler := handler.NewExtensionHandler(extensionUsecase, userUsecase)
 	taskHandler := handler.NewTaskHandler(questionWorkerUsecase, highlightImportJobUsecase)
 	closeCloudTasks := make([]func() error, 0, 2)
 	if questionTaskEnqueuer != nil {
@@ -158,28 +222,31 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		closeCloudTasks = append(closeCloudTasks, highlightJobTrigger.Close)
 	}
 	return &Container{
-		UserHandler:                   userHandler,
-		PostHandler:                   postHandler,
-		QuestionHandler:               questionHandler,
-		AnswerHandler:                 answerHandler,
-		SocialHandler:                 socialHandler,
-		HighlightHandler:              highlightHandler,
-		TokenHandler:                  tokenHandler,
-		StripeHandler:                 stripeHandler,
-		AuthHandler:                   authHandler,
-		TaskHandler:                   taskHandler,
-		FirebaseMiddleware:            firebaseMiddleware,
-		SessionAuthMiddleware:         sessionAuthMiddleware,
-		CSRFMiddleware:                csrfMiddleware,
-		HybridAuthMiddleware:          hybridAuthMiddleware,
-		SecurityHeadersMiddleware:     securityHeadersMiddleware,
-		IngestRateLimitMiddleware:     ingestRateLimitMiddleware,
-		GenerationRateLimitMiddleware: generationRateLimitMiddleware,
-		PostRateLimitMiddleware:       postRateLimitMiddleware,
-		SocialRateLimitMiddleware:     socialRateLimitMiddleware,
-		TokenRateLimitMiddleware:      tokenRateLimitMiddleware,
-		closeCloudTasks:               closeCloudTasks,
-		closeLLMClient:                closeLLMClient,
+		UserHandler:                     userHandler,
+		PostHandler:                     postHandler,
+		QuestionHandler:                 questionHandler,
+		AnswerHandler:                   answerHandler,
+		SocialHandler:                   socialHandler,
+		HighlightHandler:                highlightHandler,
+		TokenHandler:                    tokenHandler,
+		StripeHandler:                   stripeHandler,
+		AuthHandler:                     authHandler,
+		ExtensionHandler:                extensionHandler,
+		TaskHandler:                     taskHandler,
+		FirebaseMiddleware:              firebaseMiddleware,
+		SessionAuthMiddleware:           sessionAuthMiddleware,
+		CSRFMiddleware:                  csrfMiddleware,
+		HybridAuthMiddleware:            hybridAuthMiddleware,
+		SecurityHeadersMiddleware:       securityHeadersMiddleware,
+		IngestRateLimitMiddleware:       ingestRateLimitMiddleware,
+		GenerationRateLimitMiddleware:   generationRateLimitMiddleware,
+		PostRateLimitMiddleware:         postRateLimitMiddleware,
+		SocialRateLimitMiddleware:       socialRateLimitMiddleware,
+		TokenRateLimitMiddleware:        tokenRateLimitMiddleware,
+		PairingStartRateLimitMiddleware: pairingStartRateLimitMiddleware,
+		AdMobSSVRateLimitMiddleware:     adMobSSVRateLimitMiddleware,
+		closeCloudTasks:                 closeCloudTasks,
+		closeLLMClient:                  closeLLMClient,
 	}, nil
 }
 

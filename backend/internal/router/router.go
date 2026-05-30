@@ -7,8 +7,37 @@ import (
 
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
+	appconfig "github.com/shout/ai-study-tool/backend/internal/config"
 	"github.com/shout/ai-study-tool/backend/internal/di"
+	"github.com/shout/ai-study-tool/backend/internal/domain"
 	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
+)
+
+const (
+	bodyLimitPairingStart     = "1K"   // empty extension pairing start request.
+	bodyLimitPairingStatus    = "1K"   // pairing_id-only status polling.
+	bodyLimitPairingClaim     = "1K"   // pairing_id-only token claim.
+	bodyLimitPairingApprove   = "2K"   // user_code approval from Web.
+	bodyLimitTokenRevoke      = "1K"   // extension self-revoke request.
+	bodyLimitSession          = "4K"   // Firebase ID token session/refresh exchange.
+	bodyLimitLogout           = "1K"   // logout/logout-all with no meaningful body.
+	bodyLimitTask             = "4K"   // Cloud Tasks JSON envelope.
+	bodyLimitUserSmall        = "4K"   // small user setting updates.
+	bodyLimitUserProfile      = "16K"  // signup/profile payloads.
+	bodyLimitPostCreate       = "32K"  // post creation content.
+	bodyLimitCommentCreate    = "4K"   // comment creation content.
+	bodyLimitHighlightCheck   = "256K" // highlight hash batch check.
+	bodyLimitHighlightImport  = "2M"   // normal highlight import batch.
+	bodyLimitExtensionImport  = "1M"   // extension highlight import batch.
+	bodyLimitHighlightShare   = "8K"   // mobile/share extension metadata.
+	bodyLimitHighlightPaste   = "5K"   // paste import text.
+	bodyLimitHighlightExplain = "8K"   // user-written explanation.
+	bodyLimitQuestionSync     = "1K"   // generation sync trigger.
+	bodyLimitManualGenerate   = "4K"   // manual generation options.
+	bodyLimitQuestionWrite    = "8K"   // save/answer lightweight writes.
+	bodyLimitQuestionAnswer   = "4K"   // answer submission.
+	bodyLimitTokenAward       = "2K"   // legacy dev/test ad reward path.
+	bodyLimitWebhookStripe    = "1M"   // Stripe raw webhook payload.
 )
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
@@ -21,32 +50,75 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	tokenRateLimit := container.TokenRateLimitMiddleware.Limit
 
 	registerAuthRoutes(api, container)
+	registerExtensionRoutes(api, container, authMiddleware, ingestRateLimit)
 	registerUserRoutes(api, container, authMiddleware, socialRateLimit)
 	registerPostRoutes(api, container, authMiddleware, postRateLimit, socialRateLimit)
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
 	registerQuestionRoutes(api, container, authMiddleware, generationRateLimit)
 	registerMonetizationRoutes(api, container, authMiddleware, tokenRateLimit)
 	registerInternalTaskRoutes(e, container)
-	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook, echomiddleware.BodyLimit("1M"))
+	registerWebhookRoutes(e, container)
+}
+
+func registerWebhookRoutes(e *echo.Echo, container *di.Container) {
+	e.POST("/webhooks/stripe", container.StripeHandler.HandleWebhook, echomiddleware.BodyLimit(bodyLimitWebhookStripe))
+	e.GET("/webhooks/admob/ssv", container.TokenHandler.AwardAdMobSSV, container.AdMobSSVRateLimitMiddleware.Limit)
+}
+
+func registerExtensionRoutes(
+	api *echo.Group,
+	container *di.Container,
+	authMiddleware echo.MiddlewareFunc,
+	ingestRateLimit echo.MiddlewareFunc,
+) {
+	extension := api.Group("/extension")
+	extension.POST("/pairing/start", container.ExtensionHandler.StartPairing,
+		echomiddleware.BodyLimit(bodyLimitPairingStart),
+		container.PairingStartRateLimitMiddleware.Limit,
+	)
+	extension.POST("/pairing/status", container.ExtensionHandler.PairingStatus,
+		echomiddleware.BodyLimit(bodyLimitPairingStatus),
+	)
+	extension.POST("/pairing/claim", container.ExtensionHandler.ClaimPairing,
+		echomiddleware.BodyLimit(bodyLimitPairingClaim),
+	)
+	extension.POST("/pairing/approve", container.ExtensionHandler.ApprovePairing,
+		echomiddleware.BodyLimit(bodyLimitPairingApprove),
+		container.SessionAuthMiddleware.Authenticate,
+		container.CSRFMiddleware.Protect,
+		appmiddleware.RequireClientType(domain.AuthClientTypeWeb),
+	)
+	extension.DELETE("/tokens/self", container.ExtensionHandler.RevokeSelf,
+		echomiddleware.BodyLimit(bodyLimitTokenRevoke),
+		authMiddleware,
+		appmiddleware.RequireScope(domain.ExtensionScopeRevokeSelf),
+	)
+	extension.POST("/highlights/import", container.HighlightHandler.ImportExtension,
+		echomiddleware.BodyLimit(bodyLimitExtensionImport),
+		authMiddleware,
+		appmiddleware.RequireScope(domain.ExtensionScopeHighlightWrite),
+		ingestRateLimit,
+	)
 }
 
 func registerAuthRoutes(api *echo.Group, container *di.Container) {
 	auth := api.Group("/auth")
-	auth.POST("/session", container.AuthHandler.CreateSession, echomiddleware.BodyLimit("4K"))
+	auth.POST("/session", container.AuthHandler.CreateSession, echomiddleware.BodyLimit(bodyLimitSession))
 	auth.POST("/refresh", container.AuthHandler.Refresh,
-		echomiddleware.BodyLimit("4K"),
-		container.CSRFMiddleware.Protect,
+		echomiddleware.BodyLimit(bodyLimitSession),
 		container.SessionAuthMiddleware.Authenticate,
+		container.CSRFMiddleware.Protect,
 	)
 	auth.POST("/logout", container.AuthHandler.Logout,
-		echomiddleware.BodyLimit("1K"),
-		container.CSRFMiddleware.Protect,
+		echomiddleware.BodyLimit(bodyLimitLogout),
 		container.SessionAuthMiddleware.Authenticate,
+		container.CSRFMiddleware.Protect,
 	)
 	auth.POST("/logout-all", container.AuthHandler.LogoutAll,
-		echomiddleware.BodyLimit("1K"),
-		container.CSRFMiddleware.Protect,
+		echomiddleware.BodyLimit(bodyLimitLogout),
 		container.SessionAuthMiddleware.Authenticate,
+		container.CSRFMiddleware.Protect,
+		appmiddleware.RequireRecentAuth,
 	)
 }
 
@@ -61,12 +133,12 @@ func registerInternalTaskRoutes(e *echo.Echo, container *di.Container) {
 	// Cloud Run ingress and queue IAM are network/resource controls; the shared
 	// secret is a compatibility fallback. Prefer Cloud Tasks OIDC by setting
 	// INTERNAL_TASK_INVOKER_SERVICE_ACCOUNT.
-	internal.POST("/question-generation", container.TaskHandler.HandleQuestionGeneration, echomiddleware.BodyLimit("4K"))
-	internal.POST("/highlight-import", container.TaskHandler.HandleHighlightImport, echomiddleware.BodyLimit("4K"))
+	internal.POST("/question-generation", container.TaskHandler.HandleQuestionGeneration, echomiddleware.BodyLimit(bodyLimitTask))
+	internal.POST("/highlight-import", container.TaskHandler.HandleHighlightImport, echomiddleware.BodyLimit(bodyLimitTask))
 }
 
 func requireInternalTaskOIDCInProduction() {
-	if os.Getenv("APP_ENV") != "production" {
+	if !appconfig.CurrentAppEnv().IsProduction() {
 		return
 	}
 	if strings.TrimSpace(os.Getenv("TASK_HANDLER_BASE_URL")) == "" ||
@@ -76,18 +148,18 @@ func requireInternalTaskOIDCInProduction() {
 }
 
 func allowInternalTaskSecretFallback() bool {
-	return os.Getenv("APP_ENV") != "production"
+	return !appconfig.CurrentAppEnv().IsProduction()
 }
 
 func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc, socialRateLimit echo.MiddlewareFunc) {
 	users := api.Group("/users", authMiddleware)
-	users.POST("/signup", container.UserHandler.SignUp, echomiddleware.BodyLimit("16K"))
-	users.GET("/me", container.UserHandler.GetMe)
-	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings, echomiddleware.BodyLimit("4K"))
-	users.GET("/:id", container.UserHandler.GetUser)
-	users.PUT("/me", container.UserHandler.UpdateProfile, echomiddleware.BodyLimit("16K"))
-	users.POST("/:id/follow", container.SocialHandler.Follow, socialRateLimit)
-	users.DELETE("/:id/follow", container.SocialHandler.Unfollow, socialRateLimit)
+	users.POST("/signup", container.UserHandler.SignUp, echomiddleware.BodyLimit(bodyLimitUserProfile), appmiddleware.RequireScope(domain.ExtensionScopeUserWrite))
+	users.GET("/me", container.UserHandler.GetMe, appmiddleware.RequireScope(domain.ExtensionScopeUserRead))
+	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings, echomiddleware.BodyLimit(bodyLimitUserSmall), appmiddleware.RequireScope(domain.ExtensionScopeUserWrite))
+	users.GET("/:id", container.UserHandler.GetUser, appmiddleware.RequireScope(domain.ExtensionScopeUserRead))
+	users.PUT("/me", container.UserHandler.UpdateProfile, echomiddleware.BodyLimit(bodyLimitUserProfile), appmiddleware.RequireScope(domain.ExtensionScopeUserWrite))
+	users.POST("/:id/follow", container.SocialHandler.Follow, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
+	users.DELETE("/:id/follow", container.SocialHandler.Unfollow, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
 }
 
 func registerPostRoutes(
@@ -98,16 +170,16 @@ func registerPostRoutes(
 	socialRateLimit echo.MiddlewareFunc,
 ) {
 	posts := api.Group("/posts", authMiddleware)
-	posts.GET("/timeline", container.PostHandler.GetTimeline)
-	posts.GET("/:id/questions", container.PostHandler.ListQuestions)
-	posts.GET("/:id", container.PostHandler.GetPost)
-	posts.POST("", container.PostHandler.CreatePost, echomiddleware.BodyLimit("32K"), postRateLimit)
-	posts.POST("/:id/like", container.SocialHandler.Like, socialRateLimit)
-	posts.DELETE("/:id/like", container.SocialHandler.Unlike, socialRateLimit)
-	posts.POST("/:id/repost", container.SocialHandler.Repost, socialRateLimit)
-	posts.DELETE("/:id/repost", container.SocialHandler.Unrepost, socialRateLimit)
-	posts.POST("/:id/comments", container.SocialHandler.CreateComment, echomiddleware.BodyLimit("4K"), socialRateLimit)
-	posts.GET("/:id/comments", container.SocialHandler.ListComments)
+	posts.GET("/timeline", container.PostHandler.GetTimeline, appmiddleware.RequireScope(domain.ExtensionScopePostRead))
+	posts.GET("/:id/questions", container.PostHandler.ListQuestions, appmiddleware.RequireScope(domain.ExtensionScopePostRead))
+	posts.GET("/:id", container.PostHandler.GetPost, appmiddleware.RequireScope(domain.ExtensionScopePostRead))
+	posts.POST("", container.PostHandler.CreatePost, echomiddleware.BodyLimit(bodyLimitPostCreate), appmiddleware.RequireScope(domain.ExtensionScopePostWrite), postRateLimit)
+	posts.POST("/:id/like", container.SocialHandler.Like, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
+	posts.DELETE("/:id/like", container.SocialHandler.Unlike, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
+	posts.POST("/:id/repost", container.SocialHandler.Repost, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
+	posts.DELETE("/:id/repost", container.SocialHandler.Unrepost, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
+	posts.POST("/:id/comments", container.SocialHandler.CreateComment, echomiddleware.BodyLimit(bodyLimitCommentCreate), appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
+	posts.GET("/:id/comments", container.SocialHandler.ListComments, appmiddleware.RequireScope(domain.ExtensionScopePostRead))
 }
 
 func registerHighlightRoutes(
@@ -117,14 +189,14 @@ func registerHighlightRoutes(
 	ingestRateLimit echo.MiddlewareFunc,
 ) {
 	highlights := api.Group("/highlights", authMiddleware)
-	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes, echomiddleware.BodyLimit("256K"))
-	highlights.POST("/import", container.HighlightHandler.Import, echomiddleware.BodyLimit("2M"), ingestRateLimit)
-	highlights.POST("/share", container.HighlightHandler.ImportShared, echomiddleware.BodyLimit("8K"), ingestRateLimit)
-	highlights.POST("/paste", container.HighlightHandler.ImportPaste, echomiddleware.BodyLimit("5K"), ingestRateLimit)
-	highlights.GET("/books", container.HighlightHandler.ListBooks)
-	highlights.GET("/books/search/items", container.HighlightHandler.ListByBookMetadata)
-	highlights.GET("/books/:asin/items", container.HighlightHandler.ListByASIN)
-	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation, echomiddleware.BodyLimit("8K"))
+	highlights.POST("/sync/check", container.HighlightHandler.CheckExistingHashes, echomiddleware.BodyLimit(bodyLimitHighlightCheck), appmiddleware.RequireScope(domain.ExtensionScopeHighlightCheck))
+	highlights.POST("/import", container.HighlightHandler.Import, echomiddleware.BodyLimit(bodyLimitHighlightImport), appmiddleware.RequireScope(domain.ExtensionScopeHighlightWrite), ingestRateLimit)
+	highlights.POST("/share", container.HighlightHandler.ImportShared, echomiddleware.BodyLimit(bodyLimitHighlightShare), appmiddleware.RequireScope(domain.ExtensionScopeHighlightWrite), ingestRateLimit)
+	highlights.POST("/paste", container.HighlightHandler.ImportPaste, echomiddleware.BodyLimit(bodyLimitHighlightPaste), appmiddleware.RequireScope(domain.ExtensionScopeHighlightWrite), ingestRateLimit)
+	highlights.GET("/books", container.HighlightHandler.ListBooks, appmiddleware.RequireScope(domain.ExtensionScopeHighlightCheck))
+	highlights.GET("/books/search/items", container.HighlightHandler.ListByBookMetadata, appmiddleware.RequireScope(domain.ExtensionScopeHighlightCheck))
+	highlights.GET("/books/:asin/items", container.HighlightHandler.ListByASIN, appmiddleware.RequireScope(domain.ExtensionScopeHighlightCheck))
+	highlights.PUT("/:id/explanation", container.HighlightHandler.UpdateExplanation, echomiddleware.BodyLimit(bodyLimitHighlightExplain), appmiddleware.RequireScope(domain.ExtensionScopeHighlightExplain))
 }
 
 func registerQuestionRoutes(
@@ -134,21 +206,23 @@ func registerQuestionRoutes(
 	generationRateLimit echo.MiddlewareFunc,
 ) {
 	questions := api.Group("/questions", authMiddleware)
-	questions.GET("", container.QuestionHandler.List)
-	questions.GET("/prepared", container.QuestionHandler.ListPrepared)
-	questions.GET("/saved", container.QuestionHandler.ListSaved)
-	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect)
-	questions.POST("/sync", container.QuestionHandler.SyncStock, echomiddleware.BodyLimit("1K"), generationRateLimit)
-	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate, echomiddleware.BodyLimit("4K"), generationRateLimit)
-	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion, echomiddleware.BodyLimit("8K"))
-	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer, echomiddleware.BodyLimit("4K"))
+	questions.GET("", container.QuestionHandler.List, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
+	questions.GET("/prepared", container.QuestionHandler.ListPrepared, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
+	questions.GET("/saved", container.QuestionHandler.ListSaved, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
+	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
+	questions.POST("/sync", container.QuestionHandler.SyncStock, echomiddleware.BodyLimit(bodyLimitQuestionSync), appmiddleware.RequireScope(domain.ExtensionScopeQuestionGenerate), generationRateLimit)
+	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate, echomiddleware.BodyLimit(bodyLimitManualGenerate), appmiddleware.RequireScope(domain.ExtensionScopeQuestionGenerate), generationRateLimit)
+	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion, echomiddleware.BodyLimit(bodyLimitQuestionWrite), appmiddleware.RequireScope(domain.ExtensionScopeQuestionWrite))
+	questions.POST("/:id/answer", container.AnswerHandler.SubmitAnswer, echomiddleware.BodyLimit(bodyLimitQuestionAnswer), appmiddleware.RequireScope(domain.ExtensionScopeQuestionWrite))
 }
 
 func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMiddleware echo.MiddlewareFunc, tokenRateLimit echo.MiddlewareFunc) {
 	tokens := api.Group("/tokens", authMiddleware)
-	tokens.POST("/award", container.TokenHandler.Award, echomiddleware.BodyLimit("2K"), tokenRateLimit)
-	tokens.GET("/balance", container.TokenHandler.Balance)
+	if !appconfig.CurrentAppEnv().IsProduction() {
+		tokens.POST("/award", container.TokenHandler.Award, echomiddleware.BodyLimit(bodyLimitTokenAward), appmiddleware.RequireScope(domain.ExtensionScopeTokenWrite), tokenRateLimit)
+	}
+	tokens.GET("/balance", container.TokenHandler.Balance, appmiddleware.RequireScope(domain.ExtensionScopeTokenRead))
 
 	checkout := api.Group("/checkout", authMiddleware)
-	checkout.POST("/session", container.StripeHandler.CreateCheckoutSession)
+	checkout.POST("/session", container.StripeHandler.CreateCheckoutSession, appmiddleware.RequireScope(domain.ExtensionScopeBillingWrite), appmiddleware.RequireRecentAuthFor(domain.AuthClientTypeWeb, domain.AuthClientTypeMobile))
 }

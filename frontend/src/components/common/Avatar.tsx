@@ -1,4 +1,5 @@
 import { theme } from "../../theme";
+import { safeHttpUrl } from "../../lib/safeUrl";
 
 type AvatarProps = {
   src?: string;
@@ -8,11 +9,12 @@ type AvatarProps = {
 
 export function Avatar({ src, name, size = 40 }: AvatarProps) {
   const initial = name ? name.charAt(0).toUpperCase() : "?";
+  const safeSrc = safeHttpUrl(src);
 
-  if (src) {
+  if (safeSrc) {
     return (
       <img
-        src={src}
+        src={safeSrc}
         alt={name}
         onError={function (e) {
           e.currentTarget.style.display = "none";

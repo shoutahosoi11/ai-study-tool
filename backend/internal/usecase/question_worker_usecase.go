@@ -25,6 +25,7 @@ type QuestionWorkerUsecase struct {
 	questionRepo    domain.QuestionWorkerRepository
 	jobRepo         domain.QuestionGenerationJobRepository
 	llmClient       domain.LLMClient
+	globalBudget    questionWorkerGlobalBudget
 	requestInterval time.Duration
 	now             func() time.Time
 	rateLimitMu     sync.Mutex
@@ -45,6 +46,17 @@ func NewQuestionWorkerUsecaseWithJobRepository(
 		requestInterval: readEnvDurationMSOrDefault("QUESTION_WORKER_REQUEST_INTERVAL_MS", defaultWorkerRequestInterval),
 		now:             time.Now,
 	}
+}
+
+type questionWorkerGlobalBudget interface {
+	EstimateRequestCostYen(requestCount int) int
+	Reserve(ctx context.Context, requestCount int, estimatedCostYen int) error
+	RecordUsage(ctx context.Context, input domain.LLMUsageLogInput) error
+}
+
+func (u *QuestionWorkerUsecase) WithGlobalLLMBudget(globalBudget questionWorkerGlobalBudget) *QuestionWorkerUsecase {
+	u.globalBudget = globalBudget
+	return u
 }
 
 func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context, jobID uuid.UUID, userID uuid.UUID) error {
@@ -130,7 +142,18 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 		return releaseReservedQuota(u.recordJobFailure(ctx, job, fmt.Errorf("question worker: save generation: %w", err)))
 	}
 
+	estimatedCostYen := u.estimatedLLMRequestCostYen()
+	if u.globalBudget != nil {
+		if err := u.globalBudget.Reserve(ctx, 1, estimatedCostYen); err != nil {
+			// The job model has no deferred state. Global budget exhaustion is
+			// recorded as a terminal failure for this attempt to avoid an
+			// unbounded retry loop while the service-wide cap is exhausted.
+			return releaseReservedQuota(u.recordBudgetExceeded(ctx, job, err))
+		}
+	}
+
 	generatedQuestions, err := u.llmClient.GenerateQuestions(ctx, materials, domain.QuestionTypeMultipleChoice, customInstruction, model)
+	u.recordLLMUsage(ctx, job, userID, model, materials, generatedQuestions, estimatedCostYen)
 	if err != nil {
 		return releaseReservedQuota(u.recordJobFailure(ctx, job, fmt.Errorf("question worker: generate questions: %w", err)))
 	}
@@ -179,6 +202,120 @@ func (u *QuestionWorkerUsecase) ProcessQuestionGenerationJob(ctx context.Context
 		"highlight_count": len(highlights),
 	})
 	return nil
+}
+
+func (u *QuestionWorkerUsecase) recordBudgetExceeded(ctx context.Context, job *domain.QuestionGenerationJob, err error) error {
+	if job == nil {
+		return err
+	}
+	wrapped := fmt.Errorf("question worker: failed_code=global_budget_exceeded: %w", err)
+	updated, recordErr := u.jobRepo.RecordFailure(ctx, job.ID, job.UserID, wrapped.Error(), 1)
+	if recordErr != nil {
+		return errors.Join(wrapped, fmt.Errorf("question worker: record global budget failure: %w", recordErr))
+	}
+	if updated != nil && updated.Status == domain.JobStatusFailed {
+		if markErr := u.highlightRepo.MarkGenerationFailed(ctx, job.UserID, job.HighlightIDs, wrapped.Error(), 1); markErr != nil {
+			slog.Error("question_worker_event=mark_global_budget_failed_highlights_failed", "job_id", job.ID.String(), "user_id", job.UserID.String(), "error", markErr)
+		}
+	}
+	logQuestionWorkerEvent("job_global_budget_skipped", map[string]any{
+		"user_id": job.UserID.String(),
+		"job_id":  job.ID.String(),
+	})
+	return wrapped
+}
+
+func (u *QuestionWorkerUsecase) estimatedLLMRequestCostYen() int {
+	if u.globalBudget == nil {
+		return defaultLLMEstimatedCostYen
+	}
+	cost := u.globalBudget.EstimateRequestCostYen(1)
+	if cost <= 0 {
+		return defaultLLMEstimatedCostYen
+	}
+	return cost
+}
+
+func (u *QuestionWorkerUsecase) recordLLMUsage(
+	ctx context.Context,
+	job *domain.QuestionGenerationJob,
+	userID uuid.UUID,
+	model string,
+	materials []domain.ExtractedPoint,
+	generatedQuestions []domain.GeneratedQuestion,
+	estimatedCostYen int,
+) {
+	if u.globalBudget == nil || job == nil {
+		return
+	}
+
+	usage := domain.LLMUsage{
+		InputTokens:      estimateInputTokens(materials),
+		OutputTokens:     estimateOutputTokens(generatedQuestions, len(materials)),
+		EstimatedCostYen: float64(estimatedCostYen),
+	}
+	if reporter, ok := u.llmClient.(domain.LLMUsageReporter); ok {
+		if providerUsage, hasUsage := reporter.LastUsage(); hasUsage {
+			if providerUsage.InputTokens >= 0 {
+				usage.InputTokens = providerUsage.InputTokens
+			}
+			if providerUsage.OutputTokens >= 0 {
+				usage.OutputTokens = providerUsage.OutputTokens
+			}
+			if providerUsage.EstimatedCostYen >= 0 {
+				usage.EstimatedCostYen = providerUsage.EstimatedCostYen
+			}
+		}
+	}
+
+	provider := "unknown"
+	if namer, ok := u.llmClient.(domain.LLMProviderNamer); ok {
+		provider = namer.ProviderName()
+	}
+	jobID := job.ID
+	if err := u.globalBudget.RecordUsage(ctx, domain.LLMUsageLogInput{
+		UserID:           userID,
+		JobID:            &jobID,
+		Provider:         provider,
+		Model:            model,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		EstimatedCostYen: usage.EstimatedCostYen,
+		CreatedAt:        u.now().UTC(),
+	}); err != nil {
+		slog.Error("question_worker_event=record_llm_usage_failed", "job_id", job.ID.String(), "user_id", userID.String(), "error", err)
+	}
+}
+
+func estimateInputTokens(materials []domain.ExtractedPoint) int {
+	characters := 0
+	for _, material := range materials {
+		characters += len([]rune(material.Point))
+		characters += len([]rune(material.Context))
+	}
+	if characters == 0 {
+		return 0
+	}
+	return max(1, (characters+3)/4)
+}
+
+func estimateOutputTokens(questions []domain.GeneratedQuestion, fallbackQuestionCount int) int {
+	characters := 0
+	for _, question := range questions {
+		characters += len([]rune(question.Content))
+		characters += len([]rune(question.CorrectAnswer))
+		characters += len([]rune(question.Explanation))
+		for _, option := range question.Options {
+			characters += len([]rune(option))
+		}
+	}
+	if characters > 0 {
+		return max(1, (characters+3)/4)
+	}
+	if fallbackQuestionCount <= 0 {
+		return 0
+	}
+	return fallbackQuestionCount * 80
 }
 
 func (u *QuestionWorkerUsecase) recordJobFailure(ctx context.Context, job *domain.QuestionGenerationJob, err error) error {

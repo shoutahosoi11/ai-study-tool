@@ -56,6 +56,9 @@ type CreateQuestionGenerationJobInput struct {
 
 type QuestionGenerationJobRepository interface {
 	Create(ctx context.Context, input CreateQuestionGenerationJobInput) (*QuestionGenerationJob, error)
+	CountPendingByUserID(ctx context.Context, userID uuid.UUID) (int, error)
+	CountPendingByBookKey(ctx context.Context, userID uuid.UUID, bookKey string) (int, error)
+	CountPending(ctx context.Context) (int, error)
 	ListQueuedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*QuestionGenerationJob, bool, error)

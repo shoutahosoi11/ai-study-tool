@@ -14,6 +14,7 @@ import (
 
 type TokenUsecase interface {
 	Award(ctx context.Context, user *domain.User, input usecase.AwardAdTokensInput) (*domain.QuestionTokenBalance, error)
+	AwardAdMobSSV(ctx context.Context, rawQuery string) error
 	Balance(ctx context.Context, user *domain.User) (*domain.QuestionTokenBalance, error)
 }
 
@@ -61,6 +62,23 @@ func (h *TokenHandler) Award(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, dto.ToTokenBalanceResponse(balance))
+}
+
+func (h *TokenHandler) AwardAdMobSSV(c echo.Context) error {
+	err := h.tokenUsecase.AwardAdMobSSV(c.Request().Context(), c.QueryString())
+	if err != nil {
+		if errors.Is(err, domain.ErrQuestionBudgetExceeded) {
+			return echo.NewHTTPError(http.StatusTooManyRequests, "ad view limit reached")
+		}
+		if errors.Is(err, domain.ErrAlreadyExists) {
+			return c.NoContent(http.StatusOK)
+		}
+		if errors.Is(err, domain.ErrInvalidInput) || errors.Is(err, domain.ErrForbidden) {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid admob ssv callback")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	}
+	return c.NoContent(http.StatusOK)
 }
 
 func (h *TokenHandler) Balance(c echo.Context) error {

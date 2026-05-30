@@ -79,6 +79,61 @@ VALUES ($1, $2)
 	return r.readBalance(ctx, userID, "free", now)
 }
 
+func (r *questionBudgetRepository) AwardAdMobSSVTokens(ctx context.Context, event domain.AdMobSSVEvent, now time.Time) (*domain.QuestionTokenBalance, error) {
+	if event.UserID == uuid.Nil || event.TransactionID == "" || event.AdUnit == "" || event.RewardAmount <= 0 || event.RewardItem == "" || event.RawQueryHash == "" {
+		return nil, domain.ErrInvalidInput
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("question budget repo: begin admob award: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO admob_ssv_events (
+  transaction_id, user_id, ad_unit, reward_amount, reward_item,
+  raw_query_hash, verified_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+`, event.TransactionID, event.UserID, event.AdUnit, event.RewardAmount, event.RewardItem, event.RawQueryHash, event.VerifiedAt); err != nil {
+		if isUniqueViolation(err) {
+			return nil, domain.ErrAlreadyExists
+		}
+		return nil, fmt.Errorf("question budget repo: insert admob ssv event: %w", err)
+	}
+
+	budgetDate := questionBudgetDate(now)
+	result, err := tx.ExecContext(ctx, `
+INSERT INTO question_daily_budgets (user_id, budget_date, ad_views_today)
+VALUES ($1, $2, 1)
+ON CONFLICT (user_id, budget_date) DO UPDATE
+SET ad_views_today = question_daily_budgets.ad_views_today + 1
+WHERE question_daily_budgets.ad_views_today < $3
+`, event.UserID, budgetDate, domain.MaxAdViewsPerDay)
+	if err != nil {
+		return nil, fmt.Errorf("question budget repo: increment admob ad view: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("question budget repo: admob rows affected: %w", err)
+	}
+	if affected == 0 {
+		return nil, domain.ErrQuestionBudgetExceeded
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO user_ad_tokens (user_id, token_count)
+VALUES ($1, $2)
+`, event.UserID, domain.AdTokensPerView); err != nil {
+		return nil, fmt.Errorf("question budget repo: insert admob ad token: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("question budget repo: commit admob award: %w", err)
+	}
+	return r.readBalance(ctx, event.UserID, "free", now)
+}
+
 func isUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	return errors.As(err, &pqErr) && pqErr.Code == "23505"

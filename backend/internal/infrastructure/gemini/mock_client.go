@@ -22,6 +22,10 @@ func (c *MockClient) ModelForPlan(plan string) string {
 	return "mock-model"
 }
 
+func (c *MockClient) ProviderName() string {
+	return "mock"
+}
+
 func (c *MockClient) GenerateQuestions(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
 	questions := make([]domain.GeneratedQuestion, 0, len(points))
 	for index, point := range points {

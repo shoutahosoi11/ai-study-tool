@@ -133,6 +133,43 @@ func TestImportSharedReturnsSavedHighlight(t *testing.T) {
 	}
 }
 
+func TestImportExtensionUsesHighlightImportPath(t *testing.T) {
+	e := echo.New()
+	userID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	repo := &stubHighlightRepository{
+		bulkUpsertSaved: 1,
+		persistedAt:     time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+	}
+	handler := NewHighlightHandler(usecase.NewHighlightUsecase(repo), &stubUserUsecase{
+		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
+			return &domain.User{ID: userID, FirebaseUID: firebaseUID}, nil
+		},
+	})
+
+	reqBody := `{"highlights":[{"asin":"B000000001","book_title":"Deep Work","book_author":"Cal Newport","content":"Important idea for later.","location":"12"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/extension/highlights/import", strings.NewReader(reqBody))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	if err := handler.ImportExtension(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if !repo.bulkUpsertCalled {
+		t.Fatal("expected BulkUpsert to be called")
+	}
+	if len(repo.bulkUpsertInput) != 1 {
+		t.Fatalf("expected one highlight, got %d", len(repo.bulkUpsertInput))
+	}
+	if repo.bulkUpsertInput[0].Source != domain.HighlightSourceExtension {
+		t.Fatalf("unexpected source: %s", repo.bulkUpsertInput[0].Source)
+	}
+}
+
 func TestImportSharedReturnsBadRequestForEmptyContent(t *testing.T) {
 	e := echo.New()
 	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{

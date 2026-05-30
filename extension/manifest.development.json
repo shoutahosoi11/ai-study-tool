@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "102",
+  "name": "AI Study Tool Kindle Import Dev",
+  "version": "0.1.0",
+  "description": "Kindle Notebook のハイライトをユーザー操作で AI Study Tool に取り込む開発用拡張",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://read.amazon.co.jp/notebook*",
+    "https://read.amazon.com/notebook*",
+    "http://localhost:8080/*",
+    "https://*.run.app/*",
+    "https://staging.ai-study-tool.com/*"
+  ],
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://read.amazon.co.jp/notebook*",
+        "https://read.amazon.com/notebook*"
+      ],
+      "js": ["dist/contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "AI Study Tool Kindle Import Dev"
+  }
+}

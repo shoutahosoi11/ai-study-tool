@@ -2,7 +2,8 @@ package usecase
 
 import (
 	"context"
-	"log"
+	"crypto/sha256"
+	"encoding/hex"
 
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
@@ -27,16 +28,15 @@ func (u *BillingUsecase) HandleWebhook(ctx context.Context, payload []byte, sign
 		return err
 	}
 
-	switch event.Type {
-	case "checkout.session.completed":
-		return u.billingRepo.MarkCheckoutCompleted(ctx, event.UserID, event.CustomerID, event.SubscriptionID, event.ExpiresAt)
-	case "customer.subscription.updated":
-		return u.billingRepo.UpdateSubscription(ctx, event.CustomerID, event.SubscriptionID, event.ExpiresAt)
-	case "customer.subscription.deleted":
-		return u.billingRepo.CancelSubscription(ctx, event.CustomerID, event.SubscriptionID)
-	case "invoice.payment_failed":
-		log.Printf("stripe webhook: invoice payment failed customer_id=%s subscription_id=%s", event.CustomerID, event.SubscriptionID)
+	processed, err := u.billingRepo.ProcessStripeEvent(ctx, event, hashPayload(payload))
+	if err != nil || !processed {
+		return err
 	}
 
 	return nil
+}
+
+func hashPayload(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }

@@ -7,6 +7,8 @@ backend/serviceAccountKey.json
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+extension/node_modules/
+extension/dist/
 mobile/node_modules/
 mobile/.expo/
 mobile/dist/

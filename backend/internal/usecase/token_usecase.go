@@ -7,9 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+	appconfig "github.com/shout/ai-study-tool/backend/internal/config"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
@@ -24,14 +27,22 @@ const (
 
 type TokenUsecase struct {
 	budgetRepo      domain.QuestionBudgetRepository
+	adMobVerifier   domain.AdMobSSVVerifier
 	adRewardHMACKey string
+	appEnv          string
 	now             func() time.Time
 }
 
 func NewTokenUsecaseWithAdRewardSecret(budgetRepo domain.QuestionBudgetRepository, secret string) *TokenUsecase {
+	return NewTokenUsecaseWithAdRewardSecretAndEnv(budgetRepo, nil, secret, "")
+}
+
+func NewTokenUsecaseWithAdRewardSecretAndEnv(budgetRepo domain.QuestionBudgetRepository, adMobVerifier domain.AdMobSSVVerifier, secret string, appEnv string) *TokenUsecase {
 	return &TokenUsecase{
 		budgetRepo:      budgetRepo,
+		adMobVerifier:   adMobVerifier,
 		adRewardHMACKey: strings.TrimSpace(secret),
+		appEnv:          strings.TrimSpace(appEnv),
 		now:             time.Now,
 	}
 }
@@ -47,6 +58,9 @@ func (u *TokenUsecase) Award(ctx context.Context, user *domain.User, input Award
 	if user == nil {
 		return nil, domain.ErrInvalidInput
 	}
+	if appconfig.NormalizeAppEnv(u.appEnv).IsProduction() {
+		return nil, domain.ErrForbidden
+	}
 
 	claim, err := u.validateAdRewardClaim(user, input)
 	if err != nil {
@@ -59,6 +73,32 @@ func (u *TokenUsecase) Award(ctx context.Context, user *domain.User, input Award
 	}
 	balance.Plan = user.Plan
 	return balance, nil
+}
+
+func (u *TokenUsecase) AwardAdMobSSV(ctx context.Context, rawQuery string) error {
+	if u.adMobVerifier == nil {
+		return domain.ErrInvalidInput
+	}
+	callback, err := u.adMobVerifier.Verify(ctx, rawQuery, u.now().UTC())
+	if err != nil {
+		return err
+	}
+	userID, err := userIDFromAdMobCallback(callback)
+	if err != nil {
+		return err
+	}
+	verifiedAt := u.now().UTC()
+	event := domain.AdMobSSVEvent{
+		TransactionID: strings.TrimSpace(callback.TransactionID),
+		UserID:        userID,
+		AdUnit:        strings.TrimSpace(callback.AdUnit),
+		RewardAmount:  callback.RewardAmount,
+		RewardItem:    strings.TrimSpace(callback.RewardItem),
+		RawQueryHash:  hashAdMobRawQuery(rawQuery),
+		VerifiedAt:    verifiedAt,
+	}
+	_, err = u.budgetRepo.AwardAdMobSSVTokens(ctx, event, verifiedAt)
+	return err
 }
 
 func (u *TokenUsecase) Balance(ctx context.Context, user *domain.User) (*domain.QuestionTokenBalance, error) {
@@ -97,6 +137,52 @@ func (u *TokenUsecase) validateAdRewardClaim(user *domain.User, input AwardAdTok
 		return claim, nil
 	}
 	return domain.AdRewardClaim{}, domain.ErrForbidden
+}
+
+func userIDFromAdMobCallback(callback *domain.AdMobSSVCallback) (uuid.UUID, error) {
+	if callback == nil {
+		return uuid.Nil, domain.ErrInvalidInput
+	}
+	rawUserID := strings.TrimSpace(callback.UserID)
+	rawCustomData := strings.TrimSpace(callback.CustomData)
+	if rawUserID == "" && rawCustomData == "" {
+		return uuid.Nil, domain.ErrInvalidInput
+	}
+
+	var parsed uuid.UUID
+	if rawUserID != "" {
+		userID, err := uuid.Parse(rawUserID)
+		if err != nil {
+			return uuid.Nil, domain.ErrForbidden
+		}
+		parsed = userID
+	}
+	if rawCustomData != "" {
+		customUserID, err := uuid.Parse(rawCustomData)
+		if err != nil {
+			return uuid.Nil, domain.ErrForbidden
+		}
+		if parsed != uuid.Nil && parsed != customUserID {
+			// AdMob can carry the app user through user_id or custom_data. If
+			// both are present, they must refer to the same account.
+			slog.Warn("admob_ssv_user_mismatch",
+				"reason", "user_id_custom_data_mismatch",
+				"user_id", parsed.String(),
+				"custom_data_user_id", customUserID.String(),
+			)
+			return uuid.Nil, domain.ErrForbidden
+		}
+		parsed = customUserID
+	}
+	if parsed == uuid.Nil {
+		return uuid.Nil, domain.ErrInvalidInput
+	}
+	return parsed, nil
+}
+
+func hashAdMobRawQuery(rawQuery string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(rawQuery)))
+	return hex.EncodeToString(sum[:])
 }
 
 func signAdRewardClaim(secret string, userID string, claim domain.AdRewardClaim) []byte {

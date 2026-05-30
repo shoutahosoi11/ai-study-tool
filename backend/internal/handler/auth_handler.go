@@ -1,28 +1,29 @@
 package handler
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	appconfig "github.com/shout/ai-study-tool/backend/internal/config"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	"github.com/shout/ai-study-tool/backend/internal/middleware"
+	appsession "github.com/shout/ai-study-tool/backend/internal/session"
 )
 
 const (
 	sessionCookieLifetime = 14 * 24 * time.Hour
 	maxRecentAuthAge      = 5 * time.Minute
-	csrfTokenBytes        = 32
 )
 
 type AuthHandler struct {
 	sessionManager domain.SessionCookieManager
 	appEnv         string
 	cookieDomain   string
+	csrfSecret     string
+	csrfUnsigned   bool
 	now            func() time.Time
 	randomToken    func() (string, error)
 	idTokenError   func(error) bool
@@ -38,12 +39,15 @@ type sessionResponse struct {
 }
 
 func NewAuthHandler(sessionManager domain.SessionCookieManager, appEnv string, cookieDomain string) *AuthHandler {
+	normalizedEnv := strings.TrimSpace(appEnv)
 	return &AuthHandler{
 		sessionManager: sessionManager,
-		appEnv:         strings.TrimSpace(appEnv),
+		appEnv:         normalizedEnv,
 		cookieDomain:   strings.TrimSpace(cookieDomain),
+		csrfSecret:     strings.TrimSpace(os.Getenv("CSRF_SECRET")),
+		csrfUnsigned:   appconfig.NormalizeAppEnv(normalizedEnv).AllowsDevBypass() && envBool("CSRF_SIGNING_DISABLED"),
 		now:            time.Now,
-		randomToken:    generateCSRFToken,
+		randomToken:    middleware.GenerateCSRFRawToken,
 		idTokenError:   middleware.IsFirebaseIDTokenClientError,
 	}
 }
@@ -57,6 +61,10 @@ func (h *AuthHandler) CreateSession(c echo.Context) error {
 }
 
 func (h *AuthHandler) Refresh(c echo.Context) error {
+	// Refresh intentionally requires both the existing Session Cookie context
+	// and a fresh Firebase ID Token. Firebase Admin creates a Session Cookie
+	// from an ID Token, and the 5-minute auth_time check below keeps this route
+	// scoped to session re-issue immediately after re-authentication.
 	currentUID, ok := middleware.GetFirebaseUID(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
@@ -112,9 +120,17 @@ func (h *AuthHandler) issueSession(c echo.Context, idToken string, expectedUID s
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 	}
 
-	csrfToken, err := h.randomToken()
+	csrfRaw, err := h.randomToken()
 	if err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
+	}
+	csrfToken := csrfRaw
+	if !h.csrfUnsigned {
+		signedToken, err := middleware.SignCSRFToken(h.csrfSecret, token.UID, csrfRaw)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
+		}
+		csrfToken = signedToken
 	}
 
 	h.setAuthCookies(c, sessionCookie, csrfToken)
@@ -122,10 +138,10 @@ func (h *AuthHandler) issueSession(c echo.Context, idToken string, expectedUID s
 }
 
 func (h *AuthHandler) setAuthCookies(c echo.Context, sessionValue string, csrfToken string) {
-	secure := middleware.SecureCookie(h.appEnv)
+	secure := appsession.SecureCookie(h.appEnv)
 	expires := h.now().Add(sessionCookieLifetime)
 	c.SetCookie(&http.Cookie{
-		Name:     middleware.SessionCookieName(h.appEnv),
+		Name:     appsession.CookieName(h.appEnv),
 		Value:    sessionValue,
 		Path:     "/",
 		Domain:   h.effectiveCookieDomain(),
@@ -136,7 +152,7 @@ func (h *AuthHandler) setAuthCookies(c echo.Context, sessionValue string, csrfTo
 		SameSite: http.SameSiteLaxMode,
 	})
 	c.SetCookie(&http.Cookie{
-		Name:     middleware.CSRFCookieName(),
+		Name:     appsession.CSRFCookieName,
 		Value:    csrfToken,
 		Path:     "/",
 		Domain:   h.effectiveCookieDomain(),
@@ -149,10 +165,10 @@ func (h *AuthHandler) setAuthCookies(c echo.Context, sessionValue string, csrfTo
 }
 
 func (h *AuthHandler) clearAuthCookies(c echo.Context) {
-	secure := middleware.SecureCookie(h.appEnv)
+	secure := appsession.SecureCookie(h.appEnv)
 	expired := time.Unix(0, 0).UTC()
 	c.SetCookie(&http.Cookie{
-		Name:     middleware.SessionCookieName(h.appEnv),
+		Name:     appsession.CookieName(h.appEnv),
 		Value:    "",
 		Path:     "/",
 		Domain:   h.effectiveCookieDomain(),
@@ -163,7 +179,7 @@ func (h *AuthHandler) clearAuthCookies(c echo.Context) {
 		SameSite: http.SameSiteLaxMode,
 	})
 	c.SetCookie(&http.Cookie{
-		Name:     middleware.CSRFCookieName(),
+		Name:     appsession.CSRFCookieName,
 		Value:    "",
 		Path:     "/",
 		Domain:   h.effectiveCookieDomain(),
@@ -176,18 +192,10 @@ func (h *AuthHandler) clearAuthCookies(c echo.Context) {
 }
 
 func (h *AuthHandler) effectiveCookieDomain() string {
-	if middleware.SessionCookieName(h.appEnv) == "__Host-session" {
+	if appsession.CookieName(h.appEnv) == appsession.HostSessionCookieName {
 		return ""
 	}
 	return h.cookieDomain
-}
-
-func generateCSRFToken() (string, error) {
-	buf := make([]byte, csrfTokenBytes)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("generate csrf token: %w", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func (h *AuthHandler) idTokenHTTPError(err error) *echo.HTTPError {
@@ -195,4 +203,13 @@ func (h *AuthHandler) idTokenHTTPError(err error) *echo.HTTPError {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid id token")
 	}
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

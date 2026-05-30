@@ -67,6 +67,10 @@ func (c *Client) ModelForPlan(plan string) string {
 	return ModelForPlan(plan)
 }
 
+func (c *Client) ProviderName() string {
+	return "gemini"
+}
+
 func (c *Client) GenerateQuestions(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
 	if c.totalTimeout > 0 {
 		var cancel context.CancelFunc
