@@ -46,6 +46,9 @@ jobs:
       - name: Run backend tests
         run: go test ./...
 
+      - name: Run Go vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
       - name: Run backend integration tests when configured
         env:
           INTEGRATION_DATABASE_URL: ${{ secrets.INTEGRATION_DATABASE_URL }}
@@ -79,6 +82,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Typecheck frontend
+        run: npm run typecheck
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Audit frontend dependencies
+        run: npm audit --audit-level=high
+
       - name: Test frontend
         run: npm test
 
@@ -104,16 +116,22 @@ jobs:
       - name: Install mobile dependencies
         run: npm ci
 
+      - name: Typecheck mobile
+        run: npm run typecheck
+
+      - name: Audit mobile dependencies
+        run: npm audit --audit-level=high
+
       - name: Test mobile
         run: npm test
 
-  kindle-extension:
-    name: Kindle Extension
+  browser-extension:
+    name: Browser Extension
     runs-on: ubuntu-latest
 
     defaults:
       run:
-        working-directory: kindle-highlights-extension
+        working-directory: extension
 
     steps:
       - name: Checkout
@@ -123,6 +141,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
 
-      - name: Check extension scripts
-        run: npm run check
+      - name: Install extension dependencies
+        run: npm ci
+
+      - name: Typecheck extension
+        run: npm run typecheck
+
+      - name: Audit extension dependencies
+        run: npm audit --audit-level=high
+
+      - name: Test extension
+        run: npm test
+
+      - name: Build extension
+        run: npm run build

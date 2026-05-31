@@ -1,17 +1,24 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { signInWithEmail } from "../../api/auth";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { createWebSession, signInWithEmail } from "../../api/auth";
 import { Button } from "../../components/common/Button";
 import { Input } from "../../components/common/Input";
 import { theme } from "../../theme";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  function returnPath() {
+    const state = location.state as { returnTo?: unknown } | null;
+    const value = typeof state?.returnTo === "string" ? state.returnTo : "/";
+    return value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -19,7 +26,16 @@ export function LoginPage() {
     setLoading(true);
     try {
       await signInWithEmail(email, password);
-      navigate("/");
+      const nextPath = returnPath();
+      try {
+        await createWebSession(true);
+      } catch {
+        if (nextPath.startsWith("/extension/connect")) {
+          setError("拡張機能の接続には再ログインが必要です。もう一度お試しください");
+          return;
+        }
+      }
+      navigate(nextPath, { replace: true });
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
       if (code === "auth/wrong-password" || code === "auth/user-not-found") {
@@ -27,7 +43,7 @@ export function LoginPage() {
       } else if (code === "auth/email-not-verified") {
         setError("メールアドレスが確認されていません");
       } else {
-        setError("ログインに失敗しました");
+        setError("ログインに失敗しました。時間を置いてもう一度お試しください");
       }
     } finally {
       setLoading(false);
@@ -64,7 +80,7 @@ export function LoginPage() {
       </form>
       <p style={{ textAlign: "center", fontSize: theme.fontSize.sm, color: theme.colors.secondary }}>
         アカウントをお持ちでない方は{" "}
-        <Link to="/signup" style={{ color: theme.colors.primary, fontWeight: 600 }}>
+        <Link to="/signup" state={{ returnTo: returnPath() }} style={{ color: theme.colors.primary, fontWeight: 600 }}>
           こちら
         </Link>
       </p>

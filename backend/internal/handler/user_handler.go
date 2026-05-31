@@ -45,7 +45,7 @@ func (h *UserHandler) SignUp(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 	// usecaseに渡す形に整形
-	input, err := buildCreateUserInput(firebaseUID, req)
+	input, err := buildCreateUserInput(firebaseUID, authEmail(c), req)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
@@ -152,8 +152,13 @@ func (h *UserHandler) UpdateQuestionSettings(c echo.Context) error {
 	return c.JSON(http.StatusOK, dto.ToMeResponse(updated))
 }
 
-func buildCreateUserInput(firebaseUID string, req *dto.SignUpRequest) (domain.CreateUserInput, error) {
+func buildCreateUserInput(firebaseUID string, email *string, req *dto.SignUpRequest) (domain.CreateUserInput, error) {
 	firebaseUID = strings.TrimSpace(firebaseUID)
+	email = normalizeOptionalText(email)
+	if email != nil {
+		normalizedEmail := strings.ToLower(*email)
+		email = &normalizedEmail
+	}
 
 	username := domain.NormalizeUsername(req.Username)
 	if err := validateUsername(username); err != nil {
@@ -186,6 +191,7 @@ func buildCreateUserInput(firebaseUID string, req *dto.SignUpRequest) (domain.Cr
 
 	return domain.CreateUserInput{
 		FirebaseUID: firebaseUID,
+		Email:       email,
 		Username:    username,
 		DisplayName: displayName,
 		AvatarURL:   avatarURL,
@@ -194,6 +200,25 @@ func buildCreateUserInput(firebaseUID string, req *dto.SignUpRequest) (domain.Cr
 		Grade:       req.Grade,
 		Country:     country,
 	}, nil
+}
+
+func authEmail(c echo.Context) *string {
+	claims, ok := middleware.GetAuthClaims(c)
+	if !ok {
+		return nil
+	}
+	if verified, ok := claims["email_verified"].(bool); !ok || !verified {
+		return nil
+	}
+	email, ok := claims["email"].(string)
+	if !ok {
+		return nil
+	}
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return nil
+	}
+	return &email
 }
 
 func decodeUpdateProfileRequest(c echo.Context) (*dto.UpdateProfileRequest, map[string]bool, error) {

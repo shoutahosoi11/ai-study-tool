@@ -38,6 +38,7 @@ const (
 	bodyLimitQuestionAnswer   = "4K"   // answer submission.
 	bodyLimitTokenAward       = "2K"   // legacy dev/test ad reward path.
 	bodyLimitWebhookStripe    = "1M"   // Stripe raw webhook payload.
+	bodyLimitAdminSmall       = "4K"   // admin operation payloads.
 )
 
 func RegisterAPI(e *echo.Echo, container *di.Container) {
@@ -56,6 +57,7 @@ func RegisterAPI(e *echo.Echo, container *di.Container) {
 	registerHighlightRoutes(api, container, authMiddleware, ingestRateLimit)
 	registerQuestionRoutes(api, container, authMiddleware, generationRateLimit)
 	registerMonetizationRoutes(api, container, authMiddleware, tokenRateLimit)
+	registerAdminRoutes(api, container)
 	registerInternalTaskRoutes(e, container)
 	registerWebhookRoutes(e, container)
 }
@@ -225,4 +227,54 @@ func registerMonetizationRoutes(api *echo.Group, container *di.Container, authMi
 
 	checkout := api.Group("/checkout", authMiddleware)
 	checkout.POST("/session", container.StripeHandler.CreateCheckoutSession, appmiddleware.RequireScope(domain.ExtensionScopeBillingWrite), appmiddleware.RequireRecentAuthFor(domain.AuthClientTypeWeb, domain.AuthClientTypeMobile))
+}
+
+func registerAdminRoutes(api *echo.Group, container *di.Container) {
+	admin := api.Group("/admin",
+		container.SessionAuthMiddleware.Authenticate,
+		appmiddleware.RequireClientType(domain.AuthClientTypeWeb),
+		container.AdminMiddleware.RequireAdmin,
+	)
+	admin.GET("/overview", container.AdminHandler.Overview)
+	admin.GET("/users", container.AdminHandler.SearchUsers)
+	admin.GET("/users/:id", container.AdminHandler.GetUser)
+	admin.GET("/users/:id/extension-tokens", container.AdminHandler.ListExtensionTokens)
+	admin.GET("/llm", container.AdminHandler.LLM)
+	admin.GET("/jobs", container.AdminHandler.Jobs)
+	admin.GET("/billing", container.AdminHandler.Billing)
+	admin.GET("/admob", container.AdminHandler.AdMob)
+
+	admin.POST("/users/:id/extension-tokens/:token_id/revoke", container.AdminHandler.RevokeExtensionToken,
+		echomiddleware.BodyLimit(bodyLimitAdminSmall),
+		container.CSRFMiddleware.Protect,
+		container.AdminMiddleware.RequireAdminRole(domain.AdminRoleSupport),
+	)
+	admin.POST("/users/:id/extension-tokens/revoke-all", container.AdminHandler.RevokeAllExtensionTokens,
+		echomiddleware.BodyLimit(bodyLimitAdminSmall),
+		container.CSRFMiddleware.Protect,
+		appmiddleware.RequireRecentAuth,
+		container.AdminMiddleware.RequireAdminRole(domain.AdminRoleAdmin),
+	)
+	admin.POST("/users/:id/logout-all", container.AdminHandler.LogoutAll,
+		echomiddleware.BodyLimit(bodyLimitAdminSmall),
+		container.CSRFMiddleware.Protect,
+		appmiddleware.RequireRecentAuth,
+		container.AdminMiddleware.RequireAdminRole(domain.AdminRoleAdmin),
+	)
+	admin.PUT("/llm/budget", container.AdminHandler.UpdateGlobalBudget,
+		echomiddleware.BodyLimit(bodyLimitAdminSmall),
+		container.CSRFMiddleware.Protect,
+		appmiddleware.RequireRecentAuth,
+		container.AdminMiddleware.RequireAdminRole(domain.AdminRoleAdmin),
+	)
+	admin.POST("/jobs/:id/retry", container.AdminHandler.RetryJob,
+		echomiddleware.BodyLimit(bodyLimitAdminSmall),
+		container.CSRFMiddleware.Protect,
+		container.AdminMiddleware.RequireAdminRole(domain.AdminRoleSupport),
+	)
+	admin.POST("/jobs/:id/cancel", container.AdminHandler.CancelJob,
+		echomiddleware.BodyLimit(bodyLimitAdminSmall),
+		container.CSRFMiddleware.Protect,
+		container.AdminMiddleware.RequireAdminRole(domain.AdminRoleSupport),
+	)
 }

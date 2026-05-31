@@ -1,3 +1,6 @@
+# Local self-host/demo compose file. This is not a production deployment
+# template: it uses development defaults, a local Postgres password, and
+# sslmode=disable for the in-network database connection.
 services:
   postgres:
     image: postgres:16

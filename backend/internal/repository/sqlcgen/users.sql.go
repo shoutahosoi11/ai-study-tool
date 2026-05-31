@@ -15,6 +15,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (
     firebase_uid,
+    email,
     username,
     display_name,
     avatar_url,
@@ -25,13 +26,14 @@ INSERT INTO users (
     country,
     plan
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, 'free'
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'free'
 )
 RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count, last_sync_at, stripe_customer_id, stripe_subscription_id, subscription_expires_at
 `
 
 type CreateUserParams struct {
 	FirebaseUid string         `json:"firebase_uid"`
+	Email       sql.NullString `json:"email"`
 	Username    string         `json:"username"`
 	DisplayName string         `json:"display_name"`
 	AvatarUrl   sql.NullString `json:"avatar_url"`
@@ -45,6 +47,7 @@ type CreateUserParams struct {
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
 	row := q.db.QueryRowContext(ctx, createUser,
 		arg.FirebaseUid,
+		arg.Email,
 		arg.Username,
 		arg.DisplayName,
 		arg.AvatarUrl,

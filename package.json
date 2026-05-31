@@ -5,6 +5,7 @@
     "build": "cd frontend && npm ci && npm run build",
     "test:backend": "cd backend && go test ./... && go build ./...",
     "test:frontend": "cd frontend && npm test",
+    "test:e2e": "cd e2e && npm run test",
     "test:mobile": "cd mobile && npm test",
     "deploy": "npx wrangler deploy",
     "deploy:cloudflare": "npx wrangler deploy"

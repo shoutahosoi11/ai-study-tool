@@ -56,7 +56,10 @@ func newExtensionUsecaseForTest(repo domain.ExtensionPairingRepository, now func
 	if len(rateLimit) > 0 {
 		rateLimitRepo = rateLimit[0]
 	}
-	uc := NewExtensionUsecase(repo, rateLimitRepo)
+	uc, err := NewExtensionUsecase(repo, rateLimitRepo)
+	if err != nil {
+		panic(err)
+	}
 	if now != nil {
 		uc.now = now
 	}
@@ -75,13 +78,15 @@ func newFakeExtensionPairingRepository() *fakeExtensionPairingRepository {
 }
 
 func TestNewExtensionUsecaseRequiresRateLimitRepository(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected constructor to fail without rate limit repository")
-		}
-	}()
+	if _, err := NewExtensionUsecase(newFakeExtensionPairingRepository(), nil); err == nil {
+		t.Fatal("expected constructor to fail without rate limit repository")
+	}
+}
 
-	_ = NewExtensionUsecase(newFakeExtensionPairingRepository(), nil)
+func TestNewExtensionUsecaseRequiresRepository(t *testing.T) {
+	if _, err := NewExtensionUsecase(nil, &fakeExtensionRateLimitRepository{}); err == nil {
+		t.Fatal("expected constructor to fail without pairing repository")
+	}
 }
 
 func (r *fakeExtensionPairingRepository) CreateExtensionPairing(ctx context.Context, userCode string, expiresAt time.Time) (*domain.ExtensionPairing, error) {

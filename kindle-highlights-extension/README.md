@@ -1,4 +1,10 @@
-# Kindle Highlights Scraper - MVP Phase 1
+# Kindle Highlights Scraper - Legacy Research Prototype
+
+> Deprecated: this directory is a historical research prototype for inspecting
+> Kindle Notebook DOM output. It is not the distributed browser extension and
+> does not implement server sync, pairing, token auth, or the current security
+> model. Use `../extension/` for active Chrome extension development and release
+> builds.
 
 Kindle Notebook から全書籍のハイライトを自動巡回で取得し、取得可能なフィールドを確認するための Chrome 拡張機能です。
 

@@ -90,23 +90,12 @@ Confirm:
 If the frontend is deployed with Cloudflare Workers Builds, use these settings
 in Cloudflare Dashboard:
 
-- Root directory: `frontend`
-- Build command: `npm ci && npm run build`
-- Deploy command: `npx wrangler deploy`
-- Wrangler config: `frontend/wrangler.toml`
-- Worker name: must match `name` in `frontend/wrangler.toml`
-
-The repository config serves the Vite `dist` directory as static assets and
-uses `single-page-application` routing so React Router paths return
-`index.html`.
-
-If the Cloudflare project is still configured with the repository root as its
-root directory, use:
-
 - Root directory: repository root
 - Build command: `cd frontend && npm ci && npm run build`
 - Deploy command: `npx wrangler deploy`
 - Wrangler config: `wrangler.toml`
+- Worker name: must match `name` in `wrangler.toml`
 
-The root config forwards the build to `frontend` and serves
-`frontend/dist`.
+The repository keeps a single Wrangler config at the root. It serves
+`frontend/dist` as static assets and uses `single-page-application` routing so
+React Router paths return `index.html`.

@@ -358,6 +358,24 @@ func TestLogoutAllRequiresSessionAuthContext(t *testing.T) {
 	assertHTTPErrorCode(t, err, http.StatusUnauthorized)
 }
 
+func TestLogoutAllMapsRevokeFailureToServiceUnavailable(t *testing.T) {
+	manager := &stubSessionCookieManager{
+		revokeRefreshTokensFunc: func(ctx context.Context, uid string) error {
+			return errors.New("firebase unavailable")
+		},
+	}
+	handler := NewAuthHandler(manager, "development", "")
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout-all", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
+
+	err := handler.LogoutAll(c)
+	assertHTTPErrorCode(t, err, http.StatusServiceUnavailable)
+}
+
 func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
 	for _, cookie := range cookies {
 		if cookie.Name == name {

@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#070b10"
     },
     "plugins": [
       [
@@ -36,7 +36,7 @@
       "package": "com.shout.aistudytool.mobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#070b10"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false

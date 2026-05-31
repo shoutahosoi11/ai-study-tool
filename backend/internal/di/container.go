@@ -32,9 +32,11 @@ type Container struct {
 	AuthHandler                     *handler.AuthHandler
 	ExtensionHandler                *handler.ExtensionHandler
 	TaskHandler                     *handler.TaskHandler
+	AdminHandler                    *handler.AdminHandler
 	FirebaseMiddleware              *middleware.FirebaseMiddleware
 	SessionAuthMiddleware           *middleware.SessionAuthMiddleware
 	CSRFMiddleware                  *middleware.CSRFMiddleware
+	AdminMiddleware                 *middleware.AdminMiddleware
 	HybridAuthMiddleware            *middleware.HybridAuthMiddleware
 	SecurityHeadersMiddleware       *middleware.SecurityHeadersMiddleware
 	IngestRateLimitMiddleware       *middleware.RateLimitMiddleware
@@ -131,6 +133,11 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	questionBudgetRepo := persistence.NewQuestionBudgetRepository(db)
 	globalLLMBudgetRepo := persistence.NewGlobalLLMBudgetRepository(db)
 	billingRepo := persistence.NewBillingRepository(db)
+	adminRepo := persistence.NewAdminRepository(db)
+	adminMiddleware, err := middleware.NewAdminMiddleware(adminRepo)
+	if err != nil {
+		return nil, err
+	}
 
 	ingestRateLimitMiddleware, err := middleware.NewRateLimitMiddleware(rateLimitRepo, "ingest", readEnvInt64OrDefault("HIGHLIGHT_INGEST_DAILY_LIMIT", 100))
 	if err != nil {
@@ -202,7 +209,14 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		infrastripes.NewWebhookValidatorFromEnv(),
 		billingRepo,
 	)
-	extensionUsecase := usecase.NewExtensionUsecase(extensionPairingRepo, rateLimitRepo)
+	extensionUsecase, err := usecase.NewExtensionUsecase(extensionPairingRepo, rateLimitRepo)
+	if err != nil {
+		return nil, err
+	}
+	adminUsecase, err := usecase.NewAdminUsecase(adminRepo, sessionCookieClient, questionTaskEnqueuer)
+	if err != nil {
+		return nil, err
+	}
 	userHandler := handler.NewUserHandler(userUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
 	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)
@@ -214,6 +228,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	authHandler := handler.NewAuthHandler(sessionCookieClient, appEnv, os.Getenv("SESSION_COOKIE_DOMAIN"))
 	extensionHandler := handler.NewExtensionHandler(extensionUsecase, userUsecase)
 	taskHandler := handler.NewTaskHandler(questionWorkerUsecase, highlightImportJobUsecase)
+	adminHandler := handler.NewAdminHandler(adminUsecase)
 	closeCloudTasks := make([]func() error, 0, 2)
 	if questionTaskEnqueuer != nil {
 		closeCloudTasks = append(closeCloudTasks, questionTaskEnqueuer.Close)
@@ -233,9 +248,11 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		AuthHandler:                     authHandler,
 		ExtensionHandler:                extensionHandler,
 		TaskHandler:                     taskHandler,
+		AdminHandler:                    adminHandler,
 		FirebaseMiddleware:              firebaseMiddleware,
 		SessionAuthMiddleware:           sessionAuthMiddleware,
 		CSRFMiddleware:                  csrfMiddleware,
+		AdminMiddleware:                 adminMiddleware,
 		HybridAuthMiddleware:            hybridAuthMiddleware,
 		SecurityHeadersMiddleware:       securityHeadersMiddleware,
 		IngestRateLimitMiddleware:       ingestRateLimitMiddleware,

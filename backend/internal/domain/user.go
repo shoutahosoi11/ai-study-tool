@@ -38,6 +38,7 @@ type User struct {
 
 type CreateUserInput struct {
 	FirebaseUID string
+	Email       *string
 	Username    string
 	DisplayName string
 	AvatarURL   *string

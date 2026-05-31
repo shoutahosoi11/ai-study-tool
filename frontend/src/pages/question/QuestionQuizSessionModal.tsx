@@ -293,7 +293,7 @@ export function QuestionQuizSessionModal({
                         borderRadius: theme.radius.md,
                         border: `1px solid ${isSelected ? theme.colors.primary : theme.colors.border}`,
                         background: isSelected ? theme.colors.primary : theme.colors.background,
-                        color: isSelected ? theme.colors.background : "#0f1419",
+                        color: isSelected ? theme.colors.background : theme.colors.primary,
                         cursor: "pointer",
                         textAlign: "left",
                         fontSize: theme.fontSize.base,

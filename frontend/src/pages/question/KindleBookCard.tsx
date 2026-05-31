@@ -14,6 +14,7 @@ type Props = {
   stock?: number
   target?: number
   preparing?: number
+  statusText?: string
   isPreparing?: boolean
   isGenerating?: boolean
   isViewingHighlights?: boolean
@@ -26,6 +27,7 @@ export function KindleBookCard({
   stock,
   target,
   preparing = 0,
+  statusText = '',
   isPreparing = false,
   isGenerating = false,
   isViewingHighlights = false,
@@ -54,6 +56,16 @@ export function KindleBookCard({
         {typeof stock === 'number' && typeof target === 'number' ? (
           <p style={{ margin: 0, color: isPreparing ? theme.colors.primary : theme.colors.secondary, fontSize: theme.fontSize.sm }}>
             {isPreparing ? `${preparing}問準備中` : `準備済み ${stock} / ${target} 問`}
+          </p>
+        ) : null}
+        {statusText ? (
+          <p style={{ margin: 0, color: theme.colors.primary, fontSize: theme.fontSize.sm }}>
+            {statusText}
+          </p>
+        ) : null}
+        {!statusText && isPreparing ? (
+          <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>
+            生成が完了すると、この画面から解けるようになります。
           </p>
         ) : null}
       </div>
