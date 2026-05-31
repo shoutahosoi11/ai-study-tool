@@ -1,0 +1,93 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_api_tests:
+        description: Run API smoke tests against E2E_API_BASE_URL
+        required: false
+        default: "false"
+      base_url:
+        description: Frontend base URL. Leave empty to start local Vite.
+        required: false
+        default: ""
+      api_base_url:
+        description: Backend base URL for optional API smoke.
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Playwright smoke
+    runs-on: ubuntu-latest
+
+    env:
+      E2E_ALLOW_PRODUCTION: "false"
+      E2E_DRY_RUN: "true"
+      E2E_RUN_API_TESTS: ${{ inputs.run_api_tests }}
+      E2E_BASE_URL: ${{ inputs.base_url }}
+      E2E_API_BASE_URL: ${{ inputs.api_base_url }}
+      E2E_TEST_EMAIL: ${{ secrets.E2E_TEST_EMAIL }}
+      E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+      E2E_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      E2E_EXTENSION_TOKEN: ${{ secrets.E2E_EXTENSION_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            e2e/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install E2E dependencies
+        run: npm ci
+        working-directory: e2e
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      - name: Configure local frontend defaults
+        if: ${{ inputs.base_url == '' }}
+        run: |
+          echo "E2E_BASE_URL=http://127.0.0.1:3000" >> "$GITHUB_ENV"
+
+      - name: Configure local API default
+        if: ${{ inputs.api_base_url == '' }}
+        run: |
+          echo "E2E_API_BASE_URL=http://127.0.0.1:8080" >> "$GITHUB_ENV"
+
+      - name: Use external frontend when provided
+        if: ${{ inputs.base_url != '' }}
+        run: |
+          echo "E2E_SKIP_WEB_SERVER=true" >> "$GITHUB_ENV"
+
+      - name: Run Playwright smoke
+        run: npm run test
+        working-directory: e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

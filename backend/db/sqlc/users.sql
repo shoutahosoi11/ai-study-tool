@@ -19,6 +19,7 @@ LIMIT 1;
 -- name: CreateUser :one
 INSERT INTO users (
     firebase_uid,
+    email,
     username,
     display_name,
     avatar_url,
@@ -29,9 +30,9 @@ INSERT INTO users (
     country,
     plan
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, 'free'
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'free'
 )
-RETURNING *;
+RETURNING id, firebase_uid, username, display_name, avatar_url, bio, university, faculty, grade, country, plan, created_at, updated_at, default_question_count, last_sync_at, stripe_customer_id, stripe_subscription_id, subscription_expires_at;
 
 -- name: UpdateUser :one
 UPDATE users SET

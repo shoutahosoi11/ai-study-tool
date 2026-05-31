@@ -1,0 +1,80 @@
+# Example alert-policy inventory. This is documentation-oriented YAML, not a
+# directly applied Terraform module. Replace placeholders before converting to
+# gcloud/Terraform:
+# PROJECT_ID, SERVICE_NAME, REGION, QUEUE_NAME, NOTIFICATION_CHANNEL_ID, DOMAIN.
+
+notification_channels:
+  - NOTIFICATION_CHANNEL_ID
+
+alerts:
+  - display_name: "Cloud Run 5xx rate high"
+    severity: critical
+    metric_source: "run.googleapis.com/request_count filtered by SERVICE_NAME and response_code_class=5xx"
+    threshold: "> 5% for 5m"
+    runbook: "docs/security-runbook.md#cloud-run-5xx-surge"
+
+  - display_name: "Cloud Run p95 latency high"
+    severity: warning
+    metric_source: "run.googleapis.com/request_latencies filtered by SERVICE_NAME"
+    threshold: "p95 > 1.5s for 10m"
+    runbook: "docs/security-runbook.md#cloud-run-5xx-surge"
+
+  - display_name: "Cloud Tasks queue depth high"
+    severity: warning
+    metric_source: "cloudtasks.googleapis.com/queue/depth filtered by QUEUE_NAME"
+    threshold: "> 100 queued tasks for 10m"
+    runbook: "docs/security-runbook.md#cloud-tasks-backlog"
+
+  - display_name: "Cloud Tasks oldest task age critical"
+    severity: critical
+    metric_source: "cloudtasks.googleapis.com/queue/oldest_task_age filtered by QUEUE_NAME"
+    threshold: "> 30m"
+    runbook: "docs/security-runbook.md#cloud-tasks-backlog"
+
+  - display_name: "LLM global budget 70 percent"
+    severity: warning
+    metric_source: "custom metric from global_llm_budgets or scheduled SQL"
+    threshold: "requests or estimated_cost_yen >= 70%"
+    runbook: "docs/security-runbook.md#llm-cost-spike"
+
+  - display_name: "LLM global budget 90 percent"
+    severity: critical
+    metric_source: "custom metric from global_llm_budgets or scheduled SQL"
+    threshold: "requests or estimated_cost_yen >= 90%"
+    runbook: "docs/security-runbook.md#llm-cost-spike"
+
+  - display_name: "Stripe webhook rejection spike"
+    severity: warning
+    metric_source: "log-based metric for stripe_webhook_rejected or /webhooks/stripe 4xx"
+    threshold: "> 10 rejected requests in 5m"
+    runbook: "docs/security-runbook.md#stripe-webhook-anomaly"
+
+  - display_name: "AdMob SSV rejected spike"
+    severity: warning
+    metric_source: "log-based metric for admob_ssv_rejected or /webhooks/admob/ssv 4xx"
+    threshold: "> 20 rejected requests in 5m"
+    runbook: "docs/security-runbook.md#admob-ssv-anomaly"
+
+  - display_name: "CSRF rejected spike"
+    severity: warning
+    metric_source: "log-based metric for csrf_rejected"
+    threshold: "3x baseline for 10m"
+    runbook: "docs/security-runbook.md#csrf-spike"
+
+  - display_name: "App Check rejected spike"
+    severity: critical
+    metric_source: "log-based metric for app_check_rejected"
+    threshold: "3x baseline for 10m"
+    runbook: "docs/security-runbook.md#mobile-app-check-failure"
+
+  - display_name: "Rate limit 429 spike"
+    severity: warning
+    metric_source: "Cloud Armor logs and backend 429 response logs"
+    threshold: "3x baseline for 10m"
+    runbook: "docs/security-runbook.md#webhook-endpoint-or-api-flood"
+
+notes:
+  - "Some application metrics are not emitted yet. Use log-based metrics first."
+  - "Never log tokens, cookies, signatures, raw query strings, raw bodies, prompt text, or highlight text."
+  - "Attach notification channels and documentation links when converting this inventory into Terraform or gcloud policies."
+

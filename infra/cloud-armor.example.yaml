@@ -1,0 +1,97 @@
+# Example Cloud Armor policy skeleton.
+# Replace placeholders before use:
+# PROJECT_ID, BACKEND_SERVICE, DOMAIN.
+# Initial thresholds are conservative and must be tuned in production.
+
+name: ai-study-tool-api-edge-policy
+description: "Cloud Armor edge policy for AI Study Tool API"
+defaultRule:
+  action: allow
+  priority: 2147483647
+  description: "Default allow after path-specific controls"
+rules:
+  - priority: 1000
+    description: "Auth session and refresh: 10 req/min/IP, tune after launch"
+    match:
+      expr: "request.path.matches('^/api/v1/auth/(session|refresh)$')"
+    action: throttle
+    rateLimitOptions:
+      rateLimitThreshold:
+        count: 10
+        intervalSec: 60
+      conformAction: allow
+      exceedAction: deny-429
+      enforceOnKey: IP
+
+  - priority: 1100
+    description: "Extension pairing: 20 req/min/IP, app also limits user_code/pairing_id"
+    match:
+      expr: "request.path.matches('^/api/v1/extension/pairing/(start|approve|claim)$')"
+    action: throttle
+    rateLimitOptions:
+      rateLimitThreshold:
+        count: 20
+        intervalSec: 60
+      conformAction: allow
+      exceedAction: deny-429
+      enforceOnKey: IP
+
+  - priority: 1200
+    description: "Extension import: 60 req/min/IP, tune with real extension traffic"
+    match:
+      expr: "request.path == '/api/v1/extension/highlights/import'"
+    action: throttle
+    rateLimitOptions:
+      rateLimitThreshold:
+        count: 60
+        intervalSec: 60
+      conformAction: allow
+      exceedAction: deny-429
+      enforceOnKey: IP
+
+  - priority: 1300
+    description: "Question generation: 30 req/min/IP plus app-side user/global budgets"
+    match:
+      expr: "request.path.matches('^/api/v1/questions/(sync|generate(/manual)?)$')"
+    action: throttle
+    rateLimitOptions:
+      rateLimitThreshold:
+        count: 30
+        intervalSec: 60
+      conformAction: allow
+      exceedAction: deny-429
+      enforceOnKey: IP
+
+  - priority: 1400
+    description: "AdMob SSV: 60 req/min/IP, signature verification remains primary"
+    match:
+      expr: "request.path == '/webhooks/admob/ssv'"
+    action: throttle
+    rateLimitOptions:
+      rateLimitThreshold:
+        count: 60
+        intervalSec: 60
+      conformAction: allow
+      exceedAction: deny-429
+      enforceOnKey: IP
+
+  - priority: 1500
+    description: "Stripe webhook: 120 req/min/IP, signature verification remains primary"
+    match:
+      expr: "request.path == '/webhooks/stripe'"
+    action: throttle
+    rateLimitOptions:
+      rateLimitThreshold:
+        count: 120
+        intervalSec: 60
+      conformAction: allow
+      exceedAction: deny-429
+      enforceOnKey: IP
+
+# Example gcloud flow:
+# gcloud compute security-policies create ai-study-tool-api-edge-policy --project=PROJECT_ID
+# Add rules with `gcloud compute security-policies rules create ...`
+# gcloud compute backend-services update BACKEND_SERVICE \
+#   --security-policy=ai-study-tool-api-edge-policy \
+#   --global \
+#   --project=PROJECT_ID

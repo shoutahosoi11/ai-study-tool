@@ -9,6 +9,9 @@ frontend/dist/
 frontend/.env
 extension/node_modules/
 extension/dist/
+e2e/node_modules/
+e2e/playwright-report/
+e2e/test-results/
 mobile/node_modules/
 mobile/.expo/
 mobile/dist/

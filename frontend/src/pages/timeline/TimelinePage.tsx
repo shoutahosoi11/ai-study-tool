@@ -1,42 +1,81 @@
+import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/common/Button";
-import { Spinner } from "../../components/common/Spinner";
+import { MainTimeline } from "../../components/layout/MainTimeline";
+import { EmptyState } from "../../components/timeline/EmptyState";
+import { LoadingState } from "../../components/timeline/LoadingState";
+import { ReviewReminderCard } from "../../components/timeline/ReviewReminderCard";
+import { StudyPostCard } from "../../components/timeline/StudyPostCard";
 import { useTimeline } from "../../hooks/useTimeline";
 import { theme } from "../../theme";
-import { PostCard } from "./PostCard";
 
 export function TimelinePage() {
   const { posts, loading, error, loadMore, hasMore } = useTimeline();
+  const navigate = useNavigate();
 
   return (
-    <div style={{ padding: theme.spacing.md }}>
-      <h2 style={{ fontSize: theme.fontSize.lg, fontWeight: 700, margin: `0 0 ${theme.spacing.md}` }}>
-        タイムライン
-      </h2>
+    <MainTimeline
+      title="Home"
+      actions={
+        <button
+          type="button"
+          className="main-timeline__icon-button"
+          aria-label="問題を開く"
+          onClick={function () {
+            navigate("/?tab=question");
+          }}
+        >
+          +
+        </button>
+      }
+    >
+      <div className="timeline-composer" aria-label="クイックアクション">
+        <button
+          type="button"
+          className="timeline-composer__button"
+          onClick={function () {
+            navigate("/?tab=question");
+          }}
+          aria-label="問題を開く"
+        >
+          <span aria-hidden="true">?</span>
+          <strong>Quiz</strong>
+        </button>
+        <button
+          type="button"
+          className="timeline-composer__button"
+          onClick={function () {
+            navigate("/?tab=profile");
+          }}
+          aria-label="プロフィールを開く"
+        >
+          <span aria-hidden="true">✓</span>
+          <strong>Log</strong>
+        </button>
+      </div>
+      <ReviewReminderCard
+        onOpenQuestions={function () {
+          navigate("/?tab=question");
+        }}
+      />
       {error && (
-        <p style={{ color: theme.colors.danger, fontSize: theme.fontSize.sm }}>{error}</p>
+        <p style={{ color: theme.colors.danger, fontSize: theme.fontSize.sm, padding: `0 ${theme.spacing.md}` }}>{error}</p>
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.sm }}>
+      <div className="timeline-feed" aria-label="学習投稿">
         {posts.map(function (post) {
-          return <PostCard key={post.id} post={post} />;
+          return <StudyPostCard key={post.id} post={post} />;
         })}
       </div>
-      {loading && (
-        <div style={{ display: "flex", justifyContent: "center", padding: theme.spacing.lg }}>
-          <Spinner />
-        </div>
-      )}
+      {loading && <LoadingState />}
       {!loading && posts.length === 0 && (
-        <p style={{ textAlign: "center", color: theme.colors.secondary, padding: theme.spacing.xl }}>
-          まだ投稿がありません
-        </p>
+        <EmptyState title="No posts" description="Questions and reviews will appear here." />
       )}
       {!loading && hasMore && (
         <div style={{ display: "flex", justifyContent: "center", marginTop: theme.spacing.md }}>
           <Button variant="outline" onClick={loadMore}>
-            もっと見る
+            More
           </Button>
         </div>
       )}
-    </div>
+    </MainTimeline>
   );
 }

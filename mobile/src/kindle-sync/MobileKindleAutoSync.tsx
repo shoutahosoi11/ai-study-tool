@@ -465,12 +465,12 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   loginModalPage: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#070b10',
     flex: 1,
   },
   loginModalHeader: {
     alignItems: 'flex-start',
-    borderBottomColor: '#eff3f4',
+    borderBottomColor: '#23313d',
     borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 12,
@@ -484,18 +484,18 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   loginModalTitle: {
-    color: '#0f1419',
+    color: '#e6edf3',
     fontSize: 20,
     fontWeight: '700',
   },
   loginModalSubtitle: {
-    color: '#536471',
+    color: '#8a98a8',
     fontSize: 14,
     lineHeight: 20,
   },
   loginModalCloseButton: {
     alignItems: 'center',
-    borderColor: '#d7dbdc',
+    borderColor: '#23313d',
     borderRadius: 999,
     borderWidth: 1,
     justifyContent: 'center',
@@ -506,7 +506,7 @@ const styles = StyleSheet.create({
     opacity: 0.75,
   },
   loginModalCloseButtonText: {
-    color: '#0f1419',
+    color: '#e6edf3',
     fontSize: 14,
     fontWeight: '600',
   },

@@ -1,6 +1,6 @@
 import axios, { AxiosHeaders } from 'axios'
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios'
-import { getIdToken } from './auth'
+import { createWebSession, getIdToken, getStoredCSRFToken } from './auth'
 
 type RetriableRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean
@@ -9,6 +9,7 @@ type RetriableRequestConfig = InternalAxiosRequestConfig & {
 export const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   timeout: 30_000,
+  withCredentials: true,
 })
 
 apiClient.interceptors.request.use(async function (config) {
@@ -18,6 +19,13 @@ apiClient.interceptors.request.use(async function (config) {
     headers.set('Authorization', `Bearer ${token}`)
   } else {
     headers.delete('Authorization')
+  }
+  const method = (config.method ?? 'get').toLowerCase()
+  if (['post', 'put', 'patch', 'delete'].includes(method)) {
+    const csrfToken = getStoredCSRFToken()
+    if (csrfToken) {
+      headers.set('X-CSRF-Token', csrfToken)
+    }
   }
   config.headers = headers
   return config
@@ -37,6 +45,18 @@ apiClient.interceptors.response.use(
         headers.set('Authorization', `Bearer ${refreshedToken}`)
         config.headers = headers
         return apiClient.request(config)
+      }
+    }
+
+    if (error.response?.status === 403 && config && !config._retry) {
+      config._retry = true
+      try {
+        const sessionCreated = await createWebSession(true)
+        if (sessionCreated) {
+          return apiClient.request(config)
+        }
+      } catch {
+        return Promise.reject(error)
       }
     }
 

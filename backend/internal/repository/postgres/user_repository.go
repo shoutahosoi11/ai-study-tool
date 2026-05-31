@@ -48,6 +48,7 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 func (r *userRepository) Create(ctx context.Context, input domain.CreateUserInput) (*domain.User, error) {
 	user, err := r.queries.CreateUser(ctx, sqlcgen.CreateUserParams{
 		FirebaseUid: input.FirebaseUID,
+		Email:       toNullString(input.Email),
 		Username:    input.Username,
 		DisplayName: input.DisplayName,
 		AvatarUrl:   toNullString(input.AvatarURL),

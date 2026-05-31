@@ -8,13 +8,13 @@ import {
   unlikePost,
   unrepostPost,
 } from "../../api/posts";
-import { Avatar } from "../../components/common/Avatar";
-import { Button } from "../../components/common/Button";
-import { Card } from "../../components/common/Card";
+import { Avatar } from "../common/Avatar";
+import { Button } from "../common/Button";
+import { QuestionCard as TimelineQuestionCard } from "./QuestionCard";
 import { theme } from "../../theme";
 import type { Question } from "../../types/question";
 import type { PostComment, TimelinePost } from "../../types/post";
-import { QuestionQuizSessionModal } from "../question/QuestionQuizSessionModal";
+import { QuestionQuizSessionModal } from "../../pages/question/QuestionQuizSessionModal";
 
 type Props = { post: TimelinePost };
 
@@ -46,7 +46,7 @@ function toQuestionShape(postQuestion: {
   };
 }
 
-export function PostCard({ post }: Props) {
+export function StudyPostCard({ post }: Props) {
   const displayName = post.display_name || post.username;
   const [questionError, setQuestionError] = useState("");
   const [quizLoading, setQuizLoading] = useState(false);
@@ -199,84 +199,38 @@ export function PostCard({ post }: Props) {
 
   return (
     <>
-      <Card>
-        <div style={{ display: "flex", gap: theme.spacing.sm }}>
+      <article className="study-post-card">
+        <div className="study-post-card__row">
           <Avatar name={displayName} src={post.avatar_url} size={40} />
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: theme.spacing.sm }}>
+          <div className="study-post-card__main">
             <button
               type="button"
               onClick={openDetail}
-              style={{
-                border: "none",
-                background: "transparent",
-                padding: 0,
-                textAlign: "left",
-                cursor: "pointer",
-                display: "flex",
-                flexDirection: "column",
-                gap: theme.spacing.sm,
-              }}
+              className="study-post-card__open"
+              aria-label={`${displayName} の投稿詳細を開く`}
             >
-              <div style={{ display: "flex", gap: theme.spacing.sm, alignItems: "center" }}>
-                <span style={{ fontWeight: 700, fontSize: theme.fontSize.sm }}>{displayName}</span>
-                <span style={{ color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>@{post.username}</span>
-                <span style={{ color: theme.colors.secondary, fontSize: theme.fontSize.xs, marginLeft: "auto" }}>
-                  {formatDate(post.created_at)}
-                </span>
+              <div className="study-post-card__meta">
+                <strong>{displayName}</strong>
+                <span>@{post.username}</span>
+                <time dateTime={post.created_at}>{formatDate(post.created_at)}</time>
               </div>
 
               {post.body && (
-                <p style={{ margin: 0, fontSize: theme.fontSize.sm, whiteSpace: "pre-wrap", color: "#0f1419" }}>
-                  {post.body}
-                </p>
+                <p className="study-post-card__body">{post.body}</p>
               )}
             </button>
 
             {hasQuestionCard && (
-              <div
-                style={{
-                  border: `1px solid ${theme.colors.border}`,
-                  borderRadius: theme.radius.md,
-                  background: theme.colors.backgroundAlt,
-                  padding: theme.spacing.md,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: theme.spacing.sm,
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={openDetail}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    padding: 0,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: theme.spacing.xs,
-                  }}
-                >
-                  <p style={{ margin: 0, fontSize: theme.fontSize.xs, color: theme.colors.secondary }}>
-                    問題セット
-                  </p>
-                  <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.base }}>
-                    {post.book_title || "本の題名なし"}
-                  </p>
-                  <p style={{ margin: 0, fontSize: theme.fontSize.sm, color: theme.colors.secondary }}>
-                    {post.question_count}問
-                  </p>
-                  <p style={{ margin: 0, fontSize: theme.fontSize.xs, color: theme.colors.secondary }}>
-                    クリックでコメントと詳細を見る
-                  </p>
-                </button>
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <TimelineQuestionCard
+                title={post.book_title || "Untitled book"}
+                count={post.question_count}
+                onOpen={openDetail}
+                action={
                   <Button onClick={function () { void handleSolveQuestions(); }} loading={quizLoading}>
-                    この問題を解く
+                    Solve
                   </Button>
-                </div>
-              </div>
+                }
+              />
             )}
 
             {questionError && (
@@ -290,14 +244,14 @@ export function PostCard({ post }: Props) {
               </p>
             )}
 
-            <div style={{ display: "flex", gap: theme.spacing.sm, flexWrap: "wrap" }}>
-              <ActionButton label={repostBusy ? "処理中..." : `リポスト ${repostCount}`} active={reposted} onClick={handleToggleRepost} />
-              <ActionButton label={likeBusy ? "処理中..." : `いいね ${likeCount}`} active={liked} onClick={handleToggleLike} />
-              <ActionButton label={`コメント ${commentCount}`} active={false} onClick={openDetail} />
+            <div className="study-post-card__actions" aria-label="投稿アクション">
+              <ActionButton icon="↻" label="リポスト" count={repostCount} busy={repostBusy} active={reposted} onClick={handleToggleRepost} />
+              <ActionButton icon="♡" label="いいね" count={likeCount} busy={likeBusy} active={liked} onClick={handleToggleLike} />
+              <ActionButton icon="＋" label="コメント" count={commentCount} active={false} onClick={openDetail} />
             </div>
           </div>
         </div>
-      </Card>
+      </article>
 
       {detailOpen && (
         <PostDetailModal
@@ -352,12 +306,11 @@ export function PostCard({ post }: Props) {
   );
 }
 
-function ActionButton({
-  label,
-  active,
-  onClick,
-}: {
+function ActionButton({ icon, label, count, busy, active, onClick }: {
+  icon: string;
   label: string;
+  count: number;
+  busy?: boolean;
   active: boolean;
   onClick: () => void;
 }) {
@@ -365,18 +318,12 @@ function ActionButton({
     <button
       type="button"
       onClick={onClick}
-      style={{
-        border: `1px solid ${active ? theme.colors.primary : theme.colors.border}`,
-        borderRadius: theme.radius.full,
-        background: active ? "#e8f5fd" : theme.colors.background,
-        color: active ? "#1d9bf0" : "#0f1419",
-        padding: `${theme.spacing.xs} ${theme.spacing.sm}`,
-        fontSize: theme.fontSize.sm,
-        fontWeight: 700,
-        cursor: "pointer",
-      }}
+      className={active ? "study-post-card__action study-post-card__action--active" : "study-post-card__action"}
+      aria-label={`${label} ${count}`}
+      disabled={busy}
     >
-      {label}
+      <span aria-hidden="true">{busy ? "…" : icon}</span>
+      <span>{count}</span>
     </button>
   );
 }
@@ -524,9 +471,9 @@ function PostDetailModal({
         {actionError && <p style={{ margin: 0, color: theme.colors.danger, fontSize: theme.fontSize.sm }}>{actionError}</p>}
 
         <div style={{ display: "flex", gap: theme.spacing.sm, flexWrap: "wrap" }}>
-          <ActionButton label={repostBusy ? "処理中..." : `リポスト ${repostCount}`} active={reposted} onClick={onToggleRepost} />
-          <ActionButton label={likeBusy ? "処理中..." : `いいね ${likeCount}`} active={liked} onClick={onToggleLike} />
-          <ActionButton label={`コメント ${commentCount}`} active={false} onClick={function () {}} />
+          <ActionButton icon="↻" label="リポスト" count={repostCount} busy={repostBusy} active={reposted} onClick={onToggleRepost} />
+          <ActionButton icon="♡" label="いいね" count={likeCount} busy={likeBusy} active={liked} onClick={onToggleLike} />
+          <ActionButton icon="＋" label="コメント" count={commentCount} active={false} onClick={function () {}} />
         </div>
 
         <div

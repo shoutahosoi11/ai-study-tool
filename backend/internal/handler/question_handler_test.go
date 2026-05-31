@@ -44,7 +44,9 @@ func (s *stubQuestionUsecase) SaveQuestion(ctx context.Context, userID string, q
 }
 
 type stubQuestionSyncUsecase struct {
-	syncQuestionStock func(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
+	syncQuestionStock       func(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
+	evaluateBookAfterAnswer func(ctx context.Context, user *domain.User, questionID string) error
+	evaluatedQuestionID     string
 }
 
 func (s *stubQuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error) {
@@ -55,6 +57,10 @@ func (s *stubQuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *d
 }
 
 func (s *stubQuestionSyncUsecase) EvaluateBookAfterAnswer(ctx context.Context, user *domain.User, questionID string) error {
+	s.evaluatedQuestionID = questionID
+	if s.evaluateBookAfterAnswer != nil {
+		return s.evaluateBookAfterAnswer(ctx, user, questionID)
+	}
 	return nil
 }
 

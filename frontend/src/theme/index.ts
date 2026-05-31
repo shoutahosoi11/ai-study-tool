@@ -1,13 +1,12 @@
 export const theme = {
   colors: {
-    primary: "#000000",
-    primaryHover: "#1a1a1a",
-    secondary: "#536471",
-    border: "#eff3f4",
-    background: "#ffffff",
-    backgroundAlt: "#f7f9f9",
-    danger: "#f4212e",
-    success: "#00ba7c",
+    primary: "#d7f8e8",
+    secondary: "#8a98a8",
+    border: "#23313d",
+    background: "#070b10",
+    backgroundAlt: "#111820",
+    danger: "#ff6673",
+    success: "#35d399",
   },
   fontSize: {
     xs: "0.75rem",

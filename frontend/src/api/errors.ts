@@ -22,3 +22,11 @@ export function getApiErrorMessage(error: unknown) {
 
   return ''
 }
+
+export function getApiErrorStatus(error: unknown) {
+  if (!axios.isAxiosError(error)) {
+    return 0
+  }
+
+  return error.response?.status ?? 0
+}

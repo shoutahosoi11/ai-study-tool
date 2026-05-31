@@ -21,7 +21,7 @@ func TestBuildCreateUserInputDefaultsDisplayNameToUsername(t *testing.T) {
 		Username: "  @Alice_1  ",
 	}
 
-	input, err := buildCreateUserInput("firebase-uid-1", req)
+	input, err := buildCreateUserInput("firebase-uid-1", nil, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,6 +40,7 @@ func TestBuildCreateUserInputNormalizesOptionalText(t *testing.T) {
 	university := "  Example University  "
 	faculty := "   "
 	country := "  JP  "
+	email := "  Alice@example.com  "
 	req := &dto.SignUpRequest{
 		Username:   "alice",
 		University: &university,
@@ -47,9 +48,12 @@ func TestBuildCreateUserInputNormalizesOptionalText(t *testing.T) {
 		Country:    &country,
 	}
 
-	input, err := buildCreateUserInput("firebase-uid-1", req)
+	input, err := buildCreateUserInput("firebase-uid-1", &email, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if input.Email == nil || *input.Email != "alice@example.com" {
+		t.Fatalf("unexpected email: %#v", input.Email)
 	}
 	if input.University == nil || *input.University != "Example University" {
 		t.Fatalf("unexpected university: %#v", input.University)
@@ -69,7 +73,7 @@ func TestBuildCreateUserInputRejectsInvalidAvatarURL(t *testing.T) {
 		AvatarURL: &avatarURL,
 	}
 
-	_, err := buildCreateUserInput("firebase-uid-1", req)
+	_, err := buildCreateUserInput("firebase-uid-1", nil, req)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -80,7 +84,7 @@ func TestBuildCreateUserInputRejectsShortUsername(t *testing.T) {
 		Username: "ab",
 	}
 
-	_, err := buildCreateUserInput("firebase-uid-1", req)
+	_, err := buildCreateUserInput("firebase-uid-1", nil, req)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -91,9 +95,39 @@ func TestBuildCreateUserInputRejectsInvalidUsernameCharacters(t *testing.T) {
 		Username: "alice!",
 	}
 
-	_, err := buildCreateUserInput("firebase-uid-1", req)
+	_, err := buildCreateUserInput("firebase-uid-1", nil, req)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestAuthEmailRequiresVerifiedEmailClaim(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	c.Set(middleware.ContextFirebaseTokenKey, &domain.AuthToken{
+		UID: "firebase-uid-1",
+		Claims: map[string]any{
+			"email":          "alice@example.com",
+			"email_verified": false,
+		},
+	})
+	if email := authEmail(c); email != nil {
+		t.Fatalf("expected unverified email to be ignored, got %q", *email)
+	}
+
+	c.Set(middleware.ContextFirebaseTokenKey, &domain.AuthToken{
+		UID: "firebase-uid-1",
+		Claims: map[string]any{
+			"email":          "Alice@example.com",
+			"email_verified": true,
+		},
+	})
+	email := authEmail(c)
+	if email == nil || *email != "alice@example.com" {
+		t.Fatalf("unexpected verified email: %#v", email)
 	}
 }
 

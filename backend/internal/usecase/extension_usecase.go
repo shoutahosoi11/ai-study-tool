@@ -40,12 +40,12 @@ type ExtensionTokenIssueResult struct {
 	ExpiresAt time.Time
 }
 
-func NewExtensionUsecase(repo domain.ExtensionPairingRepository, rateLimit domain.RateLimitRepository) *ExtensionUsecase {
+func NewExtensionUsecase(repo domain.ExtensionPairingRepository, rateLimit domain.RateLimitRepository) (*ExtensionUsecase, error) {
 	if repo == nil {
-		panic("extension usecase: repository is nil")
+		return nil, errors.New("extension usecase: repository is nil")
 	}
 	if rateLimit == nil {
-		panic("extension usecase: rate limit repository is nil")
+		return nil, errors.New("extension usecase: rate limit repository is nil")
 	}
 	return &ExtensionUsecase{
 		repo:       repo,
@@ -54,7 +54,7 @@ func NewExtensionUsecase(repo domain.ExtensionPairingRepository, rateLimit domai
 		random:     rand.Reader,
 		pairingTTL: defaultExtensionPairingTTL,
 		tokenTTL:   defaultExtensionTokenTTL,
-	}
+	}, nil
 }
 
 func (u *ExtensionUsecase) StartPairing(ctx context.Context) (*domain.ExtensionPairing, error) {

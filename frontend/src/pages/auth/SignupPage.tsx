@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { signUpWithEmail, auth } from "../../api/auth";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { createWebSession, signUpWithEmail, auth } from "../../api/auth";
 import { signUpBackendUser } from "../../api/users";
 import { Button } from "../../components/common/Button";
 import { Input } from "../../components/common/Input";
@@ -10,11 +10,18 @@ import { getApiErrorMessage } from "../../api/errors";
 
 export function SignupPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  function returnPath() {
+    const state = location.state as { returnTo?: unknown } | null;
+    const value = typeof state?.returnTo === "string" ? state.returnTo : "/";
+    return value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -25,7 +32,16 @@ export function SignupPage() {
         await signUpWithEmail(email.trim(), password);
       }
       await signUpBackendUser(username);
-      navigate("/");
+      const nextPath = returnPath();
+      try {
+        await createWebSession(true);
+      } catch {
+        if (nextPath.startsWith("/extension/connect")) {
+          setError("拡張機能の接続にはログイン確認が必要です。ログインし直してください");
+          return;
+        }
+      }
+      navigate(nextPath, { replace: true });
     } catch (err: unknown) {
       const code = (err as { code?: string }).code ?? "";
       if (code === "auth/email-already-in-use") {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getApiErrorMessage } from '../../api/errors'
+import { getApiErrorMessage, getApiErrorStatus } from '../../api/errors'
 import { listBookHighlights, listBookHighlightsByMetadata, updateHighlightExplanation } from '../../api/highlights'
 import { listKindleBooks } from '../../api/kindle'
 import { createQuestionPost } from '../../api/posts'
@@ -31,7 +31,24 @@ function buildMetadataSourceID(bookTitle: string, bookAuthor: string) {
 }
 
 function getQuestionGenerationErrorMessage(error: unknown) {
+  const status = getApiErrorStatus(error)
   const responseMessage = getApiErrorMessage(error)
+  const normalizedMessage = responseMessage.toLowerCase()
+  if (status === 401) {
+    return 'ログインの有効期限が切れています。もう一度ログインしてください'
+  }
+  if (status === 402 || normalizedMessage.includes('budget')) {
+    return '問題生成に使える残数が不足しています。プランや今日の利用状況を確認してください'
+  }
+  if (status === 403) {
+    return 'この操作は許可されていません'
+  }
+  if (status === 429 || normalizedMessage.includes('rate limit')) {
+    return '試行回数が多すぎます。しばらく待ってからもう一度お試しください'
+  }
+  if (normalizedMessage.includes('global') || normalizedMessage.includes('temporarily unavailable')) {
+    return '全体の生成上限に達しているか、一時的に生成を停止しています。時間を置いてもう一度お試しください'
+  }
   if (responseMessage === 'source text is unavailable') {
     return 'この本の保存済みハイライトが見つかりませんでした'
   }
@@ -42,7 +59,7 @@ function getQuestionGenerationErrorMessage(error: unknown) {
     return '問題生成に失敗しました。時間を置いてもう一度試してください'
   }
   if (responseMessage) {
-    return responseMessage
+    return '問題を用意できませんでした。入力内容と利用状況を確認してください'
   }
 
   return '問題の取得に失敗しました'
@@ -409,6 +426,7 @@ export function KindleBookSection({ onQuestionsGenerated }: Props) {
                 stock={stock}
                 target={target}
                 preparing={preparing}
+                statusText={generateStatusText[book.asin]}
                 isPreparing={isPreparing}
                 isGenerating={generatingBookId === book.asin}
                 isViewingHighlights={highlightsLoading && selectedBook?.asin === book.asin}
