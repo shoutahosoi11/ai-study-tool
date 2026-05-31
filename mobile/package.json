@@ -18,7 +18,7 @@
     "axios": "^1.15.2",
     "expo": "~54.0.33",
     "expo-dev-client": "~6.0.20",
-    "expo-linking": "~8.0.11",
+    "expo-linking": "~56.0.13",
     "expo-share-intent": "^5.1.1",
     "expo-status-bar": "~3.0.9",
     "firebase": "^12.12.1",
