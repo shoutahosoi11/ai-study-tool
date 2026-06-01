@@ -52,8 +52,6 @@ Host permissions は Kindle Notebook (`read.amazon.co.jp` / `read.amazon.com`) �
 
 Backend の現行 import API は note 専用フィールドを受け取りません。extension は note text を抽出可能ですが、現時点では backend へ送信しません。後続PRで backend DTO / DB / import usecase に note field を追加できます。note はユーザーの個人メモなので、送信・保存・LLM prompt投入時は prompt redaction とログ非保存の方針を維持してください。
 
-この判断の詳細は `reasoning/extension-note-field-2026-05-28.md` に残しています。
-
 ## セキュリティメモ
 
 - token、pairing_id、raw response body は console に出しません。
