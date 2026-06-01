@@ -18,7 +18,7 @@ AI Study Tool は、Kindle のハイライトや任意のテキストを AI 生�
 
 Firebase Auth は Web、Mobile、Extension 共通のログイン基盤です。無料枠が大きく、マルチデバイス対応もしやすいため、初期段階から Web / Mobile / Extension を同じユーザー ID で扱いたいこのアプリに合っています。独自のユーザー管理サービスを作らず、同じ Firebase UID で 3 種類のクライアントを紐付けます。
 
-一方で、各クライアントで安全なトークンの持ち方は違います。Firebase Auth を共通基盤にすると、ログイン基盤は共通化しつつ、Web は Session Cookie、Mobile は Bearer Token + App Check、Extension は Pairing + Scoped Token という分担にしやすくなります。
+一方で、各クライアントで安全なトークンの持ち方は違います。Firebase Auth を共通基盤にすると、ログイン基盤は共通化しつつ、Web は Session Cookie + CSRF Cookie、Mobile は Bearer Token + App Check、Extension は Pairing + Scoped Token という分担にしやすくなります。
 
 - **Web**: Firebase ID Token を HttpOnly Session Cookie に交換し、生のトークンを JavaScript から読めるストレージに置きません。
 - **Mobile**: Bearer ID Token を使い、App Check とアプリバージョン制限を組み合わせます。トークン更新は Firebase SDK に任せます。
