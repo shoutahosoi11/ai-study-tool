@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.15.2
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.12.3
 	github.com/sqlc-dev/pqtype v0.3.0
 	github.com/stripe/stripe-go/v76 v76.25.0
 	golang.org/x/text v0.37.0
