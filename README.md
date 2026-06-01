@@ -230,10 +230,6 @@ python3 scripts/secret_scan.py
 - [E2E テストガイド](e2e/README.md)
 - [k6 負荷テスト](loadtest/k6/README.md)
 
-設計判断:
-
-- [セキュリティ最終レビュー](reasoning/security-final-review-2026-05-30.md)
-
 ## 制限事項 / 今後の作業
 
 - Mobile IAP / Play Billing は未完了です。
