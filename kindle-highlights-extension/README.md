@@ -1,10 +1,6 @@
-# Kindle Highlights Scraper - Legacy Research Prototype
+# Kindle Highlights Scraper - 旧研究用プロトタイプ
 
-> Deprecated: this directory is a historical research prototype for inspecting
-> Kindle Notebook DOM output. It is not the distributed browser extension and
-> does not implement server sync, pairing, token auth, or the current security
-> model. Use `../extension/` for active Chrome extension development and release
-> builds.
+> 非推奨: このディレクトリは Kindle Notebook の DOM 出力を確認するための過去の研究用プロトタイプです。配布対象のブラウザ拡張機能ではなく、サーバー同期、ペアリング、トークン認証、現在のセキュリティモデルは実装していません。現在の Chrome 拡張機能の開発とリリースビルドには `../extension/` を使ってください。
 
 Kindle Notebook から全書籍のハイライトを自動巡回で取得し、取得可能なフィールドを確認するための Chrome 拡張機能です。
 
@@ -35,7 +31,7 @@ kindle-highlights-extension/
     └── utils.js
 ```
 
-今回は unpacked でそのまま読み込めるように、ビルド不要の plain JavaScript で作っています。
+今回は unpacked でそのまま読み込めるように、ビルド不要の素の JavaScript で作っています。
 
 ## 対応ドメイン
 
