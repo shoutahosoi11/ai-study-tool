@@ -12,7 +12,7 @@ require (
 	github.com/sqlc-dev/pqtype v0.3.0
 	github.com/stripe/stripe-go/v76 v76.25.0
 	golang.org/x/text v0.37.0
-	google.golang.org/api v0.282.0
+	google.golang.org/api v0.283.0
 	google.golang.org/grpc v1.81.1
 )
 
