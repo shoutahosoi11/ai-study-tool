@@ -1,38 +1,34 @@
-# Database Migrations
+# データベース migration
 
-This project keeps backend migrations in `backend/db/migrations/` as
-forward-only SQL files. The local `Makefile` runs every `*.sql` file in sorted
-order with `psql`, so do not place paired `.down.sql` files in this directory.
+このプロジェクトでは backend migration を `backend/db/migrations/` に forward-only SQL file として置きます。local `Makefile` は並び順に従ってすべての `*.sql` file を `psql` で実行します。そのため、このディレクトリには `.down.sql` のような paired file を置かないでください。
 
-## Security Hardening Migration
+## セキュリティ強化 migration
 
-Phase 2 added:
+Phase 2 では次を追加しました。
 
 - `031_security_hardening.sql`
 
-It is intentionally a single forward-only file to match the existing migration
-layout.
+既存の migration layout に合わせるため、意図的に 1 つの forward-only file にしています。
 
-### What It Changes
+### 変更内容
 
-- Ensures `pgcrypto` exists for SHA-256 hashing.
-- Ensures `highlights.content_hash TEXT` exists.
-- Ensures `highlights.source TEXT` exists and is nullable.
-- Renames legacy source values:
+- SHA-256 hashing 用に `pgcrypto` が存在することを保証します。
+- `highlights.content_hash TEXT` が存在することを保証します。
+- `highlights.source TEXT` が存在し、nullable であることを保証します。
+- legacy source value を rename します。
   - `mobile_share` -> `share`
   - `kindle` -> `extension`
-- Backfills `content_hash` for existing non-empty highlight content.
-- Leaves `content_hash` as `NULL` for empty content and duplicate rows that
-  would violate the unique index.
-- Leaves existing `source IS NULL` rows as `NULL`.
-- Creates the partial unique index:
-  - `idx_highlights_user_content` on `(user_id, content_hash)`
-  - only where `content_hash IS NOT NULL`
-- Creates `rate_limit_counters` for per-user ingest rate limits.
+- 既存の空でない highlight content に `content_hash` を backfill します。
+- 空 content と、unique index に違反する重複 row は `content_hash` を `NULL` のままにします。
+- 既存の `source IS NULL` row は `NULL` のままにします。
+- partial unique index を作成します。
+  - `(user_id, content_hash)` 上の `idx_highlights_user_content`
+  - `content_hash IS NOT NULL` の場合のみ
+- ユーザー別 ingest rate limit 用に `rate_limit_counters` を作成します。
 
-### Preflight Checklist
+### 事前チェックリスト
 
-Record these before running the migration:
+migration 実行前に以下を記録してください。
 
 ```sql
 SELECT COUNT(*) AS highlights_count FROM highlights;
@@ -53,27 +49,25 @@ GROUP BY user_id, content_hash
 HAVING COUNT(*) > 1;
 ```
 
-Also confirm:
+あわせて以下も確認してください。
 
-- Neon automatic backups / PITR are enabled.
-- The migration connection string is the Neon direct connection string, not the
-  pooled runtime connection string.
-- Application deploy for Phase 2 is ready, because the new ingest paths expect
-  `rate_limit_counters`.
-- You have a rollback window and a recorded timestamp.
+- Neon automatic backups / PITR が有効。
+- migration connection string は Neon direct connection string であり、runtime 用 pooled connection string ではない。
+- Phase 2 の application deploy が準備済み。新しい ingest path は `rate_limit_counters` を前提にします。
+- rollback window と記録済み timestamp がある。
 
-### Run on Neon Console
+### Neon Console で実行する場合
 
-1. Open the Neon project.
-2. Select the target branch and database.
-3. Open SQL Editor.
-4. Paste `backend/db/migrations/031_security_hardening.sql`.
-5. Run it once.
-6. Save the query result and timestamp in the deploy notes.
+1. Neon project を開く。
+2. 対象 branch と database を選ぶ。
+3. SQL Editor を開く。
+4. `backend/db/migrations/031_security_hardening.sql` を貼り付ける。
+5. 1 回だけ実行する。
+6. query result と timestamp を deploy note に保存する。
 
-### Run with psql
+### psql で実行する場合
 
-Use the Neon direct connection string:
+Neon direct connection string を使います。
 
 ```sh
 MIGRATION_DATABASE_URL="postgresql://USER:PASSWORD@HOST.neon.tech/DB_NAME?sslmode=require"
@@ -83,7 +77,7 @@ psql "${MIGRATION_DATABASE_URL}" \
   -f backend/db/migrations/031_security_hardening.sql
 ```
 
-For a fresh database, run all migrations in order:
+新規 database では、すべての migration を順番に実行します。
 
 ```sh
 MIGRATION_DATABASE_URL="postgresql://USER:PASSWORD@HOST.neon.tech/DB_NAME?sslmode=require"
@@ -94,20 +88,17 @@ for file in $(ls backend/db/migrations/*.sql | sort); do
 done
 ```
 
-### Run with golang-migrate
+### golang-migrate を使う場合
 
-The repository does not currently use `golang-migrate` naming conventions.
-If you choose to use it operationally, copy the SQL into an external
-deployment-only migration directory with a single `up` migration and keep that
-directory out of `backend/db/migrations/`.
+この repository は現在 `golang-migrate` の命名規則を使っていません。運用上どうしても使う場合は、SQL を外部の deployment-only migration directory にコピーし、単一の `up` migration として置いてください。その directory は `backend/db/migrations/` の外に置きます。
 
-Example external layout:
+外部 directory 例:
 
 ```text
 ops/migrations/031_security_hardening.up.sql
 ```
 
-Then run:
+実行例:
 
 ```sh
 migrate \
@@ -116,7 +107,7 @@ migrate \
   up
 ```
 
-### Postflight Checks
+### 実行後チェック
 
 ```sql
 SELECT COUNT(*) AS highlights_count FROM highlights;
@@ -137,19 +128,16 @@ WHERE indexname = 'idx_highlights_user_content';
 SELECT to_regclass('public.rate_limit_counters') AS rate_limit_table;
 ```
 
-Smoke-test application behavior:
+application の smoke test:
 
-- Insert or import a new highlight and confirm `content_hash` is set.
-- Import the same normalized text twice and confirm duplicate handling returns
-  the existing highlight rather than creating a second row.
-- Send more than the configured ingest limit to confirm `429` and
-  `Retry-After: 86400`.
-- Confirm existing highlight list and question flows still load.
+- 新しい highlight を insert または import し、`content_hash` が入ることを確認する。
+- 同じ正規化済み text を 2 回 import し、2 row 目を作らず既存 highlight を返すことを確認する。
+- 設定済み ingest limit を超えて送信し、`429` と `Retry-After: 86400` を確認する。
+- 既存 highlight list と question flow が引き続き読み込めることを確認する。
 
-### Manual Rollback SQL
+### 手動 rollback SQL
 
-Prefer Neon PITR for production rollback. Use SQL rollback only after confirming
-the application version no longer depends on these columns or tables.
+production rollback は Neon PITR を優先してください。SQL rollback は、application version がこれらの column や table に依存しないことを確認してから使います。
 
 ```sql
 DROP INDEX IF EXISTS idx_highlights_user_content;
@@ -171,5 +159,4 @@ ALTER TABLE highlights
     DROP COLUMN IF EXISTS source;
 ```
 
-If you used PITR, redeploy the previous application revision immediately after
-restoring the database branch.
+PITR を使った場合は、database branch の restore 後すぐに 1 つ前の application revision を redeploy してください。
