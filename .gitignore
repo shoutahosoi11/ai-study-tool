@@ -7,6 +7,8 @@ backend/serviceAccountKey.json
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+frontend/vite.config.js
+frontend/vite.config.d.ts
 extension/node_modules/
 extension/dist/
 e2e/node_modules/
@@ -26,6 +28,7 @@ gha-creds-*.json
 *.env
 !*.env.example
 .ai-consensus/
+reasoning/
 
 # wrangler files
 .wrangler
