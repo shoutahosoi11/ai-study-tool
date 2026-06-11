@@ -1,11 +1,8 @@
-# k6 Load Tests
+# k6 負荷テスト
 
-These scripts are low-rate smoke tests for local or staging environments. They
-are meant to verify rate limits, queue controls, auth behavior, and webhook
-rejection paths. They are not attack tooling and must not be pointed at
-production unless explicitly allowed.
+この script 群はローカルまたはステージング環境向けの低レート smoke test です。rate limit、queue control、認証動作、webhook rejection path を確認するためのものであり、攻撃用 tooling ではありません。明示的に許可しない限り本番に向けて実行しないでください。
 
-## Install k6
+## k6 のインストール
 
 macOS:
 
@@ -13,33 +10,32 @@ macOS:
 brew install k6
 ```
 
-Other platforms: https://k6.io/docs/get-started/installation/
+その他の platform: https://k6.io/docs/get-started/installation/
 
-## Safety Controls
+## 安全制御
 
-All scripts read `BASE_URL` from the environment. If `BASE_URL` looks like a
-production host, the script exits unless:
+すべての script は環境変数 `BASE_URL` を読みます。`BASE_URL` が本番 host に見える場合、次が設定されていなければ script は終了します。
 
 ```bash
 ALLOW_PRODUCTION_LOADTEST=true
 ```
 
-Use staging/local URLs by default:
+既定ではステージング / ローカル URL を使います。
 
 ```bash
 BASE_URL=http://localhost:8080 k6 run loadtest/k6/webhook_admob_invalid.js
 ```
 
-## Scripts
+## script 一覧
 
-| Script | Purpose | Required env |
+| Script | 目的 | 必須環境変数 |
 | --- | --- | --- |
-| `auth_session.js` | low-rate `/api/v1/auth/session` session creation check | `BASE_URL`, `ID_TOKEN` |
+| `auth_session.js` | 低レートの `/api/v1/auth/session` session 作成確認 | `BASE_URL`, `ID_TOKEN` |
 | `extension_import.js` | extension import rate-limit smoke | `BASE_URL`, `EXTENSION_TOKEN` |
-| `question_generation_queue.js` | queue/generation endpoint guardrail check | `BASE_URL`, `AUTH_TOKEN`, `QUESTION_GENERATION_LOADTEST_ENABLED=true` |
-| `webhook_admob_invalid.js` | invalid AdMob SSV rejection/rate-limit check | `BASE_URL` |
+| `question_generation_queue.js` | queue / generation endpoint の guardrail 確認 | `BASE_URL`, `AUTH_TOKEN`, `QUESTION_GENERATION_LOADTEST_ENABLED=true` |
+| `webhook_admob_invalid.js` | 不正な AdMob SSV の rejection / rate-limit 確認 | `BASE_URL` |
 
-## Examples
+## 実行例
 
 ```bash
 BASE_URL=http://localhost:8080 ID_TOKEN=test-id-token \
@@ -56,15 +52,10 @@ BASE_URL=http://localhost:8080 \
   k6 run loadtest/k6/webhook_admob_invalid.js
 ```
 
-## Question Generation Warning
+## 問題生成に関する警告
 
-There is no dedicated dry-run question generation endpoint today. The
-`question_generation_queue.js` script is disabled by default because it may
-trigger real generation, Cloud Tasks enqueueing, or LLM calls depending on the
-environment. Prefer staging with `USE_GEMINI_MOCK=true` and a small test user.
+現時点では、問題生成専用の dry-run endpoint はありません。`question_generation_queue.js` は、環境によって実際の生成、Cloud Tasks enqueue、LLM 呼び出しを起こす可能性があるため、既定では無効です。`USE_GEMINI_MOCK=true` と少数の test user を用意したステージングを優先してください。
 
-## Do Not Log
+## ログに出してはいけないもの
 
-Do not paste real tokens, cookies, signatures, raw webhook payloads, prompts, or
-highlight text into tickets or shared logs.
-
+実 token、cookie、signature、生 webhook payload、prompt、ハイライト本文を issue や共有ログに貼らないでください。
