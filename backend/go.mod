@@ -1,6 +1,6 @@
 module github.com/shout/ai-study-tool/backend
 
-go 1.26.3
+go 1.26.4
 
 require (
 	cloud.google.com/go/cloudtasks v1.18.0
