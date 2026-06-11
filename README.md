@@ -1,8 +1,10 @@
 # AI Study Tool
 
-AI Study Tool は、Kindle のハイライトを AI 生成のクイズ問題に変換するクロスプラットフォーム学習アプリです。Web アプリ、Chrome 拡張機能、モバイルアプリを中心に構成し、Go 製バックエンドが認証、ハイライト取り込み、問題生成、課金、報酬トークン、運用管理を担当します。
-
-このプロジェクトは、実運用を意識したバックエンド設計のポートフォリオでもあります。スコープ付きクライアント認証、CSRF 保護、LLM コスト制御、非同期ジョブ、Webhook の冪等性、セキュリティ強化、運用 runbook を重視しています。
+AI Study Tool は、Kindle のハイライトや任意のテキストを AI 生成のクイズ問題に変換して問題を解いたり共有出来る学習アプリです。Web アプリ、Chrome 拡張機能、モバイルアプリを中心に構成し、Go 製バックエンドが認証、ハイライト取り込み、問題生成、課金、報酬トークン、運用管理を担当します。
+ハイライトの取得は、read.amazon.com.jpにあるユーザーのハイライト一覧を拡張機能でスクレイピングする方法と共有シートから取得する方法とアプリ内でコピペして取得する方法の3つがあります。
+取得したハイライトをLLMに投げて問題と解答解説を出力させます。
+ユーザーが解答後、ユーザー自身の解説や感想を書き込みXのように投稿します。
+投稿した問題や解説は他のユーザーも見れたり解答することができます。
 
 ## 主な機能
 
@@ -20,7 +22,7 @@ AI Study Tool は、Kindle のハイライトを AI 生成のクイズ問題に�
 
 Firebase Auth は Web、Mobile、Extension 共通のログイン基盤です。無料枠が大きく、マルチデバイス対応もしやすいため、初期段階から Web / Mobile / Extension を同じユーザー ID で扱いたいこのアプリに合っています。独自のユーザー管理サービスを作らず、同じ Firebase UID で 3 種類のクライアントを紐付けます。
 
-一方で、各クライアントで安全なトークンの持ち方は違います。Firebase Auth を共通基盤にすると、ログイン基盤は共通化しつつ、Web は Session Cookie、Mobile は Bearer Token + App Check、Extension は Pairing + Scoped Token という分担にしやすくなります。
+一方で、各クライアントで安全なトークンの持ち方は違います。Firebase Auth を共通基盤にすると、ログイン基盤は共通化しつつ、Web は Session Cookie + CSRF Cookie、Mobile は Bearer Token + App Check、Extension は Pairing + Scoped Token という分担にしやすくなります。
 
 - **Web**: Firebase ID Token を HttpOnly Session Cookie に交換し、生のトークンを JavaScript から読めるストレージに置きません。
 - **Mobile**: Bearer ID Token を使い、App Check とアプリバージョン制限を組み合わせます。トークン更新は Firebase SDK に任せます。
@@ -30,7 +32,7 @@ Firebase により、トークン失効、MFA フック、Google / Apple サイ�
 
 ### Go + Echo
 
-Go + Echo は、AI アプリのバックエンドをシンプルかつ堅く作るために採用しています。Gemini API は HTTP 呼び出しであり、バックエンドの役割はルーティング、認証、DB トランザクション、ジョブキュー制御です。
+Go + Echo は、AI 開発アプリのバックエンドをシンプルかつ堅く作るために採用しています。Gemini API は HTTP 呼び出しであり、バックエンドの役割はルーティング、認証、DB トランザクション、ジョブキュー制御です。
 
 具体的な理由:
 
