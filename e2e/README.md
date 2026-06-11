@@ -1,26 +1,26 @@
-# E2E Tests
+# E2E テスト
 
-This directory contains the first PR14 smoke E2E suite. It uses Playwright and defaults to dry-run behavior so it can run against a local frontend without real Firebase, Stripe, AdMob, or LLM traffic.
+このディレクトリには、PR14 時点の最初の smoke E2E suite を置いています。Playwright を使い、初期状態では dry-run 動作に寄せています。そのため、実 Firebase、Stripe、AdMob、LLM traffic なしでローカルのフロントエンドに対して実行できます。
 
-## Safety Defaults
+## 安全な初期設定
 
-Environment variables:
+環境変数:
 
-- `E2E_BASE_URL`: frontend base URL. Default: `http://127.0.0.1:3000`.
-- `E2E_API_BASE_URL`: backend base URL. Default: `http://127.0.0.1:8080`.
-- `E2E_TEST_EMAIL`: staging test user email. Do not print it in tests.
-- `E2E_TEST_PASSWORD`: staging test user password. Do not print it in tests.
-- `E2E_ADMIN_EMAIL`: staging admin email. Do not print it in tests.
-- `E2E_ADMIN_PASSWORD`: staging admin password. Do not print it in tests.
-- `E2E_EXTENSION_TOKEN`: disposable staging extension token. Do not print it in tests.
-- `E2E_ALLOW_PRODUCTION`: must be `true` to run against production-like HTTPS hosts.
-- `E2E_DRY_RUN`: defaults to `true`. Set `false` only for disposable staging.
-- `E2E_RUN_API_TESTS`: set `true` only when a disposable backend is running.
-- `E2E_SKIP_WEB_SERVER`: set `true` when `E2E_BASE_URL` is already served.
+- `E2E_BASE_URL`: フロントエンドの base URL。既定値は `http://127.0.0.1:3000`。
+- `E2E_API_BASE_URL`: バックエンドの base URL。既定値は `http://127.0.0.1:8080`。
+- `E2E_TEST_EMAIL`: ステージング用テストユーザーのメールアドレス。テストログに出さないでください。
+- `E2E_TEST_PASSWORD`: ステージング用テストユーザーのパスワード。テストログに出さないでください。
+- `E2E_ADMIN_EMAIL`: ステージング用 admin メールアドレス。テストログに出さないでください。
+- `E2E_ADMIN_PASSWORD`: ステージング用 admin パスワード。テストログに出さないでください。
+- `E2E_EXTENSION_TOKEN`: 使い捨てのステージング用 extension token。テストログに出さないでください。
+- `E2E_ALLOW_PRODUCTION`: 本番に近い HTTPS host に対して実行する場合のみ `true` にします。
+- `E2E_DRY_RUN`: 既定値は `true`。使い捨てステージングでのみ `false` にします。
+- `E2E_RUN_API_TESTS`: 使い捨てバックエンドが動いている場合のみ `true` にします。
+- `E2E_SKIP_WEB_SERVER`: `E2E_BASE_URL` がすでに配信されている場合に `true` にします。
 
-The Playwright config refuses production-like URLs unless `E2E_ALLOW_PRODUCTION=true` is explicitly set.
+Playwright config は、`E2E_ALLOW_PRODUCTION=true` が明示されていない限り本番に近い URL を拒否します。
 
-## Install
+## インストール
 
 ```bash
 cd e2e
@@ -28,23 +28,23 @@ npm install
 npx playwright install chromium
 ```
 
-## Run
+## 実行
 
-Local frontend smoke:
+ローカルフロントエンドの smoke:
 
 ```bash
 cd e2e
 npm run test
 ```
 
-Disposable backend security smoke:
+使い捨てバックエンドの security smoke:
 
 ```bash
 cd e2e
 E2E_RUN_API_TESTS=true E2E_API_BASE_URL=http://127.0.0.1:8080 npm run test
 ```
 
-Staging with pre-running services:
+事前起動済み service を使うステージング:
 
 ```bash
 cd e2e
@@ -55,23 +55,23 @@ E2E_RUN_API_TESTS=true \
 npm run test
 ```
 
-## Current Coverage
+## 現在のカバレッジ
 
-- Web login page smoke.
-- Protected route redirect for `/extension/connect`.
-- Extension connect page sensitive-text regression.
-- Admin route auth gate smoke.
-- Optional API smoke for unauthenticated Admin and Extension import rejection.
-- Optional backend security-header smoke.
+- Web login page smoke。
+- `/extension/connect` の protected route redirect。
+- Extension connect page の sensitive text regression。
+- Admin route auth gate smoke。
+- 未認証 Admin と Extension import rejection の optional API smoke。
+- backend security header の optional smoke。
 
-## Deferred Full E2E
+## 後回しにしている完全 E2E
 
-Full login, pairing approval, highlight import, question generation, answer/review, Stripe test checkout, AdMob SSV, and Admin mutation flows need a disposable staging environment with seeded Firebase users, test extension tokens, mock LLM provider, and cleanup credentials.
+完全なログイン、ペアリング承認、ハイライト取り込み、問題生成、解答 / 復習、Stripe test checkout、AdMob SSV、Admin mutation flow には、seed 済み Firebase user、test extension token、mock LLM provider、cleanup credential を持つ使い捨てステージング環境が必要です。
 
-## Test Data Policy
+## テストデータ方針
 
-- Use only staging or disposable local projects.
-- Prefix created records with `e2e_` or `test_`.
-- Do not create real Stripe charges or real AdMob reward traffic.
-- Do not log passwords, cookies, raw tokens, raw webhook payloads, raw SSV query strings, prompts, or highlight text.
-- Cleanup should delete or revoke data by test prefix and revoke disposable extension tokens after each run.
+- ステージングまたは使い捨てローカル project のみを使います。
+- 作成する record には `e2e_` または `test_` prefix を付けます。
+- 実 Stripe charge や実 AdMob reward traffic は発生させません。
+- password、cookie、生 token、生 webhook payload、生 SSV query string、prompt、ハイライト本文をログに出さないでください。
+- cleanup では test prefix のデータを削除または revoke し、使い捨て extension token を各 run 後に revoke してください。
