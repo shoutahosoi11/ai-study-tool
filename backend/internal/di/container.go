@@ -181,7 +181,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	userUsecase := usecase.NewUserUsecase(userRepo)
 	postUsecase := usecase.NewPostUsecase(postRepo)
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
-	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
+	questionUsecase := usecase.NewQuestionUsecase(questionRepo, questionSourceResolver)
 	globalLLMBudgetUsecase, err := usecase.NewGlobalLLMBudgetUsecaseFromEnv(globalLLMBudgetRepo, appEnv)
 	if err != nil {
 		return nil, err

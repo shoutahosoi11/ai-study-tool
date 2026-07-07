@@ -4,18 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"math/rand"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
 
 type QuestionUsecase struct {
-	repo           domain.QuestionUsecaseRepository
-	llmClient      domain.LLMClient
+	repo           domain.QuestionLearningRepository
 	sourceResolver domain.QuestionSourceResolver
 }
 
@@ -24,10 +20,9 @@ const (
 	maxQuestionCountForAll   = 20
 )
 
-func NewQuestionUsecase(repo domain.QuestionUsecaseRepository, llmClient domain.LLMClient, sourceResolver domain.QuestionSourceResolver) *QuestionUsecase {
+func NewQuestionUsecase(repo domain.QuestionLearningRepository, sourceResolver domain.QuestionSourceResolver) *QuestionUsecase {
 	return &QuestionUsecase{
 		repo:           repo,
-		llmClient:      llmClient,
 		sourceResolver: sourceResolver,
 	}
 }
@@ -143,124 +138,6 @@ func filterHighlightsByBookOrderIndex(highlights []*domain.Highlight, startIndex
 	return filtered
 }
 
-func (u *QuestionUsecase) GenerateQuestions(ctx context.Context, input domain.GenerateQuestionsInput) ([]*domain.Question, error) {
-	model := u.llmClient.ModelForPlan(input.UserPlan)
-
-	if !isSupportedQuestionSourceType(input.SourceType) {
-		return nil, domain.ErrInvalidSourceType
-	}
-
-	sourceHighlights, err := u.sourceResolver.ResolveHighlights(
-		ctx,
-		input.CreatorID,
-		input.SourceType,
-		input.SourceID,
-		input.BookTitle,
-		input.BookAuthor,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("question usecase: resolve source highlights: %w", err)
-	}
-
-	selectedHighlights, err := u.selectHighlightsForGeneration(ctx, input.CreatorID, sourceHighlights, input.QuestionCount)
-	if err != nil {
-		return nil, fmt.Errorf("question usecase: select source highlights: %w", err)
-	}
-
-	genID, err := u.repo.SaveGeneration(ctx,
-		input.CreatorID,
-		string(input.SourceType),
-		input.SourceID,
-		"2-step prompt",
-		model,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("question usecase: save generation: %w", err)
-	}
-
-	points := buildGenerationMaterials(selectedHighlights)
-	generatedQuestions, err := u.llmClient.GenerateQuestions(ctx, points, input.QuestionType, input.CustomInstruction, model)
-	if err != nil {
-		return nil, fmt.Errorf("question usecase: generate questions: %w", err)
-	}
-
-	pairCount := len(generatedQuestions)
-	if len(selectedHighlights) < pairCount {
-		pairCount = len(selectedHighlights)
-	}
-
-	questions := make([]*domain.Question, 0, pairCount)
-	for index := 0; index < pairCount; index++ {
-		generatedQuestion, err := normalizeGeneratedQuestion(generatedQuestions[index], input.QuestionType)
-		if err != nil {
-			log.Printf("question usecase: skip invalid generated question: %v", err)
-			continue
-		}
-		sourceHighlight := selectedHighlights[index]
-
-		q := &domain.Question{
-			ID:            uuid.New().String(),
-			QuestionType:  input.QuestionType,
-			Content:       generatedQuestion.Content,
-			Options:       generatedQuestion.Options,
-			CorrectAnswer: generatedQuestion.CorrectAnswer,
-			Explanation:   generatedQuestion.Explanation,
-		}
-		meta := &domain.QuestionMeta{
-			QuestionID:    q.ID,
-			CreatorID:     input.CreatorID,
-			SourceType:    input.SourceType,
-			SourceID:      input.SourceID,
-			HighlightID:   sourceHighlight.ID.String(),
-			GenerationID:  genID,
-			IsAIGenerated: true,
-		}
-
-		if err := u.repo.Save(ctx, q, meta); err != nil {
-			log.Printf("question usecase: save question error: %v", err)
-			continue
-		}
-		questions = append(questions, q)
-	}
-
-	if len(questions) == 0 {
-		return nil, fmt.Errorf("question usecase: all question generation failed")
-	}
-
-	return questions, nil
-}
-
-func (u *QuestionUsecase) selectHighlightsForGeneration(ctx context.Context, userID string, highlights []*domain.Highlight, questionCount int) ([]*domain.Highlight, error) {
-	candidates := filterNonEmptyHighlights(highlights)
-	if len(candidates) == 0 {
-		return nil, domain.ErrSourceTextUnavailable
-	}
-
-	highlightIDs := make([]uuid.UUID, 0, len(candidates))
-	for _, highlight := range candidates {
-		highlightIDs = append(highlightIDs, highlight.ID)
-	}
-
-	usedHighlightIDs, err := u.repo.ListUsedHighlightIDsByUserID(ctx, userID, highlightIDs)
-	if err != nil {
-		return nil, fmt.Errorf("question usecase: list used highlight ids: %w", err)
-	}
-
-	usedSet := make(map[uuid.UUID]struct{}, len(usedHighlightIDs))
-	for _, highlightID := range usedHighlightIDs {
-		usedSet[highlightID] = struct{}{}
-	}
-
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	prioritized := prioritizeHighlightsForGeneration(candidates, usedSet, rng)
-	selectedCount := resolveQuestionSelectionCount(len(prioritized), questionCount)
-	if selectedCount == 0 {
-		return nil, domain.ErrSourceTextUnavailable
-	}
-
-	return prioritized[:selectedCount], nil
-}
-
 func (u *QuestionUsecase) SaveQuestion(ctx context.Context, userID string, questionID string, note string) error {
 	_, meta, _, err := u.repo.FindByID(ctx, questionID)
 	if err != nil {
@@ -334,79 +211,4 @@ func filterNonEmptyHighlights(highlights []*domain.Highlight) []*domain.Highligh
 	}
 
 	return filtered
-}
-
-func prioritizeHighlightsForGeneration(highlights []*domain.Highlight, usedSet map[uuid.UUID]struct{}, rng *rand.Rand) []*domain.Highlight {
-	unusedWithExplanation := make([]*domain.Highlight, 0)
-	unusedWithoutExplanation := make([]*domain.Highlight, 0)
-	usedWithExplanation := make([]*domain.Highlight, 0)
-	usedWithoutExplanation := make([]*domain.Highlight, 0)
-
-	for _, highlight := range highlights {
-		_, alreadyUsed := usedSet[highlight.ID]
-		hasExplanation := highlightHasExplanation(highlight)
-
-		switch {
-		case !alreadyUsed && hasExplanation:
-			unusedWithExplanation = append(unusedWithExplanation, highlight)
-		case !alreadyUsed && !hasExplanation:
-			unusedWithoutExplanation = append(unusedWithoutExplanation, highlight)
-		case alreadyUsed && hasExplanation:
-			usedWithExplanation = append(usedWithExplanation, highlight)
-		default:
-			usedWithoutExplanation = append(usedWithoutExplanation, highlight)
-		}
-	}
-
-	shuffleHighlights(unusedWithExplanation, rng)
-	shuffleHighlights(unusedWithoutExplanation, rng)
-	shuffleHighlights(usedWithExplanation, rng)
-	shuffleHighlights(usedWithoutExplanation, rng)
-
-	ordered := make([]*domain.Highlight, 0, len(highlights))
-	ordered = append(ordered, unusedWithExplanation...)
-	ordered = append(ordered, unusedWithoutExplanation...)
-	ordered = append(ordered, usedWithExplanation...)
-	ordered = append(ordered, usedWithoutExplanation...)
-	return ordered
-}
-
-func highlightHasExplanation(highlight *domain.Highlight) bool {
-	return highlight != nil && highlight.Explanation != nil && strings.TrimSpace(*highlight.Explanation) != ""
-}
-
-func shuffleHighlights(highlights []*domain.Highlight, rng *rand.Rand) {
-	if len(highlights) <= 1 || rng == nil {
-		return
-	}
-
-	rng.Shuffle(len(highlights), func(i, j int) {
-		highlights[i], highlights[j] = highlights[j], highlights[i]
-	})
-}
-
-func buildGenerationMaterials(highlights []*domain.Highlight) []domain.ExtractedPoint {
-	materials := make([]domain.ExtractedPoint, 0, len(highlights))
-	for _, highlight := range highlights {
-		if highlight == nil {
-			continue
-		}
-
-		content := strings.TrimSpace(highlight.Content)
-		if content == "" {
-			continue
-		}
-
-		context := ""
-		if highlight.Explanation != nil {
-			context = strings.TrimSpace(*highlight.Explanation)
-		}
-
-		materials = append(materials, domain.ExtractedPoint{
-			Point:   content,
-			Context: context,
-		})
-	}
-
-	return materials
 }

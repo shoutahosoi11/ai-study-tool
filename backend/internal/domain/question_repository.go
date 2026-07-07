@@ -14,9 +14,6 @@ type GenerateQuestionsInput struct {
 	BookTitle           string
 	BookAuthor          string
 	QuestionCount       int
-	QuestionType        QuestionType
-	CustomInstruction   string
-	UserPlan            string
 	HighlightStartIndex int
 	HighlightEndIndex   int
 }
@@ -61,9 +58,15 @@ type QuestionRepository interface {
 	CompleteQuestionGenerationJob(ctx context.Context, userID uuid.UUID, jobID uuid.UUID, replacements []QuestionReplacement, highlightIDs []uuid.UUID) error
 }
 
-type QuestionUsecaseRepository interface {
-	QuestionCatalogReader
-	QuestionGenerationRepository
+// QuestionLearningRepository は学習フロー（一覧・保存）が必要とする
+// 読み取り+保存操作のみを公開する。
+type QuestionLearningRepository interface {
+	ListByCreatorID(ctx context.Context, creatorID string, limit int) ([]*Question, error)
+	ListSavedByUserID(ctx context.Context, userID string, limit int) ([]*SavedQuestion, error)
+	ListIncorrectByUserID(ctx context.Context, userID string, limit int) ([]*IncorrectQuestion, error)
+	ListPreparedByUserIDAndHighlightIDs(ctx context.Context, userID string, highlightIDs []uuid.UUID, limit int) ([]*Question, error)
+	FindByID(ctx context.Context, id string) (*Question, *QuestionMeta, *QuestionStats, error)
+	SaveForUser(ctx context.Context, userID, questionID, note string) error
 }
 
 type AnswerQuestionRepository interface {
