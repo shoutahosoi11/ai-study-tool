@@ -81,7 +81,7 @@ func TestImportSharedReturnsSavedHighlight(t *testing.T) {
 		bulkUpsertSaved: 1,
 		persistedAt:     time.Date(2026, 4, 24, 11, 0, 0, 0, time.UTC),
 	}
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(repo), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(repo), usecase.NewHighlightQueryUsecase(repo), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: userID, FirebaseUID: firebaseUID}, nil
 		},
@@ -140,7 +140,7 @@ func TestImportExtensionUsesHighlightImportPath(t *testing.T) {
 		bulkUpsertSaved: 1,
 		persistedAt:     time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
 	}
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(repo), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(repo), usecase.NewHighlightQueryUsecase(repo), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: userID, FirebaseUID: firebaseUID}, nil
 		},
@@ -172,7 +172,7 @@ func TestImportExtensionUsesHighlightImportPath(t *testing.T) {
 
 func TestImportSharedReturnsBadRequestForEmptyContent(t *testing.T) {
 	e := echo.New()
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(&stubHighlightRepository{}), usecase.NewHighlightQueryUsecase(&stubHighlightRepository{}), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
 		},
@@ -205,7 +205,7 @@ func TestImportPasteReturnsCreatedID(t *testing.T) {
 		bulkUpsertSaved: 1,
 		persistedAt:     time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
 	}
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(repo), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(repo), usecase.NewHighlightQueryUsecase(repo), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: userID, FirebaseUID: firebaseUID}, nil
 		},
@@ -246,7 +246,7 @@ func TestImportPasteReturnsCreatedID(t *testing.T) {
 
 func TestImportPasteDuplicateReturnsDuplicateKey(t *testing.T) {
 	e := echo.New()
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(&stubHighlightRepository{}), usecase.NewHighlightQueryUsecase(&stubHighlightRepository{}), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
 		},
@@ -279,7 +279,7 @@ func TestImportPasteDuplicateReturnsDuplicateKey(t *testing.T) {
 
 func TestImportPasteReturnsBadRequestForInvalidSourceURL(t *testing.T) {
 	e := echo.New()
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(&stubHighlightRepository{}), usecase.NewHighlightQueryUsecase(&stubHighlightRepository{}), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
 		},
@@ -316,7 +316,7 @@ func TestCheckExistingHashesReturnsMatches(t *testing.T) {
 			hash3,
 		},
 	}
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(repo), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(repo), usecase.NewHighlightQueryUsecase(repo), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
 		},
@@ -349,7 +349,7 @@ func TestCheckExistingHashesReturnsMatches(t *testing.T) {
 
 func TestCheckExistingHashesRejectsInvalidHash(t *testing.T) {
 	e := echo.New()
-	handler := NewHighlightHandler(usecase.NewHighlightUsecase(&stubHighlightRepository{}), &stubUserUsecase{
+	handler := NewHighlightHandler(usecase.NewHighlightImportUsecase(&stubHighlightRepository{}), usecase.NewHighlightQueryUsecase(&stubHighlightRepository{}), &stubUserUsecase{
 		getByFirebaseUID: func(ctx context.Context, firebaseUID string) (*domain.User, error) {
 			return &domain.User{ID: uuid.New(), FirebaseUID: firebaseUID}, nil
 		},

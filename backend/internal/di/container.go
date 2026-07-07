@@ -201,7 +201,8 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	highlightUsecase := usecase.NewHighlightUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
+	highlightImportUsecase := usecase.NewHighlightImportUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
+	highlightQueryUsecase := usecase.NewHighlightQueryUsecase(highlightRepo)
 	highlightImportJobUsecase := usecase.NewHighlightImportJobUsecase(importQueueRepo, highlightRepo)
 	tokenUsecase := usecase.NewTokenUsecaseWithAdRewardSecretAndEnv(questionBudgetRepo, infraadmob.NewSSVVerifierFromEnv(), os.Getenv("AD_REWARD_HMAC_SECRET"), appEnv)
 	billingUsecase := usecase.NewBillingUsecase(
@@ -222,7 +223,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)
 	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase, questionSyncUsecase)
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
-	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
+	highlightHandler := handler.NewHighlightHandler(highlightImportUsecase, highlightQueryUsecase, userUsecase)
 	tokenHandler := handler.NewTokenHandler(tokenUsecase, userUsecase)
 	stripeHandler := handler.NewStripeHandler(billingUsecase, userUsecase)
 	authHandler := handler.NewAuthHandler(sessionCookieClient, appEnv, os.Getenv("SESSION_COOKIE_DOMAIN"))
