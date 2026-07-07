@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -52,7 +52,7 @@ func (h *TaskHandler) HandleQuestionGeneration(c echo.Context) error {
 	}
 
 	if err := h.questionWorker.ProcessQuestionGenerationJob(c.Request().Context(), jobID, userID); err != nil {
-		log.Printf("task handler: question generation failed job_id=%s user_id=%s err=%v", jobID, userID, err)
+		slog.Error("task_handler_error", "operation", "question_generation", "job_id", jobID.String(), "user_id", userID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "question generation task failed")
 	}
 	return c.NoContent(http.StatusOK)
@@ -85,7 +85,7 @@ func (h *TaskHandler) HandleHighlightImport(c echo.Context) error {
 		if errors.Is(err, domain.ErrForbidden) {
 			return echo.NewHTTPError(http.StatusForbidden, "highlight import task user mismatch")
 		}
-		log.Printf("task handler: highlight import failed queue_id=%s user_id=%s err=%v", queueID, req.UserID, err)
+		slog.Error("task_handler_error", "operation", "highlight_import", "queue_id", queueID.String(), "user_id", userID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "highlight import task failed")
 	}
 	return c.NoContent(http.StatusOK)

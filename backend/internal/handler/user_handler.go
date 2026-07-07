@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -58,7 +58,7 @@ func (h *UserHandler) SignUp(c echo.Context) error {
 		if errors.Is(err, domain.ErrAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "username already taken")
 		}
-		log.Printf("user signup error: %v", err)
+		slog.Error("user_handler_error", "operation", "signup", "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -86,7 +86,7 @@ func (h *UserHandler) GetUser(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
-		log.Printf("user get public profile error: %v", err)
+		slog.Error("user_handler_error", "operation", "get_public_profile", "user_id", id.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -117,7 +117,7 @@ func (h *UserHandler) UpdateProfile(c echo.Context) error {
 		if errors.Is(err, domain.ErrAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "username already taken")
 		}
-		log.Printf("user updateProfile error: %v", err)
+		slog.Error("user_handler_error", "operation", "update_profile", "user_id", me.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -145,7 +145,7 @@ func (h *UserHandler) UpdateQuestionSettings(c echo.Context) error {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid question settings")
 		}
-		log.Printf("user updateQuestionSettings error: %v", err)
+		slog.Error("user_handler_error", "operation", "update_question_settings", "user_id", me.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
