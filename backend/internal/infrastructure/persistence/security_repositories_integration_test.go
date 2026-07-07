@@ -196,21 +196,21 @@ func applySecurityRepositoryMigrations(t *testing.T, db *sql.DB) {
 func rollbackSecurityRepositoryMigrations(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
-DROP TABLE IF EXISTS admob_ssv_events;
-DROP TABLE IF EXISTS subscriptions;
-DROP TABLE IF EXISTS stripe_events;
-DROP TABLE IF EXISTS extension_pairings;
-DROP TABLE IF EXISTS extension_tokens;
-DROP TABLE IF EXISTS ad_reward_claims;
-DROP TABLE IF EXISTS user_ad_tokens;
-DROP TABLE IF EXISTS question_daily_budgets;
-DROP TABLE IF EXISTS rate_limit_counters;
-DROP TABLE IF EXISTS question_generation_job_highlights;
-DROP TABLE IF EXISTS question_generation_jobs;
-DROP TABLE IF EXISTS highlights;
-DROP TABLE IF EXISTS books;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS fields;
+DROP TABLE IF EXISTS admob_ssv_events CASCADE;
+DROP TABLE IF EXISTS subscriptions CASCADE;
+DROP TABLE IF EXISTS stripe_events CASCADE;
+DROP TABLE IF EXISTS extension_pairings CASCADE;
+DROP TABLE IF EXISTS extension_tokens CASCADE;
+DROP TABLE IF EXISTS ad_reward_claims CASCADE;
+DROP TABLE IF EXISTS user_ad_tokens CASCADE;
+DROP TABLE IF EXISTS question_daily_budgets CASCADE;
+DROP TABLE IF EXISTS rate_limit_counters CASCADE;
+DROP TABLE IF EXISTS question_generation_job_highlights CASCADE;
+DROP TABLE IF EXISTS question_generation_jobs CASCADE;
+DROP TABLE IF EXISTS highlights CASCADE;
+DROP TABLE IF EXISTS books CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS fields CASCADE;
 `); err != nil {
 		t.Fatalf("rollback security repository migrations: %v", err)
 	}

@@ -139,7 +139,9 @@ func applyGlobalLLMRepositoryMigrations(t *testing.T, db *sql.DB) {
 		"002_create_users.sql",
 		"003_create_books.sql",
 		"006_create_highlights.sql",
+		"018_alter_highlights_for_kindle.sql",
 		"008_create_questions.sql",
+		"027_add_questions_highlight_id.sql",
 		"032_create_question_generation_jobs.sql",
 		"048_create_global_llm_budgets.sql",
 	} {
@@ -150,15 +152,15 @@ func applyGlobalLLMRepositoryMigrations(t *testing.T, db *sql.DB) {
 func rollbackGlobalLLMRepositoryMigrations(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
-DROP TABLE IF EXISTS llm_usage_logs;
-DROP TABLE IF EXISTS global_llm_budgets;
-DROP TABLE IF EXISTS question_generation_job_highlights;
-DROP TABLE IF EXISTS question_generation_jobs;
-DROP TABLE IF EXISTS questions;
-DROP TABLE IF EXISTS highlights;
-DROP TABLE IF EXISTS books;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS fields;
+DROP TABLE IF EXISTS llm_usage_logs CASCADE;
+DROP TABLE IF EXISTS global_llm_budgets CASCADE;
+DROP TABLE IF EXISTS question_generation_job_highlights CASCADE;
+DROP TABLE IF EXISTS question_generation_jobs CASCADE;
+DROP TABLE IF EXISTS questions CASCADE;
+DROP TABLE IF EXISTS highlights CASCADE;
+DROP TABLE IF EXISTS books CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS fields CASCADE;
 `); err != nil {
 		t.Fatalf("rollback global llm migrations: %v", err)
 	}
@@ -171,7 +173,9 @@ func applyHighlightRepositoryMigrations(t *testing.T, db *sql.DB) {
 		"002_create_users.sql",
 		"003_create_books.sql",
 		"006_create_highlights.sql",
+		"018_alter_highlights_for_kindle.sql",
 		"008_create_questions.sql",
+		"027_add_questions_highlight_id.sql",
 		"029_add_async_question_generation.sql",
 		"035_add_highlights_book_status_index.sql",
 		"037_add_highlight_book_order_index.sql",
@@ -184,16 +188,16 @@ func applyHighlightRepositoryMigrations(t *testing.T, db *sql.DB) {
 func rollbackHighlightRepositoryMigrations(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
-DROP INDEX IF EXISTS uq_highlights_book_order_index;
-DROP INDEX IF EXISTS idx_highlights_user_book_status;
-DROP INDEX IF EXISTS idx_highlights_status_user_requested_at;
-DROP INDEX IF EXISTS highlights_user_id_content_hash_idx;
-DROP TABLE IF EXISTS regeneration_queue;
-DROP TABLE IF EXISTS questions;
-DROP TABLE IF EXISTS highlights;
-DROP TABLE IF EXISTS books;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS fields;
+DROP INDEX IF EXISTS uq_highlights_book_order_index CASCADE;
+DROP INDEX IF EXISTS idx_highlights_user_book_status CASCADE;
+DROP INDEX IF EXISTS idx_highlights_status_user_requested_at CASCADE;
+DROP INDEX IF EXISTS highlights_user_id_content_hash_idx CASCADE;
+DROP TABLE IF EXISTS regeneration_queue CASCADE;
+DROP TABLE IF EXISTS questions CASCADE;
+DROP TABLE IF EXISTS highlights CASCADE;
+DROP TABLE IF EXISTS books CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS fields CASCADE;
 `); err != nil {
 		t.Fatalf("rollback highlight migrations: %v", err)
 	}

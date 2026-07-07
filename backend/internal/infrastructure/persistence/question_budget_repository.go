@@ -261,6 +261,8 @@ WHERE user_id = $1 AND used_at IS NULL
 }
 
 func (r *questionBudgetRepository) consumeTokensTx(ctx context.Context, tx *sql.Tx, userID uuid.UUID, needed int) error {
+	// 同一トランザクション（=同一接続）では、結果セットを開いたまま別の
+	// ステートメントを実行できないため、先に全件読み切ってから更新する。
 	rows, err := tx.QueryContext(ctx, `
 SELECT id, token_count
 FROM user_ad_tokens
@@ -271,31 +273,44 @@ FOR UPDATE
 	if err != nil {
 		return fmt.Errorf("question budget repo: list tokens: %w", err)
 	}
-	defer rows.Close()
 
-	remaining := needed
-	for rows.Next() && remaining > 0 {
-		var id uuid.UUID
-		var count int
-		if err := rows.Scan(&id, &count); err != nil {
+	type adToken struct {
+		id    uuid.UUID
+		count int
+	}
+	var tokens []adToken
+	for rows.Next() {
+		var token adToken
+		if err := rows.Scan(&token.id, &token.count); err != nil {
+			rows.Close()
 			return fmt.Errorf("question budget repo: scan token: %w", err)
 		}
-		if count <= remaining {
-			if _, err := tx.ExecContext(ctx, `UPDATE user_ad_tokens SET used_at = NOW() WHERE id = $1`, id); err != nil {
+		tokens = append(tokens, token)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("question budget repo: rows tokens: %w", err)
+	}
+	rows.Close()
+
+	remaining := needed
+	for _, token := range tokens {
+		if remaining <= 0 {
+			break
+		}
+		if token.count <= remaining {
+			if _, err := tx.ExecContext(ctx, `UPDATE user_ad_tokens SET used_at = NOW() WHERE id = $1`, token.id); err != nil {
 				return fmt.Errorf("question budget repo: mark token used: %w", err)
 			}
-			remaining -= count
+			remaining -= token.count
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `
 UPDATE user_ad_tokens SET token_count = token_count - $2 WHERE id = $1
-`, id, remaining); err != nil {
+`, token.id, remaining); err != nil {
 			return fmt.Errorf("question budget repo: split token: %w", err)
 		}
 		remaining = 0
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("question budget repo: rows tokens: %w", err)
 	}
 	if remaining > 0 {
 		return domain.ErrQuestionBudgetExceeded

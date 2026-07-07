@@ -152,17 +152,17 @@ func applyQuestionGenerationJobMigrations(t *testing.T, db *sql.DB) {
 func applyQuestionGenerationJobRollback(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
-DROP INDEX IF EXISTS idx_highlights_user_book_status;
-DROP INDEX IF EXISTS idx_highlights_user_updated_at;
-DROP INDEX IF EXISTS idx_questions_user_active_highlight;
+DROP INDEX IF EXISTS idx_highlights_user_book_status CASCADE;
+DROP INDEX IF EXISTS idx_highlights_user_updated_at CASCADE;
+DROP INDEX IF EXISTS idx_questions_user_active_highlight CASCADE;
 ALTER TABLE highlights DROP COLUMN IF EXISTS book_key;
 ALTER TABLE users DROP COLUMN IF EXISTS last_sync_at;
-DROP INDEX IF EXISTS idx_questions_active_by_highlight;
+DROP INDEX IF EXISTS idx_questions_active_by_highlight CASCADE;
 ALTER TABLE questions DROP COLUMN IF EXISTS superseded_at;
-DROP TABLE IF EXISTS question_generation_job_highlights;
-DROP INDEX IF EXISTS idx_question_generation_jobs_enqueue_failed;
-DROP INDEX IF EXISTS uq_question_generation_jobs_active;
-DROP TABLE IF EXISTS question_generation_jobs;
+DROP TABLE IF EXISTS question_generation_job_highlights CASCADE;
+DROP INDEX IF EXISTS idx_question_generation_jobs_enqueue_failed CASCADE;
+DROP INDEX IF EXISTS uq_question_generation_jobs_active CASCADE;
+DROP TABLE IF EXISTS question_generation_jobs CASCADE;
 `); err != nil {
 		t.Fatalf("rollback phase1 migrations: %v", err)
 	}
