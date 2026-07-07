@@ -284,7 +284,7 @@ func TestGetMeReturnsUnauthorizedWithoutFirebaseUID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
-	handler := NewUserHandler(&stubUserUsecase{})
+	handler := NewUserHandler(&stubUserUsecase{}, nil)
 
 	err := handler.GetMe(c)
 	if err == nil {
@@ -308,7 +308,7 @@ func TestGetUserReturnsBadRequestForInvalidUUID(t *testing.T) {
 	c.SetParamNames("id")
 	c.SetParamValues("not-a-uuid")
 
-	handler := NewUserHandler(&stubUserUsecase{})
+	handler := NewUserHandler(&stubUserUsecase{}, nil)
 
 	err := handler.GetUser(c)
 	if err == nil {
@@ -338,7 +338,7 @@ func TestGetUserReturnsNotFoundWhenRepositoryMisses(t *testing.T) {
 			return nil, domain.ErrNotFound
 		},
 	}
-	handler := NewUserHandler(userUsecase)
+	handler := NewUserHandler(userUsecase, nil)
 
 	err := handler.GetUser(c)
 	if err == nil {
@@ -387,7 +387,7 @@ func TestUpdateProfileReturnsConflictWhenUsernameAlreadyExists(t *testing.T) {
 			return nil, domain.ErrAlreadyExists
 		},
 	}
-	handler := NewUserHandler(userUsecase)
+	handler := NewUserHandler(userUsecase, nil)
 
 	err := handler.UpdateProfile(c)
 	if err == nil {
@@ -426,7 +426,7 @@ func TestGetUserWritesPublicProfileResponse(t *testing.T) {
 			}, nil
 		},
 	}
-	handler := NewUserHandler(userUsecase)
+	handler := NewUserHandler(userUsecase, nil)
 
 	if err := handler.GetUser(c); err != nil {
 		t.Fatalf("unexpected error: %v", err)

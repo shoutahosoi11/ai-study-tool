@@ -26,11 +26,37 @@ const (
 
 // ユーザーデータに関する処理をするための部品などをまとめたファイル
 type UserHandler struct {
-	userUsecase usecase.UserUsecaseInterface
+	userUsecase     usecase.UserUsecaseInterface
+	accountDeletion *usecase.AccountDeletionUsecase
 }
 
-func NewUserHandler(userUsecase usecase.UserUsecaseInterface) *UserHandler {
-	return &UserHandler{userUsecase: userUsecase}
+func NewUserHandler(userUsecase usecase.UserUsecaseInterface, accountDeletion *usecase.AccountDeletionUsecase) *UserHandler {
+	return &UserHandler{userUsecase: userUsecase, accountDeletion: accountDeletion}
+}
+
+// DeleteMe は認証中ユーザーのアカウントと全データを削除する（退会）。
+func (h *UserHandler) DeleteMe(c echo.Context) error {
+	user, err := resolveCurrentUser(c, h.userUsecase, "user")
+	if err != nil {
+		return err
+	}
+	firebaseUID, ok := middleware.GetFirebaseUID(c)
+	if !ok {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+	}
+
+	if err := h.accountDeletion.DeleteAccount(c.Request().Context(), user.ID, firebaseUID); err != nil {
+		if errors.Is(err, domain.ErrAccountHasAdminRole) {
+			return echo.NewHTTPError(http.StatusForbidden, "admin accounts cannot be deleted")
+		}
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		slog.Error("user_handler_error", "operation", "delete_me", "user_id", user.ID.String(), "error", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete account")
+	}
+
+	return c.NoContent(http.StatusNoContent)
 }
 
 func (h *UserHandler) SignUp(c echo.Context) error {

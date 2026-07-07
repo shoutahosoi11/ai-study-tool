@@ -123,6 +123,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	}
 
 	userRepo := postgresrepo.NewUserRepository(db)
+	userAccountDeleter := postgresrepo.NewUserAccountDeleter(db)
 	postRepo := postgresrepo.NewPostRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)
 	answerRepo := persistence.NewAnswerRepository(db)
@@ -218,7 +219,8 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	userHandler := handler.NewUserHandler(userUsecase)
+	accountDeletionUsecase := usecase.NewAccountDeletionUsecase(userAccountDeleter, sessionCookieClient)
+	userHandler := handler.NewUserHandler(userUsecase, accountDeletionUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
 	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)
 	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase, questionSyncUsecase)

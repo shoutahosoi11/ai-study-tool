@@ -21,6 +21,10 @@ func NewUserRepository(db *sql.DB) domain.UserRepository {
 	return &userRepository{db: db, queries: sqlcgen.New(db)}
 }
 
+func NewUserAccountDeleter(db *sql.DB) domain.UserAccountDeleter {
+	return &userRepository{db: db, queries: sqlcgen.New(db)}
+}
+
 func (r *userRepository) GetByFirebaseUID(ctx context.Context, firebaseUID string) (*domain.User, error) {
 	user, err := r.queries.GetUserByFirebaseUID(ctx, firebaseUID)
 	if err != nil {
@@ -99,6 +103,28 @@ func (r *userRepository) UpdateQuestionSettings(ctx context.Context, id uuid.UUI
 		return nil, wrapUserError("update question settings", err)
 	}
 	return toDomainUser(user), nil
+}
+
+func (r *userRepository) DeleteByID(ctx context.Context, id uuid.UUID) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		var pqErr *pq.Error
+		// admin_identities.admin_user_id は ON DELETE RESTRICT のため、
+		// 管理者アカウントの削除は外部キー違反として弾かれる。
+		if errors.As(err, &pqErr) && pqErr.Code == "23503" {
+			return fmt.Errorf("user repo: delete by id: %w", domain.ErrAccountHasAdminRole)
+		}
+		return fmt.Errorf("user repo: delete by id: %w", err)
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("user repo: delete by id rows affected: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("user repo: delete by id: %w", domain.ErrNotFound)
+	}
+	return nil
 }
 
 func wrapUserError(action string, err error) error {
