@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -86,6 +87,12 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 		return job, nil
 	}
 	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, user.ID); err != nil {
+		slog.Error("question_generation_event=enqueue_failed",
+			"source", "manual",
+			"job_id", job.ID.String(),
+			"user_id", user.ID.String(),
+			"error", err.Error(),
+		)
 		if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, user.ID, err.Error()); markErr != nil {
 			return nil, fmt.Errorf("manual generation usecase: mark enqueue failed: %w", markErr)
 		}

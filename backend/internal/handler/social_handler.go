@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -64,7 +63,10 @@ func (h *SocialHandler) ensureVisiblePost(c echo.Context, postID string) (string
 	}
 
 	if err := h.postUsecase.EnsureVisible(c.Request().Context(), viewerID, postUUID); err != nil {
-		return "", echo.NewHTTPError(http.StatusNotFound, "post not found")
+		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrForbidden) {
+			return "", echo.NewHTTPError(http.StatusNotFound, "post not found")
+		}
+		return "", internalError(c, "social.ensure_visible", err)
 	}
 
 	return userID, nil
@@ -83,7 +85,7 @@ func (h *SocialHandler) Follow(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
 	}
 	if err := h.socialUsecase.Follow(c.Request().Context(), userID, targetID); err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "followed"})
 }
@@ -101,7 +103,7 @@ func (h *SocialHandler) Unfollow(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
 	}
 	if err := h.socialUsecase.Unfollow(c.Request().Context(), userID, targetID); err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "unfollowed"})
 }
@@ -119,7 +121,7 @@ func (h *SocialHandler) Like(c echo.Context) error {
 		return err
 	}
 	if err := h.socialUsecase.Like(c.Request().Context(), userID, postID); err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "liked"})
 }
@@ -137,7 +139,7 @@ func (h *SocialHandler) Unlike(c echo.Context) error {
 		return err
 	}
 	if err := h.socialUsecase.Unlike(c.Request().Context(), userID, postID); err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "unliked"})
 }
@@ -155,7 +157,7 @@ func (h *SocialHandler) Repost(c echo.Context) error {
 		return err
 	}
 	if err := h.socialUsecase.Repost(c.Request().Context(), userID, postID); err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "reposted"})
 }
@@ -173,7 +175,7 @@ func (h *SocialHandler) Unrepost(c echo.Context) error {
 		return err
 	}
 	if err := h.socialUsecase.Unrepost(c.Request().Context(), userID, postID); err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "unreposted"})
 }
@@ -199,7 +201,7 @@ func (h *SocialHandler) CreateComment(c echo.Context) error {
 		Content: req.Content,
 	})
 	if err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 
 	return c.JSON(http.StatusCreated, toCommentResponse(comment))
@@ -219,7 +221,7 @@ func (h *SocialHandler) ListComments(c echo.Context) error {
 
 	comments, err := h.socialUsecase.ListComments(c.Request().Context(), postID, limit, offset)
 	if err != nil {
-		return h.socialError(err)
+		return h.socialError(c, "social", err)
 	}
 
 	responses := make([]dto.CommentResponse, 0, len(comments))
@@ -234,14 +236,14 @@ func (h *SocialHandler) ListComments(c echo.Context) error {
 	})
 }
 
-func (h *SocialHandler) socialError(err error) error {
+func (h *SocialHandler) socialError(c echo.Context, operation string, err error) error {
 	if errors.Is(err, domain.ErrNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "not found")
 	}
-	if strings.HasPrefix(err.Error(), "validation:") {
-		return echo.NewHTTPError(http.StatusBadRequest, strings.TrimPrefix(err.Error(), "validation: "))
+	if httpErr, ok := asValidationHTTPError(err); ok {
+		return httpErr
 	}
-	return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+	return internalError(c, operation, err)
 }
 
 func toCommentResponse(comment *domain.Comment) dto.CommentResponse {

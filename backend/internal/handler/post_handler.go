@@ -46,7 +46,7 @@ func (h *PostHandler) GetTimeline(c echo.Context) error {
 
 	posts, err := h.postUsecase.GetTimeline(c.Request().Context(), user.ID, limit, offset)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "post.get_timeline", err)
 	}
 
 	if posts == nil {
@@ -78,7 +78,10 @@ func (h *PostHandler) GetPost(c echo.Context) error {
 	}
 
 	if err := h.postUsecase.EnsureVisible(c.Request().Context(), user.ID, id); err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "post not found")
+		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrForbidden) {
+			return echo.NewHTTPError(http.StatusNotFound, "post not found")
+		}
+		return internalError(c, "post.ensure_visible", err)
 	}
 
 	post, err := h.postUsecase.GetByID(c.Request().Context(), id)
@@ -200,7 +203,7 @@ func (h *PostHandler) CreatePost(c echo.Context) error {
 
 	req := new(CreatePostRequest)
 	if err := c.Bind(req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
 	input := domain.CreatePostInput{
@@ -250,13 +253,13 @@ func (h *PostHandler) CreatePost(c echo.Context) error {
 
 	post, err := h.postUsecase.CreatePost(c.Request().Context(), input)
 	if err != nil {
-		if strings.HasPrefix(err.Error(), "validation:") {
-			return echo.NewHTTPError(http.StatusBadRequest, strings.TrimPrefix(err.Error(), "validation: "))
+		if httpErr, ok := asValidationHTTPError(err); ok {
+			return httpErr
 		}
 		if errors.Is(err, domain.ErrForbidden) {
 			return echo.NewHTTPError(http.StatusForbidden, "questions are not available for this user")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "post.create", err)
 	}
 
 	return c.JSON(http.StatusCreated, toPostResponse(post))
@@ -286,7 +289,10 @@ func (h *PostHandler) ListQuestions(c echo.Context) error {
 	}
 
 	if err := h.postUsecase.EnsureVisible(c.Request().Context(), user.ID, postID); err != nil {
-		return echo.NewHTTPError(http.StatusNotFound, "post not found")
+		if errors.Is(err, domain.ErrNotFound) || errors.Is(err, domain.ErrForbidden) {
+			return echo.NewHTTPError(http.StatusNotFound, "post not found")
+		}
+		return internalError(c, "post.ensure_visible", err)
 	}
 
 	questions, err := h.postUsecase.ListQuestionsByPostID(c.Request().Context(), postID)
@@ -294,7 +300,7 @@ func (h *PostHandler) ListQuestions(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "post not found")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "post.list_questions", err)
 	}
 
 	responses := make([]PostQuestionResponse, 0, len(questions))

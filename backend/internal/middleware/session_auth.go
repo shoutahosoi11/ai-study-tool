@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -79,5 +80,6 @@ func firebaseSessionCookieError(err error) *echo.HTTPError {
 	if isFirebaseSessionCookieClientError(err) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid, expired, or revoked session")
 	}
+	slog.Error("firebase_session_cookie_verify_failed", "error", err.Error())
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 }

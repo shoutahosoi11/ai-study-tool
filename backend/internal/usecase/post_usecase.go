@@ -41,24 +41,24 @@ func (u *PostUsecase) CreatePost(ctx context.Context, input domain.CreatePostInp
 	input.Body = strings.TrimSpace(input.Body)
 	input.BookTitle = strings.TrimSpace(input.BookTitle)
 	if input.Type == "question" && len(input.Questions) == 0 {
-		return nil, fmt.Errorf("validation: questions are required")
+		return nil, domain.NewValidationError("questions are required")
 	}
 	if input.Type == "question" && input.BookTitle == "" {
-		return nil, fmt.Errorf("validation: book title is required")
+		return nil, domain.NewValidationError("book title is required")
 	}
 	if input.Type == "question" && input.QuestionCount <= 0 {
 		input.QuestionCount = len(input.Questions)
 	}
 	if len(input.Questions) > maxPostQuestions {
-		return nil, fmt.Errorf("validation: questions must be %d items or less", maxPostQuestions)
+		return nil, domain.NewValidationError(fmt.Sprintf("questions must be %d items or less", maxPostQuestions))
 	}
 	if len([]rune(input.Body)) > 280 {
-		return nil, fmt.Errorf("validation: body must be 280 characters or less")
+		return nil, domain.NewValidationError("body must be 280 characters or less")
 	}
 	for index := range input.Questions {
 		input.Questions[index].Note = strings.TrimSpace(input.Questions[index].Note)
 		if len([]rune(input.Questions[index].Note)) > maxPostQuestionNoteLen {
-			return nil, fmt.Errorf("validation: question note must be %d characters or less", maxPostQuestionNoteLen)
+			return nil, domain.NewValidationError(fmt.Sprintf("question note must be %d characters or less", maxPostQuestionNoteLen))
 		}
 	}
 	return u.postRepo.Create(ctx, input)

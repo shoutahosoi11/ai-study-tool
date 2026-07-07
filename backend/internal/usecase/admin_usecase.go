@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -53,7 +54,7 @@ func (u *AdminUsecase) SearchUsers(ctx context.Context, admin domain.AdminIdenti
 	if err != nil {
 		return nil, fmt.Errorf("admin usecase: search users: %w", err)
 	}
-	_ = u.repo.CreateAuditLog(ctx, domain.AdminAuditLogInput{
+	u.auditLog(ctx, domain.AdminAuditLogInput{
 		AdminUserID: admin.UserID,
 		Action:      "user_lookup",
 		TargetType:  "user",
@@ -73,7 +74,7 @@ func (u *AdminUsecase) GetUser(ctx context.Context, admin domain.AdminIdentity, 
 	if err != nil {
 		return nil, fmt.Errorf("admin usecase: get user: %w", err)
 	}
-	_ = u.repo.CreateAuditLog(ctx, domain.AdminAuditLogInput{
+	u.auditLog(ctx, domain.AdminAuditLogInput{
 		AdminUserID: admin.UserID,
 		Action:      "user_detail_view",
 		TargetType:  "user",
@@ -90,7 +91,7 @@ func (u *AdminUsecase) ListExtensionTokens(ctx context.Context, admin domain.Adm
 	if err != nil {
 		return nil, fmt.Errorf("admin usecase: list extension tokens: %w", err)
 	}
-	_ = u.repo.CreateAuditLog(ctx, domain.AdminAuditLogInput{
+	u.auditLog(ctx, domain.AdminAuditLogInput{
 		AdminUserID: admin.UserID,
 		Action:      "extension_token_list",
 		TargetType:  "user",
@@ -184,7 +185,9 @@ func (u *AdminUsecase) RetryGenerationJob(ctx context.Context, admin domain.Admi
 		return nil
 	}
 	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID); err != nil {
-		_ = u.repo.MarkGenerationJobEnqueueFailed(ctx, admin.UserID, job.ID, u.now().UTC())
+		if markErr := u.repo.MarkGenerationJobEnqueueFailed(ctx, admin.UserID, job.ID, u.now().UTC()); markErr != nil {
+			slog.Error("admin_mark_enqueue_failed_error", "job_id", job.ID.String(), "error", markErr.Error())
+		}
 		return fmt.Errorf("admin usecase: enqueue retry generation job: %w", err)
 	}
 	return nil
@@ -233,4 +236,12 @@ func classifyUserLookupQuery(query string) string {
 		return "stripe_subscription"
 	}
 	return "firebase_uid"
+}
+
+// auditLog records a read-side admin action. Failures must not fail the read,
+// but a persistently broken audit insert has to be visible in logs.
+func (u *AdminUsecase) auditLog(ctx context.Context, input domain.AdminAuditLogInput) {
+	if err := u.repo.CreateAuditLog(ctx, input); err != nil {
+		slog.Warn("admin_audit_log_failed", "action", input.Action, "error", err.Error())
+	}
 }

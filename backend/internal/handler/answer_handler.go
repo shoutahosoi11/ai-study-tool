@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"github.com/shout/ai-study-tool/backend/internal/middleware"
 	"net/http"
 	"strings"
 
@@ -62,11 +63,14 @@ func (h *AnswerHandler) SubmitAnswer(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "question not found")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "answer.submit", err)
 	}
+	// The answer is already persisted; the post-answer book evaluation is
+	// best-effort. Failing the request here would hide the grading result and
+	// invite a duplicate submission on retry.
 	if h.questionSyncUsecase != nil {
 		if err := h.questionSyncUsecase.EvaluateBookAfterAnswer(c.Request().Context(), user, questionID); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+			middleware.RequestLogger(c).Error("handler_error", "operation", "answer.evaluate_book", "error", err.Error())
 		}
 	}
 

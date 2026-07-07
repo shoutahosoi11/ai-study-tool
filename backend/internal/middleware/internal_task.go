@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -35,6 +36,9 @@ func RequireInternalTaskAuthWithSecretFallback(secret string, handlerBaseURL str
 			if baseURL != "" {
 				if hasBearerToken(c.Request()) {
 					if err := validateInternalTaskOIDC(c.Request().Context(), c.Request(), baseURL, expectedEmail); err != nil {
+						// A misconfigured invoker service account bounces every
+						// task delivery; the validation reason has no secrets.
+						slog.Warn("internal_task_oidc_rejected", "error", err.Error())
 						return echo.NewHTTPError(http.StatusUnauthorized, "invalid internal task authentication")
 					}
 					return next(c)

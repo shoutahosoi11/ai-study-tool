@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -72,6 +73,9 @@ func firebaseAuthError(err error) *echo.HTTPError {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid, expired, or revoked token")
 	}
 
+	// Infrastructure failure: without this log a Firebase outage is invisible
+	// beyond the bare 503 status. The SDK error text carries no token material.
+	slog.Error("firebase_id_token_verify_failed", "error", err.Error())
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 }
 

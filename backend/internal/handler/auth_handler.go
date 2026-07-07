@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -89,6 +90,7 @@ func (h *AuthHandler) LogoutAll(c echo.Context) error {
 	}
 
 	if err := h.sessionManager.RevokeRefreshTokens(c.Request().Context(), currentUID); err != nil {
+		middleware.RequestLogger(c).Error("auth_revoke_refresh_tokens_failed", "error", err.Error())
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 	}
 
@@ -106,6 +108,7 @@ func (h *AuthHandler) issueSession(c echo.Context, idToken string, expectedUID s
 		return h.idTokenHTTPError(err)
 	}
 	if token == nil || token.UID == "" {
+		middleware.RequestLogger(c).Error("auth_verified_token_missing_uid")
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 	}
 	if expectedUID != "" && token.UID != expectedUID {
@@ -117,17 +120,20 @@ func (h *AuthHandler) issueSession(c echo.Context, idToken string, expectedUID s
 
 	sessionCookie, err := h.sessionManager.CreateSessionCookie(c.Request().Context(), idToken, sessionCookieLifetime)
 	if err != nil {
+		middleware.RequestLogger(c).Error("auth_create_session_cookie_failed", "error", err.Error())
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 	}
 
 	csrfRaw, err := h.randomToken()
 	if err != nil {
+		middleware.RequestLogger(c).Error("auth_csrf_token_generation_failed", "error", err.Error())
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 	}
 	csrfToken := csrfRaw
 	if !h.csrfUnsigned {
 		signedToken, err := middleware.SignCSRFToken(h.csrfSecret, token.UID, csrfRaw)
 		if err != nil {
+			middleware.RequestLogger(c).Error("auth_csrf_token_sign_failed", "error", err.Error())
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 		}
 		csrfToken = signedToken
@@ -202,6 +208,7 @@ func (h *AuthHandler) idTokenHTTPError(err error) *echo.HTTPError {
 	if h.idTokenError != nil && h.idTokenError(err) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid id token")
 	}
+	slog.Error("auth_id_token_verify_failed", "error", err.Error())
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 }
 
