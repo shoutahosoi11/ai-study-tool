@@ -332,7 +332,7 @@ func (r *QuestionGenerationJobRepository) loadHighlightIDsForJobs(ctx context.Co
 	rows, err := r.db.QueryContext(ctx, `
 SELECT job_id::text, ARRAY_AGG(highlight_id::text ORDER BY highlight_id)::text[] AS highlight_ids
 FROM question_generation_job_highlights
-WHERE job_id::text = ANY($1)
+WHERE job_id = ANY($1::uuid[])
 GROUP BY job_id
 `, pq.Array(uuidStrings(jobIDs)))
 	if err != nil {

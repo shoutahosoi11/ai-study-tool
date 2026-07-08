@@ -143,7 +143,7 @@ UPDATE questions
 SET superseded_at = NOW(),
     updated_at = NOW()
 WHERE user_id = $1
-  AND highlight_id::text = ANY($2)
+  AND highlight_id = ANY($2::uuid[])
   AND superseded_at IS NULL
 `, userID, pq.Array(uuidTextSlice(uniqueUUIDs(highlightIDs))))
 	return err
@@ -332,7 +332,7 @@ SET
     last_error = NULL,
     updated_at = NOW()
 WHERE user_id = $1
-  AND id::text = ANY($2)
+  AND id = ANY($2::uuid[])
 `, userID, pq.Array(uuidStrings(highlightIDs))); err != nil {
 			return fmt.Errorf("question repo: mark job highlights completed: %w", err)
 		}
@@ -540,7 +540,7 @@ LEFT JOIN answers a
  AND a.user_id = $1
 WHERE q.user_id = $1
   AND q.superseded_at IS NULL
-  AND q.highlight_id::text = ANY($2)
+  AND q.highlight_id = ANY($2::uuid[])
 ORDER BY CASE WHEN a.question_id IS NULL THEN 0 ELSE 1 END ASC, q.created_at DESC
 LIMIT $3`
 
@@ -638,7 +638,7 @@ SELECT DISTINCT highlight_id
 FROM questions
 WHERE user_id = $1
   AND highlight_id IS NOT NULL
-  AND highlight_id::text = ANY($2)`
+  AND highlight_id = ANY($2::uuid[])`
 
 	rows, err := r.db.QueryContext(ctx, query, uID, pq.Array(highlightIDStrings))
 	if err != nil {
