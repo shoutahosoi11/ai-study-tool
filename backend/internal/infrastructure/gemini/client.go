@@ -22,7 +22,9 @@ import (
 const (
 	ModelDefault = "gemini-2.5-flash-lite"
 
-	defaultTimeoutSeconds      = 90
+	// Per-attempt timeout must be shorter than the total budget, otherwise a
+	// single hung attempt consumes the whole budget and retries never fire.
+	defaultTimeoutSeconds      = 45
 	defaultTotalTimeoutSeconds = 60
 	defaultMaxRetries          = 2
 	defaultRetryBaseDelay      = 1500 * time.Millisecond

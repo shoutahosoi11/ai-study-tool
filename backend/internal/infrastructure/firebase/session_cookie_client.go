@@ -28,8 +28,12 @@ func (c *SessionCookieClient) CreateSessionCookie(ctx context.Context, idToken s
 	return c.client.SessionCookie(ctx, idToken, expiresIn)
 }
 
-func (c *SessionCookieClient) VerifySessionCookieAndCheckRevoked(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
-	token, err := c.client.VerifySessionCookieAndCheckRevoked(ctx, sessionCookie)
+// VerifySessionCookie verifies the cookie signature locally against cached
+// Firebase certs. The ...AndCheckRevoked variant added a remote accounts:lookup
+// call to every request; revocation-sensitive operations are guarded by
+// RequireRecentAuth instead.
+func (c *SessionCookieClient) VerifySessionCookie(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
+	token, err := c.client.VerifySessionCookie(ctx, sessionCookie)
 	if err != nil {
 		return nil, err
 	}

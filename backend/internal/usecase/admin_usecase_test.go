@@ -182,7 +182,7 @@ type stubSessionCookieManager struct {
 	revokeCalled bool
 }
 
-func (s *stubSessionCookieManager) VerifySessionCookieAndCheckRevoked(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
+func (s *stubSessionCookieManager) VerifySessionCookie(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
 	return nil, nil
 }
 

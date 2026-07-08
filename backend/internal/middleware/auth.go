@@ -14,7 +14,7 @@ import (
 // TokenVerifier は Firebase のトークン検証を抽象化するための interface。
 // auth.Client の具体的な実装に直接依存しないようにして、テストで差し替えやすくしている。
 type TokenVerifier interface {
-	VerifyIDTokenAndCheckRevoked(ctx context.Context, idToken string) (*auth.Token, error)
+	VerifyIDToken(ctx context.Context, idToken string) (*auth.Token, error)
 }
 
 var isFirebaseIDTokenClientError = func(err error) bool {
@@ -50,7 +50,7 @@ func (m *FirebaseMiddleware) Authenticate(next echo.HandlerFunc) echo.HandlerFun
 			return echo.NewHTTPError(http.StatusUnauthorized, "invalid authorization header format")
 		}
 
-		token, err := m.verifier.VerifyIDTokenAndCheckRevoked(c.Request().Context(), idToken)
+		token, err := m.verifier.VerifyIDToken(c.Request().Context(), idToken)
 		if err != nil {
 			return firebaseAuthError(err)
 		}
