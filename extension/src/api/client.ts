@@ -1,4 +1,4 @@
-import type { ImportErrorCode, ImportErrorResult, ImportHighlightItem, ImportHighlightsResponse, ImportResult, KindleHighlight } from '../types'
+import type { ImportErrorCode, ImportHighlightItem, ImportHighlightsResponse, ImportResult, KindleHighlight } from '../types'
 import { apiV1BaseUrl } from '../utils/url'
 
 export class ExtensionApiError extends Error {
@@ -6,6 +6,7 @@ export class ExtensionApiError extends Error {
 
   constructor(code: ImportErrorCode, message: string) {
     super(message)
+    Object.setPrototypeOf(this, new.target.prototype)
     this.name = 'ExtensionApiError'
     this.code = code
   }
@@ -103,18 +104,18 @@ export function toImportHighlightItem(highlight: KindleHighlight): ImportHighlig
   }
 }
 
-export function errorForStatus(status: number): ImportErrorResult {
+export function errorForStatus(status: number): ExtensionApiError {
   if (status === 401) {
-    return { ok: false, code: 'unauthorized', message: '接続が失効しました。再接続してください。' }
+    return new ExtensionApiError('unauthorized', '接続が失効しました。再接続してください。')
   }
   if (status === 403) {
-    return { ok: false, code: 'forbidden', message: '拡張機能の権限が不足しています。' }
+    return new ExtensionApiError('forbidden', '拡張機能の権限が不足しています。')
   }
   if (status === 429) {
-    return { ok: false, code: 'rate_limited', message: '取り込み回数が多すぎます。時間を置いて再試行してください。' }
+    return new ExtensionApiError('rate_limited', '取り込み回数が多すぎます。時間を置いて再試行してください。')
   }
   if (status >= 500) {
-    return { ok: false, code: 'server_error', message: 'サーバー側の一時的なエラーです。' }
+    return new ExtensionApiError('server_error', 'サーバー側の一時的なエラーです。')
   }
-  return { ok: false, code: 'bad_request', message: 'リクエストを処理できませんでした。' }
+  return new ExtensionApiError('bad_request', 'リクエストを処理できませんでした。')
 }

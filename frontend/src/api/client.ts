@@ -1,6 +1,7 @@
 import axios, { AxiosHeaders } from 'axios'
 import type { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import { createWebSession, getIdToken, getStoredCSRFToken } from './auth'
+import { getApiErrorMessage } from './errors'
 
 type RetriableRequestConfig = InternalAxiosRequestConfig & {
   _retry?: boolean
@@ -49,14 +50,19 @@ apiClient.interceptors.response.use(
     }
 
     if (error.response?.status === 403 && config && !config._retry) {
-      config._retry = true
-      try {
-        const sessionCreated = await createWebSession(true)
-        if (sessionCreated) {
-          return apiClient.request(config)
+      // Only retry when the 403 comes from an expired session or a CSRF token
+      // mismatch. Genuine authorization failures must propagate immediately.
+      const errorMessage = getApiErrorMessage(error).toLowerCase()
+      if (errorMessage.includes('csrf') || errorMessage.includes('session')) {
+        config._retry = true
+        try {
+          const sessionCreated = await createWebSession(true)
+          if (sessionCreated) {
+            return apiClient.request(config)
+          }
+        } catch {
+          return Promise.reject(error)
         }
-      } catch {
-        return Promise.reject(error)
       }
     }
 

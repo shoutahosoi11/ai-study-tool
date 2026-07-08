@@ -52,10 +52,8 @@ export function SignupPage() {
         const apiMessage = getApiErrorMessage(err);
         if (apiMessage === "user already exists") {
           setError("このユーザー名は既に使用されています");
-        } else if (apiMessage) {
-          setError(apiMessage);
         } else {
-          setError("アカウント作成に失敗しました");
+          setError("アカウント作成に失敗しました。時間をおいて再度お試しください");
         }
       }
     } finally {
