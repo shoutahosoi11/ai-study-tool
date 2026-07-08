@@ -174,6 +174,10 @@ func (m *mockQuestionGenerationJobRepository) ListQueuedByUserID(ctx context.Con
 	return append([]*domain.QuestionGenerationJob(nil), m.queuedJobs...), nil
 }
 
+func (m *mockQuestionGenerationJobRepository) RequeueStaleProcessing(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	return nil, nil
+}
+
 func (m *mockQuestionGenerationJobRepository) ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*domain.QuestionGenerationJob, bool, error) {
 	m.claimCalls++
 	return m.claimJob, m.claimOK, nil

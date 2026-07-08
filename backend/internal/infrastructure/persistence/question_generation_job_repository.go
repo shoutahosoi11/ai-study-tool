@@ -157,6 +157,10 @@ LIMIT $3
 }
 
 func (r *QuestionGenerationJobRepository) ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*domain.QuestionGenerationJob, bool, error) {
+	// Besides queued rows, reclaim processing rows whose worker died mid-job
+	// (deploy, OOM, scale-in). Without this, a Cloud Tasks retry finds
+	// status='processing', gets claimed=false, acks the task, and the job is
+	// stuck forever — blocking the (user_id, book_key) active-unique slot.
 	job, err := scanQuestionGenerationJob(r.db.QueryRowContext(ctx, `
 UPDATE question_generation_jobs
 SET status = $3,
@@ -167,10 +171,14 @@ SET status = $3,
     updated_at = NOW()
 WHERE id = $1
   AND user_id = $2
-  AND status = $4
+  AND (
+    status = $4
+    OR (status = $3 AND processing_started_at < NOW() - ($5 * INTERVAL '1 second'))
+  )
 RETURNING id, user_id, book_key, status, reason, retry_count, last_error, created_at,
           processing_started_at, completed_at, failed_at
-`, jobID, userID, string(domain.JobStatusProcessing), string(domain.JobStatusQueued)))
+`, jobID, userID, string(domain.JobStatusProcessing), string(domain.JobStatusQueued),
+		int(domain.JobStaleProcessingTimeout.Seconds())))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
@@ -456,4 +464,49 @@ func pendingQuestionGenerationJobStatuses() []string {
 		string(domain.JobStatusProcessing),
 		string(domain.JobStatusEnqueueFailed),
 	}
+}
+
+// RequeueStaleProcessing returns stale processing jobs to queued so the sync
+// path can re-enqueue their Cloud Tasks. A job is stale when its worker
+// stopped reporting for longer than domain.JobStaleProcessingTimeout.
+func (r *QuestionGenerationJobRepository) RequeueStaleProcessing(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	rows, err := r.db.QueryContext(ctx, `
+UPDATE question_generation_jobs
+SET status = $2,
+    processing_started_at = NULL,
+    updated_at = NOW()
+WHERE id IN (
+  SELECT id FROM question_generation_jobs
+  WHERE user_id = $1
+    AND status = $3
+    AND processing_started_at < NOW() - ($4 * INTERVAL '1 second')
+  ORDER BY created_at
+  LIMIT $5
+)
+RETURNING id, user_id, book_key, status, reason, retry_count, last_error, created_at,
+          processing_started_at, completed_at, failed_at
+`, userID, string(domain.JobStatusQueued), string(domain.JobStatusProcessing),
+		int(domain.JobStaleProcessingTimeout.Seconds()), limit)
+	if err != nil {
+		return nil, wrapQuestionGenerationJobError("requeue stale processing", err)
+	}
+	defer rows.Close()
+
+	var jobs []*domain.QuestionGenerationJob
+	for rows.Next() {
+		job, err := scanQuestionGenerationJob(rows)
+		if err != nil {
+			return nil, wrapQuestionGenerationJobError("scan stale processing job", err)
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapQuestionGenerationJobError("iterate stale processing jobs", err)
+	}
+	for _, job := range jobs {
+		if err := r.loadHighlightIDs(ctx, job); err != nil {
+			return nil, err
+		}
+	}
+	return jobs, nil
 }

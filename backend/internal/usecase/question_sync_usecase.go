@@ -74,6 +74,10 @@ func (u *QuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domai
 		return result, nil
 	}
 
+	if err := u.requeueStaleProcessingJobs(ctx, user.ID); err != nil {
+		return nil, err
+	}
+
 	if err := u.reenqueueQueuedJobs(ctx, user.ID, result); err != nil {
 		return nil, err
 	}
@@ -352,4 +356,28 @@ func buildQuestionSyncBookResponse(candidates []domain.QuestionGenerationBookCan
 func questionSyncDay(now time.Time) time.Time {
 	utcNow := now.UTC()
 	return time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// requeueStaleProcessingJobs recovers jobs whose worker instance died mid-run.
+// They flip back to queued here and are re-enqueued by reenqueueQueuedJobs in
+// the same sync pass.
+func (u *QuestionSyncUsecase) requeueStaleProcessingJobs(ctx context.Context, userID uuid.UUID) error {
+	if u.jobRepo == nil {
+		return nil
+	}
+	jobs, err := u.jobRepo.RequeueStaleProcessing(ctx, userID, defaultQuestionSyncJobListLimit)
+	if err != nil {
+		return fmt.Errorf("question sync usecase: requeue stale processing jobs: %w", err)
+	}
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		slog.Warn("question_generation_event=stale_processing_requeued",
+			"job_id", job.ID.String(),
+			"user_id", job.UserID.String(),
+			"book_key", job.BookKey,
+		)
+	}
+	return nil
 }

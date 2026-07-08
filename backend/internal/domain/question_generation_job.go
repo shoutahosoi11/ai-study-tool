@@ -30,6 +30,9 @@ const (
 	MinHighlightsForRefresh = 5
 	MaxHighlightsPerJob     = 10
 	JobMaxRetryCount        = 3
+	// JobStaleProcessingTimeout is how long a job may sit in processing before
+	// it is considered orphaned by a dead worker and becomes reclaimable.
+	JobStaleProcessingTimeout = 15 * time.Minute
 )
 
 type QuestionGenerationJob struct {
@@ -62,6 +65,7 @@ type QuestionGenerationJobRepository interface {
 	ListQueuedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*QuestionGenerationJob, bool, error)
+	RequeueStaleProcessing(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	MarkQueued(ctx context.Context, jobID, userID uuid.UUID) error
 	MarkCompleted(ctx context.Context, jobID, userID uuid.UUID) error
 	MarkEnqueueFailed(ctx context.Context, jobID, userID uuid.UUID, lastError string) error
