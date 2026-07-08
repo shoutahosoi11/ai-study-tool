@@ -2,11 +2,13 @@ import { getApps, initializeApp } from 'firebase/app'
 import {
   type Auth,
   type User,
+  EmailAuthProvider,
   createUserWithEmailAndPassword,
   getAuth,
   inMemoryPersistence,
   initializeAuth,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
   signOut,
 } from 'firebase/auth'
@@ -74,6 +76,19 @@ export async function getIdToken(): Promise<string | null> {
   }
 
   return user.getIdToken()
+}
+
+// 退会などの危険操作は auth_time が5分以内であることをサーバーが要求する。
+// トークンのリフレッシュでは auth_time は更新されないため、パスワードで
+// 再認証してから強制リフレッシュしたトークンを使う。
+export async function reauthenticateWithPassword(password: string): Promise<void> {
+  const user = getCurrentUser()
+  if (!user || !user.email) {
+    throw new Error('not signed in')
+  }
+
+  await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password))
+  await user.getIdToken(true)
 }
 
 export function onAuthChanged(callback: (user: MobileAuthUser | null) => void) {
