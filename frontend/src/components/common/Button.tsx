@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { theme } from "../../theme";
 
 type ButtonProps = {
-  variant?: "primary" | "outline" | "ghost";
+  variant?: "primary" | "outline" | "ghost" | "danger" | "dangerOutline";
   loading?: boolean;
   disabled?: boolean;
   onClick?: () => void;
@@ -49,6 +49,15 @@ export function Button({
     ghost: {
       background: "transparent",
       color: theme.colors.secondary,
+    },
+    danger: {
+      background: theme.colors.danger,
+      color: theme.colors.background,
+    },
+    dangerOutline: {
+      background: "transparent",
+      color: theme.colors.danger,
+      border: `1px solid ${theme.colors.danger}`,
     },
   };
 

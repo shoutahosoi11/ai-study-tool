@@ -6,8 +6,11 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  EmailAuthProvider,
   GoogleAuthProvider,
   signInWithPopup,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   type User,
 } from 'firebase/auth'
 
@@ -193,4 +196,50 @@ function startWebSessionSync() {
 
 function getErrorStatus(error: unknown) {
   return (error as { response?: { status?: number } }).response?.status ?? null
+}
+
+export type ReauthMethod = 'password' | 'google'
+
+// 退会などの危険操作は auth_time が5分以内であることをサーバーが要求する。
+// トークンのリフレッシュでは auth_time は更新されないため、本人の再認証が必要。
+export function getReauthMethod(): ReauthMethod | null {
+  const user = auth.currentUser
+  if (!user) return null
+
+  const providers = user.providerData.map(function (p) {
+    return p.providerId
+  })
+  if (providers.includes(EmailAuthProvider.PROVIDER_ID)) {
+    return 'password'
+  }
+  if (providers.includes(GoogleAuthProvider.PROVIDER_ID)) {
+    return 'google'
+  }
+  return null
+}
+
+export async function reauthenticateForSensitiveAction(password?: string): Promise<void> {
+  const user = auth.currentUser
+  if (!user) {
+    throw new Error('not signed in')
+  }
+
+  const method = getReauthMethod()
+  if (method === 'password') {
+    if (!user.email || !password) {
+      throw new Error('password required')
+    }
+    await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password))
+  } else if (method === 'google') {
+    await reauthenticateWithPopup(user, new GoogleAuthProvider())
+  } else {
+    throw new Error('unsupported auth provider')
+  }
+
+  // 再認証後のIDトークン（新しい auth_time 入り）でセッションCookieを再発行する。
+  resetWebSessionState()
+  const sessionCreated = await createWebSession(true)
+  if (!sessionCreated) {
+    throw new Error('failed to refresh web session')
+  }
 }
