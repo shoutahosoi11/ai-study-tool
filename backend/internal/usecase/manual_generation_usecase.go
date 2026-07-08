@@ -62,7 +62,7 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 		}
 	}
 
-	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, user.ID, bookKey); err != nil {
+	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, nil, user.ID, bookKey); err != nil {
 		return nil, err
 	}
 

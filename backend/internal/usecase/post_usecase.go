@@ -26,6 +26,9 @@ func (u *PostUsecase) GetTimeline(ctx context.Context, userID uuid.UUID, limit, 
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
+	if offset < 0 {
+		offset = 0
+	}
 	return u.postRepo.GetTimeline(ctx, domain.TimelineParams{
 		UserID: userID,
 		Limit:  limit,

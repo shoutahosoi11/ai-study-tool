@@ -45,6 +45,7 @@ type Container struct {
 	SocialRateLimitMiddleware       *middleware.RateLimitMiddleware
 	TokenRateLimitMiddleware        *middleware.RateLimitMiddleware
 	PairingStartRateLimitMiddleware *middleware.ShortWindowRateLimitMiddleware
+	PairingPollRateLimitMiddleware  *middleware.ShortWindowRateLimitMiddleware
 	AdMobSSVRateLimitMiddleware     *middleware.ShortWindowRateLimitMiddleware
 	closeCloudTasks                 []func() error
 	closeLLMClient                  gemini.ClientCloser
@@ -169,6 +170,17 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The 3s pairing poll is unauthenticated; without a per-IP cap nothing
+	// stops random-UUID polling from hammering the DB.
+	pairingPollRateLimitMiddleware, err := middleware.NewShortWindowRateLimitMiddleware(
+		rateLimitRepo,
+		"extension_pairing_poll",
+		readEnvInt64OrDefault("EXTENSION_PAIRING_POLL_PER_MINUTE_LIMIT", 60),
+		middleware.ClientIPRateLimitIdentifier,
+	)
+	if err != nil {
+		return nil, err
+	}
 	adMobSSVRateLimitMiddleware, err := middleware.NewShortWindowRateLimitMiddleware(
 		rateLimitRepo,
 		"admob_ssv",
@@ -264,6 +276,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		SocialRateLimitMiddleware:       socialRateLimitMiddleware,
 		TokenRateLimitMiddleware:        tokenRateLimitMiddleware,
 		PairingStartRateLimitMiddleware: pairingStartRateLimitMiddleware,
+		PairingPollRateLimitMiddleware:  pairingPollRateLimitMiddleware,
 		AdMobSSVRateLimitMiddleware:     adMobSSVRateLimitMiddleware,
 		closeCloudTasks:                 closeCloudTasks,
 		closeLLMClient:                  closeLLMClient,
