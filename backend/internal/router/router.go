@@ -160,6 +160,12 @@ func registerUserRoutes(api *echo.Group, container *di.Container, authMiddleware
 	users.PUT("/me/question-settings", container.UserHandler.UpdateQuestionSettings, echomiddleware.BodyLimit(bodyLimitUserSmall), appmiddleware.RequireScope(domain.ExtensionScopeUserWrite))
 	users.GET("/:id", container.UserHandler.GetUser, appmiddleware.RequireScope(domain.ExtensionScopeUserRead))
 	users.PUT("/me", container.UserHandler.UpdateProfile, echomiddleware.BodyLimit(bodyLimitUserProfile), appmiddleware.RequireScope(domain.ExtensionScopeUserWrite))
+	// 退会はWeb/Mobileのみ許可し、直近5分以内の再認証を要求する。
+	users.DELETE("/me", container.UserHandler.DeleteMe,
+		echomiddleware.BodyLimit(bodyLimitUserSmall),
+		appmiddleware.RequireClientType(domain.AuthClientTypeWeb, domain.AuthClientTypeMobile),
+		appmiddleware.RequireRecentAuthFor(domain.AuthClientTypeWeb, domain.AuthClientTypeMobile),
+	)
 	users.POST("/:id/follow", container.SocialHandler.Follow, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
 	users.DELETE("/:id/follow", container.SocialHandler.Unfollow, appmiddleware.RequireScope(domain.ExtensionScopeSocialWrite), socialRateLimit)
 }

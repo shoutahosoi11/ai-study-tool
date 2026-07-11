@@ -21,22 +21,22 @@ const (
 	sha256HexLength      = 64
 )
 
-type HighlightUsecase struct {
+type HighlightImportUsecase struct {
 	repo        domain.HighlightImportRepository
 	importQueue domain.HighlightImportQueueRepository
 	jobTrigger  domain.HighlightImportJobTrigger
 }
 
-func NewHighlightUsecase(repo domain.HighlightImportRepository) *HighlightUsecase {
-	return &HighlightUsecase{repo: repo}
+func NewHighlightImportUsecase(repo domain.HighlightImportRepository) *HighlightImportUsecase {
+	return &HighlightImportUsecase{repo: repo}
 }
 
-func NewHighlightUsecaseWithQueue(
+func NewHighlightImportUsecaseWithQueue(
 	repo domain.HighlightImportRepository,
 	importQueue domain.HighlightImportQueueRepository,
 	jobTrigger domain.HighlightImportJobTrigger,
-) *HighlightUsecase {
-	return &HighlightUsecase{
+) *HighlightImportUsecase {
+	return &HighlightImportUsecase{
 		repo:        repo,
 		importQueue: importQueue,
 		jobTrigger:  jobTrigger,
@@ -96,7 +96,7 @@ type ImportPastedHighlightResult struct {
 	Highlight *domain.Highlight
 }
 
-func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
+func (u *HighlightImportUsecase) ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
 	if len(items) == 0 {
 		return nil, fmt.Errorf("%w: highlights must not be empty", domain.ErrInvalidInput)
 	}
@@ -109,11 +109,11 @@ func (u *HighlightUsecase) ImportKindleHighlights(ctx context.Context, userID uu
 		return u.enqueueKindleImport(ctx, userID, items)
 	}
 
-	// キューなし（後方互換: NewHighlightUsecase 経由）
+	// キューなし（後方互換: NewHighlightImportUsecase 経由）
 	return u.importKindleHighlightsDirect(ctx, userID, items)
 }
 
-func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
+func (u *HighlightImportUsecase) enqueueKindleImport(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
 	u.recoverFailedImportEnqueues(ctx, userID)
 
 	// 既存の検証・正規化ロジックを使いコピープロテクトを除外する
@@ -161,7 +161,7 @@ func (u *HighlightUsecase) enqueueKindleImport(ctx context.Context, userID uuid.
 	return result, nil
 }
 
-func (u *HighlightUsecase) importKindleHighlightsDirect(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
+func (u *HighlightImportUsecase) importKindleHighlightsDirect(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
 	highlights, copyProtectedCount, invalidItemCount, err := buildImportHighlights(userID, items)
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ func (u *HighlightUsecase) importKindleHighlightsDirect(ctx context.Context, use
 	return result, nil
 }
 
-func (u *HighlightUsecase) ImportPastedHighlight(ctx context.Context, userID uuid.UUID, input ImportPastedHighlightInput) (*ImportPastedHighlightResult, error) {
+func (u *HighlightImportUsecase) ImportPastedHighlight(ctx context.Context, userID uuid.UUID, input ImportPastedHighlightInput) (*ImportPastedHighlightResult, error) {
 	highlight, err := newPastedHighlight(userID, input)
 	if err != nil {
 		return nil, err
@@ -229,7 +229,7 @@ func (u *HighlightUsecase) ImportPastedHighlight(ctx context.Context, userID uui
 	}, nil
 }
 
-func (u *HighlightUsecase) ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input ImportSharedHighlightInput) (*ImportSharedHighlightResult, error) {
+func (u *HighlightImportUsecase) ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input ImportSharedHighlightInput) (*ImportSharedHighlightResult, error) {
 	highlight, err := newSharedHighlight(userID, input)
 	if err != nil {
 		return nil, err
@@ -252,77 +252,6 @@ func (u *HighlightUsecase) ImportSharedHighlight(ctx context.Context, userID uui
 	}
 
 	return result, nil
-}
-
-func (u *HighlightUsecase) ListExistingContentHashes(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error) {
-	if len(hashes) == 0 {
-		return make([]string, 0), nil
-	}
-
-	normalized, err := normalizeHashList(hashes)
-	if err != nil {
-		return nil, err
-	}
-	if len(normalized) == 0 {
-		return make([]string, 0), nil
-	}
-
-	existing, err := u.repo.ListExistingContentHashesByUserID(ctx, userID, normalized)
-	if err != nil {
-		return nil, fmt.Errorf("highlight usecase: list existing content hashes: %w", err)
-	}
-	if existing == nil {
-		return make([]string, 0), nil
-	}
-
-	return existing, nil
-}
-
-func (u *HighlightUsecase) ListKindleBooks(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error) {
-	books, err := u.repo.ListBooksWithHighlightsByUserID(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("highlight usecase: list kindle books: %w", err)
-	}
-	if books == nil {
-		return make([]*domain.KindleBook, 0), nil
-	}
-
-	return books, nil
-}
-
-func (u *HighlightUsecase) ListByASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error) {
-	highlights, err := u.repo.ListByUserIDAndASIN(ctx, userID, asin)
-	if err != nil {
-		return nil, fmt.Errorf("highlight usecase: list by asin: %w", err)
-	}
-	if highlights == nil {
-		return make([]*domain.Highlight, 0), nil
-	}
-
-	return highlights, nil
-}
-
-func (u *HighlightUsecase) ListByBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error) {
-	highlights, err := u.repo.ListByUserIDAndBookMetadata(ctx, userID, bookTitle, bookAuthor)
-	if err != nil {
-		return nil, fmt.Errorf("highlight usecase: list by book metadata: %w", err)
-	}
-	if highlights == nil {
-		return make([]*domain.Highlight, 0), nil
-	}
-
-	return highlights, nil
-}
-
-func (u *HighlightUsecase) UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation string) (*domain.Highlight, error) {
-	normalizedExplanation := optionalString(explanation)
-
-	highlight, err := u.repo.UpdateExplanation(ctx, id, userID, normalizedExplanation)
-	if err != nil {
-		return nil, fmt.Errorf("highlight usecase: update explanation: %w", err)
-	}
-
-	return highlight, nil
 }
 
 func buildImportHighlights(userID uuid.UUID, items []ImportHighlightItem) ([]*domain.Highlight, int, int, error) {
@@ -571,42 +500,6 @@ func computeContentHash(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func normalizeHashList(hashes []string) ([]string, error) {
-	if len(hashes) > maxHashCheckItems {
-		return nil, fmt.Errorf("%w: hashes must be at most %d items", domain.ErrInvalidInput, maxHashCheckItems)
-	}
-
-	seen := make(map[string]struct{}, len(hashes))
-	items := make([]string, 0, len(hashes))
-	for _, hash := range hashes {
-		normalized := strings.ToLower(strings.TrimSpace(hash))
-		if normalized == "" {
-			continue
-		}
-		if !isSHA256Hex(normalized) {
-			return nil, fmt.Errorf("%w: invalid content hash", domain.ErrInvalidInput)
-		}
-		if _, ok := seen[normalized]; ok {
-			continue
-		}
-		seen[normalized] = struct{}{}
-		items = append(items, normalized)
-	}
-	return items, nil
-}
-
-func isSHA256Hex(value string) bool {
-	if len(value) != sha256HexLength {
-		return false
-	}
-	for _, r := range value {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 func sanitizeHighlightedAt(highlightedAt *time.Time) *time.Time {
 	if highlightedAt == nil {
 		return nil
@@ -633,7 +526,7 @@ func importWarning(copyProtectedCount, invalidItemCount int) string {
 	return "コピー制限により一部のハイライトが読み込めませんでした"
 }
 
-func (u *HighlightUsecase) recoverFailedImportEnqueues(ctx context.Context, userID uuid.UUID) {
+func (u *HighlightImportUsecase) recoverFailedImportEnqueues(ctx context.Context, userID uuid.UUID) {
 	if u.importQueue == nil || u.jobTrigger == nil {
 		return
 	}

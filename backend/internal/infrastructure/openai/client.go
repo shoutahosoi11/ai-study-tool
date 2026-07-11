@@ -67,7 +67,10 @@ func (c *Client) ProviderName() string {
 }
 
 func (c *Client) GenerateQuestions(ctx context.Context, points []domain.ExtractedPoint, questionType domain.QuestionType, customInstruction string, model string) ([]domain.GeneratedQuestion, error) {
-	prompt := BuildBatchGeneratorPrompt(points, questionType, customInstruction)
+	prompt, err := BuildBatchGeneratorPrompt(points, questionType, customInstruction)
+	if err != nil {
+		return nil, fmt.Errorf("openai: build prompt: %w", err)
+	}
 
 	resp, err := c.generate(ctx, model, prompt, generatedQuestionsSchema())
 	if err != nil {

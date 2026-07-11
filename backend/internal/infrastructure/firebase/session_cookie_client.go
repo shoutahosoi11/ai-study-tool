@@ -40,6 +40,10 @@ func (c *SessionCookieClient) RevokeRefreshTokens(ctx context.Context, uid strin
 	return c.client.RevokeRefreshTokens(ctx, uid)
 }
 
+func (c *SessionCookieClient) DeleteUser(ctx context.Context, uid string) error {
+	return c.client.DeleteUser(ctx, uid)
+}
+
 func firebaseTokenToDomain(token *auth.Token) *domain.AuthToken {
 	if token == nil {
 		return nil

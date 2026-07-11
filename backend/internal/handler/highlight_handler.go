@@ -15,25 +15,30 @@ import (
 )
 
 type HighlightHandler struct {
-	highlightUsecase HighlightUsecase
-	userUsecase      usecase.UserUsecaseInterface
+	importUsecase HighlightImportUsecase
+	queryUsecase  HighlightQueryUsecase
+	userUsecase   usecase.UserUsecaseInterface
 }
 
-type HighlightUsecase interface {
+type HighlightImportUsecase interface {
 	ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []usecase.ImportHighlightItem) (*usecase.ImportKindleResult, error)
-	ListExistingContentHashes(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error)
 	ImportSharedHighlight(ctx context.Context, userID uuid.UUID, input usecase.ImportSharedHighlightInput) (*usecase.ImportSharedHighlightResult, error)
 	ImportPastedHighlight(ctx context.Context, userID uuid.UUID, input usecase.ImportPastedHighlightInput) (*usecase.ImportPastedHighlightResult, error)
+}
+
+type HighlightQueryUsecase interface {
+	ListExistingContentHashes(ctx context.Context, userID uuid.UUID, hashes []string) ([]string, error)
 	ListKindleBooks(ctx context.Context, userID uuid.UUID) ([]*domain.KindleBook, error)
 	ListByASIN(ctx context.Context, userID uuid.UUID, asin string) ([]*domain.Highlight, error)
 	ListByBookMetadata(ctx context.Context, userID uuid.UUID, bookTitle, bookAuthor string) ([]*domain.Highlight, error)
 	UpdateExplanation(ctx context.Context, id, userID uuid.UUID, explanation string) (*domain.Highlight, error)
 }
 
-func NewHighlightHandler(highlightUsecase HighlightUsecase, userUsecase usecase.UserUsecaseInterface) *HighlightHandler {
+func NewHighlightHandler(importUsecase HighlightImportUsecase, queryUsecase HighlightQueryUsecase, userUsecase usecase.UserUsecaseInterface) *HighlightHandler {
 	return &HighlightHandler{
-		highlightUsecase: highlightUsecase,
-		userUsecase:      userUsecase,
+		importUsecase: importUsecase,
+		queryUsecase:  queryUsecase,
+		userUsecase:   userUsecase,
 	}
 }
 
@@ -60,7 +65,7 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 		})
 	}
 
-	result, err := h.highlightUsecase.ImportKindleHighlights(c.Request().Context(), user.ID, items)
+	result, err := h.importUsecase.ImportKindleHighlights(c.Request().Context(), user.ID, items)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -118,7 +123,7 @@ func (h *HighlightHandler) CheckExistingHashes(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	existing, err := h.highlightUsecase.ListExistingContentHashes(c.Request().Context(), user.ID, req.Hashes)
+	existing, err := h.queryUsecase.ListExistingContentHashes(c.Request().Context(), user.ID, req.Hashes)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -143,7 +148,7 @@ func (h *HighlightHandler) ImportShared(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	result, err := h.highlightUsecase.ImportSharedHighlight(c.Request().Context(), user.ID, usecase.ImportSharedHighlightInput{
+	result, err := h.importUsecase.ImportSharedHighlight(c.Request().Context(), user.ID, usecase.ImportSharedHighlightInput{
 		BookTitle:  req.BookTitle,
 		BookAuthor: req.BookAuthor,
 		Content:    req.Content,
@@ -182,7 +187,7 @@ func (h *HighlightHandler) ImportPaste(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	result, err := h.highlightUsecase.ImportPastedHighlight(c.Request().Context(), user.ID, usecase.ImportPastedHighlightInput{
+	result, err := h.importUsecase.ImportPastedHighlight(c.Request().Context(), user.ID, usecase.ImportPastedHighlightInput{
 		BookTitle:  req.BookTitle,
 		BookAuthor: req.BookAuthor,
 		Content:    req.Content,
@@ -214,7 +219,7 @@ func (h *HighlightHandler) ListBooks(c echo.Context) error {
 		return err
 	}
 
-	books, err := h.highlightUsecase.ListKindleBooks(c.Request().Context(), user.ID)
+	books, err := h.queryUsecase.ListKindleBooks(c.Request().Context(), user.ID)
 	if err != nil {
 		slog.Error("highlight_handler_error", "operation", "list_books", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
@@ -241,7 +246,7 @@ func (h *HighlightHandler) ListByASIN(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "asin is required")
 	}
 
-	highlights, err := h.highlightUsecase.ListByASIN(c.Request().Context(), user.ID, asin)
+	highlights, err := h.queryUsecase.ListByASIN(c.Request().Context(), user.ID, asin)
 	if err != nil {
 		slog.Error("highlight_handler_error", "operation", "list_by_asin", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
@@ -269,7 +274,7 @@ func (h *HighlightHandler) ListByBookMetadata(c echo.Context) error {
 	}
 
 	bookAuthor := strings.TrimSpace(c.QueryParam("author"))
-	highlights, err := h.highlightUsecase.ListByBookMetadata(c.Request().Context(), user.ID, bookTitle, bookAuthor)
+	highlights, err := h.queryUsecase.ListByBookMetadata(c.Request().Context(), user.ID, bookTitle, bookAuthor)
 	if err != nil {
 		slog.Error("highlight_handler_error", "operation", "list_by_book_metadata", "user_id", user.ID.String(), "has_author", bookAuthor != "", "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
@@ -301,7 +306,7 @@ func (h *HighlightHandler) UpdateExplanation(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	highlight, err := h.highlightUsecase.UpdateExplanation(c.Request().Context(), id, user.ID, req.Explanation)
+	highlight, err := h.queryUsecase.UpdateExplanation(c.Request().Context(), id, user.ID, req.Explanation)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "highlight not found")

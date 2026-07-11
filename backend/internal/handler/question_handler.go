@@ -268,7 +268,7 @@ func (h *QuestionHandler) ManualGenerate(c echo.Context) error {
 		if errors.Is(err, domain.ErrAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "generation job already exists")
 		}
-		slog.Error("question_handler_error", "operation", "manual_generate", "user_id", user.ID.String(), "book_key", strings.TrimSpace(req.BookKey), "highlight_count", len(req.HighlightIDs), "error", err)
+		slog.Error("question_handler_error", "operation", "manual_generate", "user_id", user.ID.String(), "has_book_key", strings.TrimSpace(req.BookKey) != "", "highlight_count", len(req.HighlightIDs), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 

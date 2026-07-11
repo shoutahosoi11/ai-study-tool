@@ -156,15 +156,15 @@ func applySocialRepositoryMigrations(t *testing.T, db *sql.DB) {
 func rollbackSocialRepositoryMigrations(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
-DROP TABLE IF EXISTS comments;
-DROP TABLE IF EXISTS reposts;
-DROP TABLE IF EXISTS likes;
-DROP TABLE IF EXISTS follows;
-DROP TABLE IF EXISTS posts;
-DROP TABLE IF EXISTS questions;
-DROP TABLE IF EXISTS books;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS fields;
+DROP TABLE IF EXISTS comments CASCADE;
+DROP TABLE IF EXISTS reposts CASCADE;
+DROP TABLE IF EXISTS likes CASCADE;
+DROP TABLE IF EXISTS follows CASCADE;
+DROP TABLE IF EXISTS posts CASCADE;
+DROP TABLE IF EXISTS questions CASCADE;
+DROP TABLE IF EXISTS books CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS fields CASCADE;
 `); err != nil {
 		t.Fatalf("rollback social migrations: %v", err)
 	}
@@ -192,8 +192,8 @@ func applyHighlightImportQueueMigrations(t *testing.T, db *sql.DB) {
 func rollbackHighlightImportQueueMigrations(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
-DROP TABLE IF EXISTS highlight_import_queue;
-DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS highlight_import_queue CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
 `); err != nil {
 		t.Fatalf("rollback highlight import queue migrations: %v", err)
 	}

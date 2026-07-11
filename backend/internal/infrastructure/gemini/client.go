@@ -78,7 +78,10 @@ func (c *Client) GenerateQuestions(ctx context.Context, points []domain.Extracte
 		defer cancel()
 	}
 
-	prompt := BuildBatchGeneratorPrompt(points, questionType, customInstruction)
+	prompt, err := BuildBatchGeneratorPrompt(points, questionType, customInstruction)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: build prompt: %w", err)
+	}
 	resp, err := c.generate(ctx, model, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("gemini: generate questions failed: %w", err)

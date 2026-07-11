@@ -29,6 +29,7 @@ Codex がレビューする場合も、該当する `SKILL.md` のレビュー�
 - `domain`: 純粋な型、定数、interface、ドメインエラーを置く。DBタグ、JSONタグ、外部SDK依存を入れない。
 - `infrastructure` / `repository`: DB、Firebase、Gemini、Stripe、Cloud Runなど外部I/Oの実装を閉じ込める。
 - request/response DTO と domain model を混ぜない。
+- 単一ハンドラ専用のレスポンス型はハンドラ内ローカル定義、複数ハンドラで共有する型は `handler/dto` に置く。
 
 ## Go Backend
 

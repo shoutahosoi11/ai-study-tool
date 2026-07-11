@@ -14,3 +14,9 @@ type UserRepository interface {
 	Update(ctx context.Context, id uuid.UUID, input UpdateUserInput) (*User, error)
 	UpdateQuestionSettings(ctx context.Context, id uuid.UUID, input UpdateQuestionSettingsInput) (*User, error)
 }
+
+// UserAccountDeleter deletes a user row; the schema cascades to all owned
+// data, and admin identities block deletion via ON DELETE RESTRICT.
+type UserAccountDeleter interface {
+	DeleteByID(ctx context.Context, id uuid.UUID) error
+}

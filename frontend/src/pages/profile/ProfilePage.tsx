@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getMe, updateQuestionSettings } from "../../api/users";
 import { signOutUser } from "../../api/auth";
+import { DeleteAccountModal } from "./DeleteAccountModal";
 import { Avatar } from "../../components/common/Avatar";
 import { Button } from "../../components/common/Button";
 import { Spinner } from "../../components/common/Spinner";
@@ -25,6 +26,7 @@ export function ProfilePage() {
   const [defaultQuestionCount, setDefaultQuestionCount] = useState(3);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(function () {
     getMe()
@@ -43,6 +45,17 @@ export function ProfilePage() {
   async function handleSignOut() {
     await signOutUser();
     navigate("/login");
+  }
+
+  async function handleAccountDeleted() {
+    // サーバー側でアカウントとセッションは消えているため、ローカルの
+    // サインアウトが失敗しても導線は止めない。
+    try {
+      await signOutUser();
+    } catch {
+      // no-op
+    }
+    navigate("/login", { replace: true });
   }
 
   async function handleSaveQuestionSettings() {
@@ -156,7 +169,43 @@ export function ProfilePage() {
           <Button variant="outline" onClick={handleSignOut}>
             ログアウト
           </Button>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: theme.spacing.sm,
+              padding: theme.spacing.md,
+              borderRadius: theme.radius.md,
+              border: `1px solid ${theme.colors.danger}40`,
+              background: `${theme.colors.danger}0d`,
+            }}
+          >
+            <p style={{ margin: 0, fontWeight: 700, fontSize: theme.fontSize.sm, color: theme.colors.danger }}>
+              アカウント削除
+            </p>
+            <p style={{ margin: 0, color: theme.colors.secondary, fontSize: theme.fontSize.xs }}>
+              ハイライト・問題・投稿などすべてのデータが完全に削除されます。この操作は取り消せません。
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button
+                variant="dangerOutline"
+                onClick={function () {
+                  setShowDeleteModal(true);
+                }}
+              >
+                アカウントを削除…
+              </Button>
+            </div>
+          </div>
         </div>
+      )}
+      {showDeleteModal && (
+        <DeleteAccountModal
+          onClose={function () {
+            setShowDeleteModal(false);
+          }}
+          onDeleted={handleAccountDeleted}
+        />
       )}
     </div>
   );

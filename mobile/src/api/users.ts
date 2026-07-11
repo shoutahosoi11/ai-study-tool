@@ -34,3 +34,9 @@ export async function updateQuestionSettings(defaultQuestionCount: number): Prom
   })
   return response.data
 }
+
+// 事前に reauthenticateWithPassword で再認証しておくこと
+// （サーバーは5分以内の再ログインを要求する）。
+export async function deleteAccount(): Promise<void> {
+  await apiClient.delete('/users/me')
+}

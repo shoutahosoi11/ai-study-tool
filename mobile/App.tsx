@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   KeyboardAvoidingView,
   Linking,
@@ -17,6 +18,7 @@ import { ShareIntentModule, useShareIntent } from 'expo-share-intent'
 import {
   getCurrentUser,
   onAuthChanged,
+  reauthenticateWithPassword,
   signInWithEmail,
   signOutUser,
   signUpWithEmail,
@@ -48,7 +50,7 @@ import {
 } from './src/api/questions'
 import { createCheckoutSession } from './src/api/billing'
 import { fetchTokenBalance, type TokenBalance } from './src/api/tokens'
-import { getMe, signUpBackendUser, updateQuestionSettings, type MeResponse } from './src/api/users'
+import { deleteAccount, getMe, signUpBackendUser, updateQuestionSettings, type MeResponse } from './src/api/users'
 import { admobConfig, apiBaseURL, isFirebaseConfigured, mobileConfigStatus } from './src/config'
 import { safeHttpUrl } from './src/utils/safe-url'
 import {
@@ -132,6 +134,10 @@ export default function App() {
   const [formError, setFormError] = useState<string | null>(null)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null)
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false)
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState('')
+  const [deleteAccountBusy, setDeleteAccountBusy] = useState(false)
+  const [deleteAccountError, setDeleteAccountError] = useState('')
   const [tokenBalance, setTokenBalance] = useState<TokenBalance | null>(null)
   const [tokenLoading, setTokenLoading] = useState(false)
   const [tokenMessage, setTokenMessage] = useState('')
@@ -639,6 +645,60 @@ export default function App() {
     } finally {
       setSaveBusy(false)
     }
+  }
+
+  async function performAccountDeletion() {
+    setDeleteAccountBusy(true)
+    setDeleteAccountError('')
+    try {
+      // auth_time を更新するため、削除の直前にパスワードで再認証する。
+      await reauthenticateWithPassword(deleteAccountPassword)
+    } catch (error) {
+      const code = (error as { code?: string }).code ?? ''
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        setDeleteAccountError('パスワードが正しくありません')
+      } else if (code === 'auth/too-many-requests') {
+        setDeleteAccountError('試行回数が多すぎます。しばらく待ってからお試しください')
+      } else {
+        setDeleteAccountError('再認証に失敗しました')
+      }
+      setDeleteAccountBusy(false)
+      return
+    }
+
+    try {
+      await deleteAccount()
+    } catch (error) {
+      if (isApiStatus(error, 403)) {
+        setDeleteAccountError('このアカウントは管理者権限を持っているため削除できません')
+      } else if (isApiStatus(error, 401)) {
+        setDeleteAccountError('再認証の有効期限が切れました。もう一度お試しください')
+      } else {
+        setDeleteAccountError(toReadableError(error, 'アカウントの削除に失敗しました'))
+      }
+      setDeleteAccountBusy(false)
+      return
+    }
+
+    setDeleteAccountBusy(false)
+    setDeleteAccountOpen(false)
+    setDeleteAccountPassword('')
+    await handleSignOut()
+  }
+
+  function confirmAccountDeletion() {
+    if (!deleteAccountPassword) {
+      setDeleteAccountError('確認のためパスワードを入力してください')
+      return
+    }
+    Alert.alert(
+      'アカウントを削除しますか？',
+      'ハイライト・問題・投稿などすべてのデータが完全に削除されます。この操作は取り消せません。',
+      [
+        { text: 'キャンセル', style: 'cancel' },
+        { text: '完全に削除', style: 'destructive', onPress: () => void performAccountDeletion() },
+      ]
+    )
   }
 
   async function handleSignOut() {
@@ -1790,6 +1850,46 @@ export default function App() {
                       </View>
 
                       <SecondaryButton label="ログアウト" onPress={() => void handleSignOut()} />
+
+                      <View style={[styles.card, { borderColor: '#ff667366' }]}>
+                        <Text style={[styles.cardTitle, { color: '#ff6673' }]}>アカウント削除</Text>
+                        <Text style={styles.muted}>
+                          ハイライト・問題・投稿などすべてのデータが完全に削除されます。この操作は取り消せません。
+                        </Text>
+                        {deleteAccountOpen ? (
+                          <>
+                            <Field
+                              label="確認のためパスワードを入力"
+                              value={deleteAccountPassword}
+                              autoCapitalize="none"
+                              secureTextEntry
+                              onChangeText={(value) => {
+                                setDeleteAccountPassword(value)
+                                setDeleteAccountError('')
+                              }}
+                            />
+                            {deleteAccountError ? (
+                              <Text style={styles.errorText}>{deleteAccountError}</Text>
+                            ) : null}
+                            <PrimaryButton
+                              label={deleteAccountBusy ? '削除しています...' : 'アカウントを完全に削除'}
+                              onPress={confirmAccountDeletion}
+                              disabled={deleteAccountBusy}
+                            />
+                            <SecondaryButton
+                              label="キャンセル"
+                              onPress={() => {
+                                setDeleteAccountOpen(false)
+                                setDeleteAccountPassword('')
+                                setDeleteAccountError('')
+                              }}
+                              disabled={deleteAccountBusy}
+                            />
+                          </>
+                        ) : (
+                          <SecondaryButton label="アカウントを削除…" onPress={() => setDeleteAccountOpen(true)} />
+                        )}
+                      </View>
                     </>
                   )}
 

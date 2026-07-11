@@ -123,7 +123,7 @@ func TestImportKindleHighlightsAllItemsSaved(t *testing.T) {
 		bulkUpsertSaved: 2,
 		bulkUpsertTime:  time.Date(2026, 4, 18, 12, 30, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -190,7 +190,7 @@ func TestImportKindleHighlightsPartialCopyProtectedSetsWarning(t *testing.T) {
 		bulkUpsertSaved: 1,
 		bulkUpsertTime:  time.Date(2026, 4, 18, 13, 0, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -237,7 +237,7 @@ func TestImportKindleHighlightsSkipsInvalidItems(t *testing.T) {
 		bulkUpsertSaved: 1,
 		bulkUpsertTime:  time.Date(2026, 4, 18, 13, 15, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -270,7 +270,7 @@ func TestImportKindleHighlightsSkipsInvalidItems(t *testing.T) {
 func TestImportKindleHighlightsAllCopyProtectedReturnsError(t *testing.T) {
 	userID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	_, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -293,7 +293,7 @@ func TestImportKindleHighlightsAllCopyProtectedReturnsError(t *testing.T) {
 func TestImportKindleHighlightsRejectsEmptyItems(t *testing.T) {
 	userID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	_, err := uc.ImportKindleHighlights(context.Background(), userID, nil)
 	if !errors.Is(err, domain.ErrInvalidInput) {
@@ -310,7 +310,7 @@ func TestImportKindleHighlightsRejectsEmptyItems(t *testing.T) {
 func TestImportKindleHighlightsRejectsTooManyItems(t *testing.T) {
 	userID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 	items := make([]usecase.ImportHighlightItem, 1001)
 	for i := range items {
 		items[i] = usecase.ImportHighlightItem{Content: "highlight"}
@@ -331,7 +331,7 @@ func TestImportKindleHighlightsAllDuplicatesReturnsSuccess(t *testing.T) {
 		bulkUpsertSaved: 0,
 		bulkUpsertTime:  time.Date(2026, 4, 18, 14, 0, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -373,7 +373,7 @@ func TestImportKindleHighlightsFutureHighlightedAtIsSanitized(t *testing.T) {
 		bulkUpsertSaved: 1,
 		bulkUpsertTime:  time.Date(2026, 4, 18, 15, 0, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -402,7 +402,7 @@ func TestImportKindleHighlightsExtremePastHighlightedAtIsSanitized(t *testing.T)
 		bulkUpsertSaved: 1,
 		bulkUpsertTime:  time.Date(2026, 4, 18, 15, 30, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	_, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -426,7 +426,7 @@ func TestImportKindleHighlightsQueuesValidatedPayload(t *testing.T) {
 	repo := &mockImportHighlightRepository{}
 	queueRepo := &mockHighlightImportQueueRepository{enqueueID: queueID}
 	trigger := &mockHighlightImportJobTrigger{}
-	uc := usecase.NewHighlightUsecaseWithQueue(repo, queueRepo, trigger)
+	uc := usecase.NewHighlightImportUsecaseWithQueue(repo, queueRepo, trigger)
 
 	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -492,7 +492,7 @@ func TestImportKindleHighlightsFailsQueueWhenTriggerFails(t *testing.T) {
 	repo := &mockImportHighlightRepository{}
 	queueRepo := &mockHighlightImportQueueRepository{enqueueID: queueID}
 	trigger := &mockHighlightImportJobTrigger{err: errors.New("cloud tasks unavailable")}
-	uc := usecase.NewHighlightUsecaseWithQueue(repo, queueRepo, trigger)
+	uc := usecase.NewHighlightImportUsecaseWithQueue(repo, queueRepo, trigger)
 
 	result, err := uc.ImportKindleHighlights(context.Background(), userID, []usecase.ImportHighlightItem{
 		{
@@ -527,7 +527,7 @@ func TestImportSharedHighlightSavesMobileShareMetadata(t *testing.T) {
 		bulkUpsertSaved: 1,
 		bulkUpsertTime:  time.Date(2026, 4, 24, 9, 30, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportSharedHighlight(context.Background(), userID, usecase.ImportSharedHighlightInput{
 		BookTitle:  " Deep Work ",
@@ -594,7 +594,7 @@ func TestImportSharedHighlightDuplicateReturnsNoHighlight(t *testing.T) {
 		bulkUpsertSaved: 0,
 		bulkUpsertTime:  time.Date(2026, 4, 24, 10, 0, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportSharedHighlight(context.Background(), userID, usecase.ImportSharedHighlightInput{
 		Content:   "Duplicate share",
@@ -618,7 +618,7 @@ func TestImportSharedHighlightDuplicateReturnsNoHighlight(t *testing.T) {
 func TestImportSharedHighlightRejectsEmptyContent(t *testing.T) {
 	userID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	_, err := uc.ImportSharedHighlight(context.Background(), userID, usecase.ImportSharedHighlightInput{
 		Content: "   ",
@@ -634,7 +634,7 @@ func TestImportSharedHighlightRejectsEmptyContent(t *testing.T) {
 func TestImportSharedHighlightRejectsLongSourceApp(t *testing.T) {
 	userID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	_, err := uc.ImportSharedHighlight(context.Background(), userID, usecase.ImportSharedHighlightInput{
 		Content:   "Valid highlight",
@@ -654,7 +654,7 @@ func TestImportPastedHighlightSavesPasteSource(t *testing.T) {
 		bulkUpsertSaved: 1,
 		bulkUpsertTime:  time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC),
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	result, err := uc.ImportPastedHighlight(context.Background(), userID, usecase.ImportPastedHighlightInput{
 		BookTitle:  " Notes ",
@@ -695,7 +695,7 @@ func TestImportPastedHighlightSavesPasteSource(t *testing.T) {
 func TestImportPastedHighlightRejectsInvalidSourceApp(t *testing.T) {
 	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightImportUsecase(repo)
 
 	_, err := uc.ImportPastedHighlight(context.Background(), userID, usecase.ImportPastedHighlightInput{
 		Content:   "Paste this idea.",
@@ -716,7 +716,7 @@ func TestListExistingContentHashesNormalizesAndDeduplicates(t *testing.T) {
 	repo := &mockImportHighlightRepository{
 		existingHashes: []string{hash},
 	}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightQueryUsecase(repo)
 
 	existing, err := uc.ListExistingContentHashes(context.Background(), userID, []string{" " + upperHash + " ", hash, ""})
 	if err != nil {
@@ -733,7 +733,7 @@ func TestListExistingContentHashesNormalizesAndDeduplicates(t *testing.T) {
 func TestListExistingContentHashesRejectsInvalidHash(t *testing.T) {
 	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightQueryUsecase(repo)
 
 	_, err := uc.ListExistingContentHashes(context.Background(), userID, []string{"not-a-sha256"})
 	if !errors.Is(err, domain.ErrInvalidInput) {
@@ -745,7 +745,7 @@ func TestUpdateExplanationPassesAuthenticatedUserToRepository(t *testing.T) {
 	userID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
 	highlightID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	repo := &mockImportHighlightRepository{}
-	uc := usecase.NewHighlightUsecase(repo)
+	uc := usecase.NewHighlightQueryUsecase(repo)
 
 	_, err := uc.UpdateExplanation(context.Background(), highlightID, userID, " safe explanation ")
 	if err != nil {

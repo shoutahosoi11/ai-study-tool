@@ -11,7 +11,7 @@ type ClientCloser func()
 
 func NewConfiguredClient(apiKey string) (domain.LLMClient, ClientCloser, error) {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("USE_GEMINI_MOCK")), "true") {
-		client := NewMockClient()
+		client := NewFakeClient()
 		return client, client.Close, nil
 	}
 

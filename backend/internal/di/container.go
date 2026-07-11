@@ -123,6 +123,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	}
 
 	userRepo := postgresrepo.NewUserRepository(db)
+	userAccountDeleter := postgresrepo.NewUserAccountDeleter(db)
 	postRepo := postgresrepo.NewPostRepository(db)
 	questionRepo := persistence.NewQuestionRepository(db)
 	answerRepo := persistence.NewAnswerRepository(db)
@@ -181,7 +182,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	userUsecase := usecase.NewUserUsecase(userRepo)
 	postUsecase := usecase.NewPostUsecase(postRepo)
 	questionSourceResolver := usecase.NewQuestionSourceResolver(highlightRepo)
-	questionUsecase := usecase.NewQuestionUsecase(questionRepo, geminiClient, questionSourceResolver)
+	questionUsecase := usecase.NewQuestionUsecase(questionRepo, questionSourceResolver)
 	globalLLMBudgetUsecase, err := usecase.NewGlobalLLMBudgetUsecaseFromEnv(globalLLMBudgetRepo, appEnv)
 	if err != nil {
 		return nil, err
@@ -201,7 +202,8 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	highlightUsecase := usecase.NewHighlightUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
+	highlightImportUsecase := usecase.NewHighlightImportUsecaseWithQueue(highlightRepo, importQueueRepo, highlightJobTrigger)
+	highlightQueryUsecase := usecase.NewHighlightQueryUsecase(highlightRepo)
 	highlightImportJobUsecase := usecase.NewHighlightImportJobUsecase(importQueueRepo, highlightRepo)
 	tokenUsecase := usecase.NewTokenUsecaseWithAdRewardSecretAndEnv(questionBudgetRepo, infraadmob.NewSSVVerifierFromEnv(), os.Getenv("AD_REWARD_HMAC_SECRET"), appEnv)
 	billingUsecase := usecase.NewBillingUsecase(
@@ -217,12 +219,13 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	userHandler := handler.NewUserHandler(userUsecase)
+	accountDeletionUsecase := usecase.NewAccountDeletionUsecase(userAccountDeleter, sessionCookieClient)
+	userHandler := handler.NewUserHandler(userUsecase, accountDeletionUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
 	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)
 	answerHandler := handler.NewAnswerHandler(answerUsecase, userUsecase, questionSyncUsecase)
 	socialHandler := handler.NewSocialHandler(socialUsecase, postUsecase, userUsecase)
-	highlightHandler := handler.NewHighlightHandler(highlightUsecase, userUsecase)
+	highlightHandler := handler.NewHighlightHandler(highlightImportUsecase, highlightQueryUsecase, userUsecase)
 	tokenHandler := handler.NewTokenHandler(tokenUsecase, userUsecase)
 	stripeHandler := handler.NewStripeHandler(billingUsecase, userUsecase)
 	authHandler := handler.NewAuthHandler(sessionCookieClient, appEnv, os.Getenv("SESSION_COOKIE_DOMAIN"))
