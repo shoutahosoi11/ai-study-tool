@@ -105,6 +105,20 @@ func (r *userRepository) UpdateQuestionSettings(ctx context.Context, id uuid.UUI
 	return toDomainUser(user), nil
 }
 
+func (r *userRepository) GetStripeSubscriptionID(ctx context.Context, id uuid.UUID) (string, error) {
+	var subscriptionID sql.NullString
+	err := r.db.QueryRowContext(ctx,
+		`SELECT stripe_subscription_id FROM users WHERE id = $1`, id,
+	).Scan(&subscriptionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("user repo: get stripe subscription id: %w", domain.ErrNotFound)
+		}
+		return "", fmt.Errorf("user repo: get stripe subscription id: %w", err)
+	}
+	return subscriptionID.String, nil
+}
+
 func (r *userRepository) DeleteByID(ctx context.Context, id uuid.UUID) error {
 	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
 	if err != nil {

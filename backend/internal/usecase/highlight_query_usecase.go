@@ -90,7 +90,6 @@ func (u *HighlightQueryUsecase) UpdateExplanation(ctx context.Context, id, userI
 	return highlight, nil
 }
 
-
 func normalizeHashList(hashes []string) ([]string, error) {
 	if len(hashes) > maxHashCheckItems {
 		return nil, fmt.Errorf("%w: hashes must be at most %d items", domain.ErrInvalidInput, maxHashCheckItems)

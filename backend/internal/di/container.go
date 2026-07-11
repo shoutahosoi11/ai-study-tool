@@ -206,8 +206,9 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	highlightQueryUsecase := usecase.NewHighlightQueryUsecase(highlightRepo)
 	highlightImportJobUsecase := usecase.NewHighlightImportJobUsecase(importQueueRepo, highlightRepo)
 	tokenUsecase := usecase.NewTokenUsecaseWithAdRewardSecretAndEnv(questionBudgetRepo, infraadmob.NewSSVVerifierFromEnv(), os.Getenv("AD_REWARD_HMAC_SECRET"), appEnv)
+	stripeClient := infrastripes.NewCheckoutClientFromEnv()
 	billingUsecase := usecase.NewBillingUsecase(
-		infrastripes.NewCheckoutClientFromEnv(),
+		stripeClient,
 		infrastripes.NewWebhookValidatorFromEnv(),
 		billingRepo,
 	)
@@ -219,7 +220,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	accountDeletionUsecase := usecase.NewAccountDeletionUsecase(userAccountDeleter, sessionCookieClient)
+	accountDeletionUsecase := usecase.NewAccountDeletionUsecase(userAccountDeleter, stripeClient, sessionCookieClient)
 	userHandler := handler.NewUserHandler(userUsecase, accountDeletionUsecase)
 	postHandler := handler.NewPostHandler(postUsecase, userUsecase)
 	questionHandler := handler.NewQuestionHandler(questionUsecase, questionSyncUsecase, userUsecase, manualGenerationUsecase)

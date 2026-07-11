@@ -2,6 +2,8 @@ package stripe
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -9,6 +11,7 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 	stripeapi "github.com/stripe/stripe-go/v76"
 	"github.com/stripe/stripe-go/v76/checkout/session"
+	"github.com/stripe/stripe-go/v76/subscription"
 )
 
 type CheckoutClient struct {
@@ -56,4 +59,28 @@ func (c *CheckoutClient) CreateCheckoutSession(ctx context.Context, userID uuid.
 		return "", err
 	}
 	return result.URL, nil
+}
+
+// CancelSubscription cancels the subscription immediately. An already
+// cancelled or missing subscription is treated as success so account deletion
+// stays idempotent across retries.
+func (c *CheckoutClient) CancelSubscription(ctx context.Context, subscriptionID string) error {
+	if strings.TrimSpace(subscriptionID) == "" {
+		return nil
+	}
+	if c.secretKey == "" {
+		return fmt.Errorf("stripe: cancel subscription: %w", domain.ErrInvalidInput)
+	}
+
+	stripeapi.Key = c.secretKey
+	params := &stripeapi.SubscriptionCancelParams{}
+	params.Context = ctx
+	if _, err := subscription.Cancel(subscriptionID, params); err != nil {
+		var stripeErr *stripeapi.Error
+		if errors.As(err, &stripeErr) && stripeErr.Code == stripeapi.ErrorCodeResourceMissing {
+			return nil
+		}
+		return fmt.Errorf("stripe: cancel subscription %s: %w", subscriptionID, err)
+	}
+	return nil
 }

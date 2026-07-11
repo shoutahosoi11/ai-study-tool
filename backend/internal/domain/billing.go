@@ -11,6 +11,13 @@ type CheckoutSessionCreator interface {
 	CreateCheckoutSession(ctx context.Context, userID uuid.UUID, email string) (string, error)
 }
 
+// SubscriptionCanceller cancels a provider-side subscription. Account deletion
+// must cancel before removing the user row: the subscriptions rows cascade
+// away with the user, but the provider keeps billing until told to stop.
+type SubscriptionCanceller interface {
+	CancelSubscription(ctx context.Context, subscriptionID string) error
+}
+
 type StripeWebhookValidator interface {
 	ConstructEvent(payload []byte, signatureHeader string) (StripeWebhookEvent, error)
 }

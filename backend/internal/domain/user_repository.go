@@ -19,4 +19,8 @@ type UserRepository interface {
 // data, and admin identities block deletion via ON DELETE RESTRICT.
 type UserAccountDeleter interface {
 	DeleteByID(ctx context.Context, id uuid.UUID) error
+	// GetStripeSubscriptionID returns the user's active Stripe subscription id,
+	// or "" when the user has none. Read before DeleteByID: the column is gone
+	// once the row is deleted.
+	GetStripeSubscriptionID(ctx context.Context, id uuid.UUID) (string, error)
 }
