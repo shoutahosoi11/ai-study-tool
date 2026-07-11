@@ -473,6 +473,7 @@ func (r *QuestionGenerationJobRepository) RequeueStaleProcessing(ctx context.Con
 	rows, err := r.db.QueryContext(ctx, `
 UPDATE question_generation_jobs
 SET status = $2,
+    retry_count = retry_count + 1,
     processing_started_at = NULL,
     updated_at = NOW()
 WHERE id IN (
@@ -480,13 +481,14 @@ WHERE id IN (
   WHERE user_id = $1
     AND status = $3
     AND processing_started_at < NOW() - ($4 * INTERVAL '1 second')
+    AND retry_count < $6
   ORDER BY created_at
   LIMIT $5
 )
 RETURNING id, user_id, book_key, status, reason, retry_count, last_error, created_at,
           processing_started_at, completed_at, failed_at
 `, userID, string(domain.JobStatusQueued), string(domain.JobStatusProcessing),
-		int(domain.JobStaleProcessingTimeout.Seconds()), limit)
+		int(domain.JobStaleProcessingTimeout.Seconds()), limit, domain.JobMaxRetryCount)
 	if err != nil {
 		return nil, wrapQuestionGenerationJobError("requeue stale processing", err)
 	}
@@ -502,6 +504,54 @@ RETURNING id, user_id, book_key, status, reason, retry_count, last_error, create
 	}
 	if err := rows.Err(); err != nil {
 		return nil, wrapQuestionGenerationJobError("iterate stale processing jobs", err)
+	}
+	for _, job := range jobs {
+		if err := r.loadHighlightIDs(ctx, job); err != nil {
+			return nil, err
+		}
+	}
+	return jobs, nil
+}
+
+// FailExhaustedStaleProcessing terminally fails stale processing jobs whose
+// retry budget is spent, so a crash-looping job cannot requeue forever. The
+// caller must mark the returned jobs' highlights as generation-failed.
+func (r *QuestionGenerationJobRepository) FailExhaustedStaleProcessing(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	rows, err := r.db.QueryContext(ctx, `
+UPDATE question_generation_jobs
+SET status = $2,
+    last_error = 'stale processing exceeded retry limit',
+    processing_started_at = NULL,
+    failed_at = NOW(),
+    updated_at = NOW()
+WHERE id IN (
+  SELECT id FROM question_generation_jobs
+  WHERE user_id = $1
+    AND status = $3
+    AND processing_started_at < NOW() - ($4 * INTERVAL '1 second')
+    AND retry_count >= $6
+  ORDER BY created_at
+  LIMIT $5
+)
+RETURNING id, user_id, book_key, status, reason, retry_count, last_error, created_at,
+          processing_started_at, completed_at, failed_at
+`, userID, string(domain.JobStatusFailed), string(domain.JobStatusProcessing),
+		int(domain.JobStaleProcessingTimeout.Seconds()), limit, domain.JobMaxRetryCount)
+	if err != nil {
+		return nil, wrapQuestionGenerationJobError("fail exhausted stale processing", err)
+	}
+	defer rows.Close()
+
+	var jobs []*domain.QuestionGenerationJob
+	for rows.Next() {
+		job, err := scanQuestionGenerationJob(rows)
+		if err != nil {
+			return nil, wrapQuestionGenerationJobError("scan exhausted stale job", err)
+		}
+		jobs = append(jobs, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrapQuestionGenerationJobError("iterate exhausted stale jobs", err)
 	}
 	for _, job := range jobs {
 		if err := r.loadHighlightIDs(ctx, job); err != nil {

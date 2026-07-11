@@ -172,7 +172,7 @@ type stubQuestionGenerationTaskEnqueuer struct {
 	err    error
 }
 
-func (s *stubQuestionGenerationTaskEnqueuer) EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID) error {
+func (s *stubQuestionGenerationTaskEnqueuer) EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID, attempt int) error {
 	s.jobID = jobID
 	s.userID = userID
 	return s.err

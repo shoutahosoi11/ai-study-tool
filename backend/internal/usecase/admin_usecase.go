@@ -184,7 +184,7 @@ func (u *AdminUsecase) RetryGenerationJob(ctx context.Context, admin domain.Admi
 	if u.taskEnqueuer == nil {
 		return nil
 	}
-	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID); err != nil {
+	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID, job.RetryCount); err != nil {
 		if markErr := u.repo.MarkGenerationJobEnqueueFailed(ctx, admin.UserID, job.ID, u.now().UTC()); markErr != nil {
 			slog.Error("admin_mark_enqueue_failed_error", "job_id", job.ID.String(), "error", markErr.Error())
 		}

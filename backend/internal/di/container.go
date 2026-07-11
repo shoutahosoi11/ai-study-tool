@@ -65,7 +65,7 @@ func NewContainer(db *sql.DB) (*Container, error) {
 		return nil, err
 	}
 
-	firebaseMiddleware, err := middleware.NewFirebaseMiddleware(authClient)
+	firebaseMiddleware, err := middleware.NewFirebaseMiddleware(infrafb.NewCachedTokenVerifier(authClient))
 	if err != nil {
 		return nil, err
 	}

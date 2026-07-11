@@ -65,6 +65,10 @@ func (m *mockQuestionSyncHighlightRepository) MarkHighlightsProcessing(ctx conte
 	return nil
 }
 
+func (m *mockQuestionSyncHighlightRepository) MarkGenerationFailed(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, lastError string, maxRetry int) error {
+	return nil
+}
+
 func (m *mockQuestionSyncHighlightRepository) MarkHighlightsPending(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error {
 	m.markedPending = append(m.markedPending, highlightIDs...)
 	return nil
@@ -178,6 +182,10 @@ func (m *mockQuestionGenerationJobRepository) RequeueStaleProcessing(ctx context
 	return nil, nil
 }
 
+func (m *mockQuestionGenerationJobRepository) FailExhaustedStaleProcessing(ctx context.Context, userID uuid.UUID, limit int) ([]*domain.QuestionGenerationJob, error) {
+	return nil, nil
+}
+
 func (m *mockQuestionGenerationJobRepository) ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*domain.QuestionGenerationJob, bool, error) {
 	m.claimCalls++
 	return m.claimJob, m.claimOK, nil
@@ -221,7 +229,7 @@ type mockQuestionGenerationTaskEnqueuer struct {
 	callLog  *[]string
 }
 
-func (m *mockQuestionGenerationTaskEnqueuer) EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID) error {
+func (m *mockQuestionGenerationTaskEnqueuer) EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID, attempt int) error {
 	if m.callLog != nil {
 		*m.callLog = append(*m.callLog, "enqueue")
 	}

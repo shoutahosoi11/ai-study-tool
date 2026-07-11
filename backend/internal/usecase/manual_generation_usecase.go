@@ -86,7 +86,7 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 	if u.taskEnqueuer == nil {
 		return job, nil
 	}
-	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, user.ID); err != nil {
+	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, user.ID, job.RetryCount); err != nil {
 		slog.Error("question_generation_event=enqueue_failed",
 			"source", "manual",
 			"job_id", job.ID.String(),

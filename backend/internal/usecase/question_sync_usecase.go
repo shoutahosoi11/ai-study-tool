@@ -339,7 +339,7 @@ func (u *QuestionSyncUsecase) enqueueJob(ctx context.Context, job *domain.Questi
 	if u.taskEnqueuer == nil {
 		return nil
 	}
-	return u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID)
+	return u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID, job.RetryCount)
 }
 
 func questionGenerationReason(candidate domain.QuestionGenerationBookCandidate) (domain.QuestionGenerationJobReason, bool) {
@@ -406,7 +406,28 @@ func (u *QuestionSyncUsecase) requeueStaleProcessingJobs(ctx context.Context, us
 			"job_id", job.ID.String(),
 			"user_id", job.UserID.String(),
 			"book_key", job.BookKey,
+			"retry_count", job.RetryCount,
 		)
+	}
+
+	exhausted, err := u.jobRepo.FailExhaustedStaleProcessing(ctx, userID, defaultQuestionSyncJobListLimit)
+	if err != nil {
+		return fmt.Errorf("question sync usecase: fail exhausted stale jobs: %w", err)
+	}
+	for _, job := range exhausted {
+		if job == nil {
+			continue
+		}
+		slog.Error("question_generation_event=stale_processing_exhausted",
+			"job_id", job.ID.String(),
+			"user_id", job.UserID.String(),
+			"book_key", job.BookKey,
+		)
+		if len(job.HighlightIDs) > 0 {
+			if err := u.highlightRepo.MarkGenerationFailed(ctx, job.UserID, job.HighlightIDs, "stale processing exceeded retry limit", 1); err != nil {
+				return fmt.Errorf("question sync usecase: mark exhausted job highlights failed: %w", err)
+			}
+		}
 	}
 	return nil
 }
