@@ -51,11 +51,19 @@ func (c *SessionCookieClient) VerifySessionCookie(ctx context.Context, sessionCo
 }
 
 func (c *SessionCookieClient) RevokeRefreshTokens(ctx context.Context, uid string) error {
-	return c.client.RevokeRefreshTokens(ctx, uid)
+	if err := c.client.RevokeRefreshTokens(ctx, uid); err != nil {
+		return err
+	}
+	c.cache.evict(uid)
+	return nil
 }
 
 func (c *SessionCookieClient) DeleteUser(ctx context.Context, uid string) error {
-	return c.client.DeleteUser(ctx, uid)
+	if err := c.client.DeleteUser(ctx, uid); err != nil {
+		return err
+	}
+	c.cache.evict(uid)
+	return nil
 }
 
 func firebaseTokenToDomain(token *auth.Token) *domain.AuthToken {

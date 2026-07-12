@@ -45,6 +45,15 @@ func (c *revocationCache) store(uid string, now time.Time) {
 	c.until[uid] = now.Add(c.ttl)
 }
 
+// evict drops the cached verdict so the next request re-checks Firebase.
+// Called on revoke/delete: this makes revocation instant on the instance
+// that performed it; other instances remain bounded by the TTL.
+func (c *revocationCache) evict(uid string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.until, uid)
+}
+
 // CachedTokenVerifier verifies mobile ID tokens locally and re-checks
 // revocation against Firebase at most once per TTL per user. Revocation
 // errors surface as the SDK's IsIDTokenRevoked/IsUserDisabled error types,
