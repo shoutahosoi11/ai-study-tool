@@ -1,3 +1,53 @@
+    型制限
+    * INTEGER, BOOLEAN, DATE, UUID, JSONB
+* NULL禁止
+    * NOT NULL
+* 文字数
+    * VARCHAR(100)
+    * CHECK (char_length(name) <= 100)
+* 数値範囲
+    * CHECK (price >= 0)
+* 候補値限定
+    * CHECK (status IN ('draft', 'published'))
+* 重複禁止
+    * UNIQUE(email)
+* 主キー
+    * PRIMARY KEY
+* 外部キー
+    * FOREIGN KEY (user_id) REFERENCES users(id)
+* 複合条件
+    * CHECK (start_at <= end_at)
+* 複合UNIQUE
+    * UNIQUE(user_id, book_id)
+    * 同じユーザーが同じ本を2回登録できない、など
+* 削除・更新時の制限
+    * ON DELETE CASCADE
+    * ON DELETE RESTRICT
+* デフォルト値
+    * DEFAULT now()
+    * DEFAULT false
+* 形式
+    * メール形式、URL形式、文字種など
+    * CHECKやバックエンド側で検証
+* 小数精度
+    * NUMERIC(10, 2)
+    * 金額なら小数点以下2桁まで
+* 配列・JSONの構造
+    * PostgreSQLならJSONB
+    * ただし複雑な構造検証はアプリ側の方がやりやすい
+* 件数制限
+    * 「1ユーザー最大100件」
+    * DB制約だけでは難しいことが多く、バックエンドで制御
+* 状態遷移
+    * draft → publishedはOKだがdeleted → publishedは禁止、など
+    * 基本はドメイン・バックエンド側
+
+
+
+
+
+
+
 # CLAUDE.md
 
 あなたはこのリポジトリの TypeScript アーキテクトとして、**TDD と DDD** で開発する。チャットアプリ「スットワーク」（`client` React 19 + Vite / `backend` Express 5 + Kysely + SQLite の npm workspaces）。以下のルールは、開発者が明示的に解除しない限りすべてのタスクに適用される。
