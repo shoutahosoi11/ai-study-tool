@@ -80,9 +80,11 @@ func registerExtensionRoutes(
 	)
 	extension.POST("/pairing/status", container.ExtensionHandler.PairingStatus,
 		echomiddleware.BodyLimit(bodyLimitPairingStatus),
+		container.PairingPollRateLimitMiddleware.Limit,
 	)
 	extension.POST("/pairing/claim", container.ExtensionHandler.ClaimPairing,
 		echomiddleware.BodyLimit(bodyLimitPairingClaim),
+		container.PairingPollRateLimitMiddleware.Limit,
 	)
 	extension.POST("/pairing/approve", container.ExtensionHandler.ApprovePairing,
 		echomiddleware.BodyLimit(bodyLimitPairingApprove),
@@ -218,6 +220,7 @@ func registerQuestionRoutes(
 	questions.GET("/prepared", container.QuestionHandler.ListPrepared, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
 	questions.GET("/saved", container.QuestionHandler.ListSaved, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
 	questions.GET("/incorrect", container.QuestionHandler.ListIncorrect, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
+	questions.GET("/stock", container.QuestionHandler.GetStock, appmiddleware.RequireScope(domain.ExtensionScopeQuestionRead))
 	questions.POST("/sync", container.QuestionHandler.SyncStock, echomiddleware.BodyLimit(bodyLimitQuestionSync), appmiddleware.RequireScope(domain.ExtensionScopeQuestionGenerate), generationRateLimit)
 	questions.POST("/generate/manual", container.QuestionHandler.ManualGenerate, echomiddleware.BodyLimit(bodyLimitManualGenerate), appmiddleware.RequireScope(domain.ExtensionScopeQuestionGenerate), generationRateLimit)
 	questions.POST("/:id/save", container.QuestionHandler.SaveQuestion, echomiddleware.BodyLimit(bodyLimitQuestionWrite), appmiddleware.RequireScope(domain.ExtensionScopeQuestionWrite))

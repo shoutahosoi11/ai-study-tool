@@ -74,6 +74,10 @@ func (u *QuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domai
 		return result, nil
 	}
 
+	if err := u.requeueStaleProcessingJobs(ctx, user.ID); err != nil {
+		return nil, err
+	}
+
 	if err := u.reenqueueQueuedJobs(ctx, user.ID, result); err != nil {
 		return nil, err
 	}
@@ -94,8 +98,9 @@ func (u *QuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domai
 	sortQuestionGenerationCandidates(candidates)
 
 	result.Books = buildQuestionSyncBookResponse(candidates)
+	counters := &questionJobQueueDepthCounters{}
 	for _, candidate := range candidates {
-		created, err := u.createJobIfNeeded(ctx, user.ID, candidate)
+		created, err := u.createJobIfNeeded(ctx, user.ID, candidate, counters)
 		if err != nil {
 			return nil, err
 		}
@@ -154,8 +159,33 @@ func (u *QuestionSyncUsecase) EvaluateBookAfterAnswer(ctx context.Context, user 
 	if candidate == nil {
 		return nil
 	}
-	_, err = u.createJobIfNeeded(ctx, user.ID, *candidate)
+	_, err = u.createJobIfNeeded(ctx, user.ID, *candidate, nil)
 	return err
+}
+
+// GetQuestionStock is the read-only counterpart of SyncQuestionStock for
+// status polling: it reports per-book stock without creating jobs, without
+// advancing last_sync_at, and without consuming the generation rate budget.
+func (u *QuestionSyncUsecase) GetQuestionStock(ctx context.Context, user *domain.User) (*SyncQuestionStockResult, error) {
+	if user == nil {
+		return nil, domain.ErrNotFound
+	}
+
+	result := &SyncQuestionStockResult{}
+	if skipped, err := u.skipIfDailyLimitReached(ctx, user.ID); err != nil {
+		return nil, err
+	} else if skipped {
+		result.SkippedDueToDailyLimit = true
+	}
+
+	// nil changedSince = full snapshot; last_sync_at must not advance on a read.
+	candidates, err := u.highlightRepo.ListQuestionGenerationCandidates(ctx, user.ID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("question sync usecase: list stock candidates: %w", err)
+	}
+	sortQuestionGenerationCandidates(candidates)
+	result.Books = buildQuestionSyncBookResponse(candidates)
+	return result, nil
 }
 
 func (u *QuestionSyncUsecase) skipIfDailyLimitReached(ctx context.Context, userID uuid.UUID) (bool, error) {
@@ -219,7 +249,7 @@ func (u *QuestionSyncUsecase) reenqueueQueuedJobs(ctx context.Context, userID uu
 	return nil
 }
 
-func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid.UUID, candidate domain.QuestionGenerationBookCandidate) (bool, error) {
+func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid.UUID, candidate domain.QuestionGenerationBookCandidate, counters *questionJobQueueDepthCounters) (bool, error) {
 	reason, ok := questionGenerationReason(candidate)
 	if !ok {
 		return false, nil
@@ -243,7 +273,7 @@ func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid
 		return false, nil
 	}
 
-	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, userID, candidate.BookKey); err != nil {
+	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, counters, userID, candidate.BookKey); err != nil {
 		if errors.Is(err, domain.ErrQuestionQueueDepthExceeded) {
 			slog.Warn("question_generation_event=queue_depth_exceeded",
 				"user_id", userID.String(),
@@ -265,6 +295,9 @@ func (u *QuestionSyncUsecase) createJobIfNeeded(ctx context.Context, userID uuid
 			return false, nil
 		}
 		return false, fmt.Errorf("question sync usecase: create generation job: %w", err)
+	}
+	if counters != nil {
+		counters.record()
 	}
 
 	if err := u.highlightRepo.MarkHighlightsProcessing(ctx, userID, highlightIDs); err != nil {
@@ -306,7 +339,7 @@ func (u *QuestionSyncUsecase) enqueueJob(ctx context.Context, job *domain.Questi
 	if u.taskEnqueuer == nil {
 		return nil
 	}
-	return u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID)
+	return u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, job.UserID, job.RetryCount)
 }
 
 func questionGenerationReason(candidate domain.QuestionGenerationBookCandidate) (domain.QuestionGenerationJobReason, bool) {
@@ -352,4 +385,49 @@ func buildQuestionSyncBookResponse(candidates []domain.QuestionGenerationBookCan
 func questionSyncDay(now time.Time) time.Time {
 	utcNow := now.UTC()
 	return time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// requeueStaleProcessingJobs recovers jobs whose worker instance died mid-run.
+// They flip back to queued here and are re-enqueued by reenqueueQueuedJobs in
+// the same sync pass.
+func (u *QuestionSyncUsecase) requeueStaleProcessingJobs(ctx context.Context, userID uuid.UUID) error {
+	if u.jobRepo == nil {
+		return nil
+	}
+	jobs, err := u.jobRepo.RequeueStaleProcessing(ctx, userID, defaultQuestionSyncJobListLimit)
+	if err != nil {
+		return fmt.Errorf("question sync usecase: requeue stale processing jobs: %w", err)
+	}
+	for _, job := range jobs {
+		if job == nil {
+			continue
+		}
+		slog.Warn("question_generation_event=stale_processing_requeued",
+			"job_id", job.ID.String(),
+			"user_id", job.UserID.String(),
+			"book_key", job.BookKey,
+			"retry_count", job.RetryCount,
+		)
+	}
+
+	exhausted, err := u.jobRepo.FailExhaustedStaleProcessing(ctx, userID, defaultQuestionSyncJobListLimit)
+	if err != nil {
+		return fmt.Errorf("question sync usecase: fail exhausted stale jobs: %w", err)
+	}
+	for _, job := range exhausted {
+		if job == nil {
+			continue
+		}
+		slog.Error("question_generation_event=stale_processing_exhausted",
+			"job_id", job.ID.String(),
+			"user_id", job.UserID.String(),
+			"book_key", job.BookKey,
+		)
+		if len(job.HighlightIDs) > 0 {
+			if err := u.highlightRepo.MarkGenerationFailed(ctx, job.UserID, job.HighlightIDs, "stale processing exceeded retry limit", 1); err != nil {
+				return fmt.Errorf("question sync usecase: mark exhausted job highlights failed: %w", err)
+			}
+		}
+	}
+	return nil
 }

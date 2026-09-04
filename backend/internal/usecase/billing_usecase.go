@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 
 	"github.com/shout/ai-study-tool/backend/internal/domain"
 )
@@ -25,12 +27,17 @@ func (u *BillingUsecase) CreateCheckoutSession(ctx context.Context, user *domain
 func (u *BillingUsecase) HandleWebhook(ctx context.Context, payload []byte, signature string) error {
 	event, err := u.webhook.ConstructEvent(payload, signature)
 	if err != nil {
-		return err
+		// Signature/parse failures must map to 400 so Stripe stops retrying;
+		// processing failures below must not, so keep the classes distinct.
+		return fmt.Errorf("%w: construct stripe event: %v", domain.ErrInvalidInput, err)
 	}
 
 	processed, err := u.billingRepo.ProcessStripeEvent(ctx, event, hashPayload(payload))
-	if err != nil || !processed {
-		return err
+	if err != nil {
+		return fmt.Errorf("process stripe event %s (%s): %w", event.ID, event.Type, err)
+	}
+	if !processed {
+		slog.Info("stripe_event_skipped", "event_id", event.ID, "event_type", event.Type)
 	}
 
 	return nil

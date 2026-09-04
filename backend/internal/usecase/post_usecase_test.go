@@ -35,7 +35,7 @@ func (f *fakePostRepository) CanView(ctx context.Context, viewerID, postID uuid.
 
 func requirePostValidationError(t *testing.T, err error) {
 	t.Helper()
-	if err == nil || !strings.HasPrefix(err.Error(), "validation:") {
+	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
 }

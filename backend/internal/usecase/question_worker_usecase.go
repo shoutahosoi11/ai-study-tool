@@ -383,6 +383,12 @@ func logQuestionWorkerEvent(event string, fields map[string]any) {
 	for key, value := range fields {
 		args = append(args, key, value)
 	}
+	// job_failed carries the job ID and error; it must surface at ERROR
+	// severity or log-based alerts never see it.
+	if event == "job_failed" {
+		slog.Error("question_worker_event", args...)
+		return
+	}
 	slog.Info("question_worker_event", args...)
 }
 

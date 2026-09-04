@@ -48,7 +48,7 @@ func NewQuestionGenerationEnqueuerFromEnv(ctx context.Context) (*QuestionGenerat
 	}, nil
 }
 
-func (e *QuestionGenerationEnqueuer) EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID) error {
+func (e *QuestionGenerationEnqueuer) EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID, attempt int) error {
 	if e == nil || e.client == nil {
 		return nil
 	}
@@ -85,7 +85,7 @@ func (e *QuestionGenerationEnqueuer) EnqueueQuestionGeneration(ctx context.Conte
 	req := &taskspb.CreateTaskRequest{
 		Parent: e.queuePath,
 		Task: &taskspb.Task{
-			Name: e.queuePath + "/tasks/question-generation-" + jobID.String(),
+			Name: fmt.Sprintf("%s/tasks/question-generation-%s-r%d", e.queuePath, jobID, attempt),
 			MessageType: &taskspb.Task_HttpRequest{
 				HttpRequest: httpRequest,
 			},

@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/shout/ai-study-tool/backend/internal/domain"
@@ -18,14 +17,14 @@ func NewSocialUsecase(socialRepo domain.SocialRepository) *SocialUsecase {
 
 func (u *SocialUsecase) Follow(ctx context.Context, followerID, followeeID string) error {
 	if followerID == followeeID {
-		return fmt.Errorf("validation: cannot follow yourself")
+		return domain.NewValidationError("cannot follow yourself")
 	}
 	return u.socialRepo.Follow(ctx, followerID, followeeID)
 }
 
 func (u *SocialUsecase) Unfollow(ctx context.Context, followerID, followeeID string) error {
 	if followerID == followeeID {
-		return fmt.Errorf("validation: cannot unfollow yourself")
+		return domain.NewValidationError("cannot unfollow yourself")
 	}
 	return u.socialRepo.Unfollow(ctx, followerID, followeeID)
 }
@@ -49,10 +48,10 @@ func (u *SocialUsecase) Unrepost(ctx context.Context, userID, postID string) err
 func (u *SocialUsecase) CreateComment(ctx context.Context, comment *domain.Comment) (*domain.Comment, error) {
 	content := strings.TrimSpace(comment.Content)
 	if content == "" {
-		return nil, fmt.Errorf("validation: content is required")
+		return nil, domain.NewValidationError("content is required")
 	}
 	if len([]rune(content)) > 500 {
-		return nil, fmt.Errorf("validation: content must be 500 characters or less")
+		return nil, domain.NewValidationError("content must be 500 characters or less")
 	}
 
 	comment.Content = content

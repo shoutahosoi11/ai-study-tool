@@ -67,8 +67,11 @@ func (h *HighlightHandler) Import(c echo.Context) error {
 
 	result, err := h.importUsecase.ImportKindleHighlights(c.Request().Context(), user.ID, items)
 	if err != nil {
+		if httpErr, ok := asValidationHTTPError(err); ok {
+			return httpErr
+		}
 		if errors.Is(err, domain.ErrInvalidInput) {
-			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid input")
 		}
 		if errors.Is(err, domain.ErrAllCopyProtected) {
 			return echo.NewHTTPError(http.StatusUnprocessableEntity, "コピー制限によりハイライトを取得できませんでした")
@@ -125,8 +128,11 @@ func (h *HighlightHandler) CheckExistingHashes(c echo.Context) error {
 
 	existing, err := h.queryUsecase.ListExistingContentHashes(c.Request().Context(), user.ID, req.Hashes)
 	if err != nil {
+		if httpErr, ok := asValidationHTTPError(err); ok {
+			return httpErr
+		}
 		if errors.Is(err, domain.ErrInvalidInput) {
-			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid input")
 		}
 		slog.Error("highlight_handler_error", "operation", "check_existing_hashes", "user_id", user.ID.String(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
