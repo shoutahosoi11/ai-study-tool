@@ -1,4 +1,148 @@
 
+
+https://jira.atlassian.freee.co.jp/browse/APAR-4206Can't find link  あなたは図書館の管理人です。本の管理システムを作りたいと思っています。 以下の機能を実現させ、本の管理システムを作成してください。
+* 本（Book）の情報登録
+    * カテゴリー
+    * タイトル
+    * 作者
+    * 発売日
+    * 金額
+* 本の情報更新
+* 本の情報検索
+* 本の貸し出し記録。誰が、いつ借りて、いつ返したか
+[memo]
+開発を進める前に何をやるべきなのかをまず相談をする
+* 誰が使うのかなど
+    * 管理者
+* 機能を作るのにはどんなデータが必要？
+    * カテゴリー
+    * 哲学・芸術・文学 
+
+カテゴリ
+
+* 実装する前に要求を詰めて不明点をなくす
+    * 実装する機能
+        * 本の情報登録・更新・検索・貸し出し記録
+    * 同じ本が複数冊ある場合
+        * 一意のIDで識別する
+            * 管理用の番号を振る方が良いのでは？
+            * createdatはDBの持ち物
+            * DBを移行した時に値が変わってしまう
+            * 本の管理番号をつけて一意になる番号を作る
+    * 利用者の識別方法
+        * 借りる人をどう識別するか？
+        * 会員ID、電話番号、メアド
+        * 基本的に個人情報を持ちたくない
+        * 会員ID (整数)　UUIDとは別 1-10 
+        * ニックネーム
+        * 貸し出し時はニックネーム
+    * 返却ルールのルール
+        * 貸出期間の上限
+        * 延滞したい時は？
+        * 一人で同時に何冊まで借りれるか
+    * どうやって検索したい？
+        * カテゴリ・本のタイトル・作者の名前・発売日で並べ替えたい
+        * and条件
+正規化
+カテゴリをマスタデータとして切り出さなくて良いか？
+[memo]
+上が終わったら
+* DBの設計をする <- 相談
+* 実装に詰まったら相談するでは遅いのでつまらないように相談する
+* 何をするのにどれくらい時間がかかったのかの感覚を養う
+ 
+必要なデータ(仮)
+ 本（蔵書）データ：Books
+ID：一意の識別子（同じ本が複数あっても1冊ずつ識別するため）
+タイトル
+作者
+カテゴリ
+発売日
+金額
+ステータス：貸出可能、貸出中、修理
+
+
+CREATE TABLE `books` (
+  `id` varchar(26) NOT NULL COMMENT 'ULID'
+  `title` varchar(255) NOT NULL,
+  `author` varchar(100) NOT NULL,
+  `category_id` varchar(26) DEFAULT NULL COMMENT 'カテゴリID',
+  `release_date` date,
+  `status` varchar(16) NOT NULL COMMENT '利用状況: available/lending/suspend'
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`)
+)
+* id ← ULIDにするaparにあわせる
+* ENUMは使わない
+    * 仕様変更に対する柔軟性が低い
+        * 値を変更しずらい(ALTER TABLEでマイグレーションする必要がある)
+        * enumの定義をDBからだけでは確認できない
+        * アプリケーション側から値の候補を取得するのが難しい
+* 発売日は分からない本もあるのでNULLを許容する
+created_at
+updated_at
+index、unique_key
+カテゴリ : Category
+
+
+CREATE TABLE `categories` (
+  `id` varchar(26) NOT NULL COMMENT 'ULID',
+  `name` varchar(26) NOT NULL COMMENT 'カテゴリ名: 哲学/芸術/文学 ',
+  `created_at` DATETIME NOT NULL,
+  `updated_at` DATETIME NOT NULL,
+  PRIMARY KEY (`id`)
+  UNIQUE KEY `uk_name` (`name`)
+)
+正規化
+利用者データ：Users
+ID
+ニックネーム
+
+
+CREATE TABLE `users` (
+  `id` varchar(26) NOT NULL COMMENT 'ULID'
+  `nickname` varchar(30) NOT NULL,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`)
+)
+ 
+貸出・返却記録データ：rental_records
+貸出ID：記録ごとの一意の識別子
+蔵書ID：どの本か
+利用者ID：誰が借りたか
+貸出日：いつ借りたか
+
+
+CREATE TABLE `rental_records` (
+  `id` varchar(26) NOT NULL COMMENT 'ULID'
+  `book_id varchar(26) NOT NULL COMMENT 'ULID'
+  `user_id` varchar(26) NOT NULL COMMENT 'ULID'
+  `rented_at` datetime NOT NULL COMMENT '貸出日時'
+  `returned_at` datetime DEFAULT NULL COMMENT '返却日時'
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY ('id')
+)
+ 
+マイグレーション
+ドメインモデル
+設計 → 要件聞く-> どんなデータを保持しないといけないかを聞く → 要件を満たすテーブル設計 → データを使って何をするのか(UC) → 左をするのにどんな作業が発生するのか洗い出してみる
+ 
+ドメインモデル・API ・画面を作る
+ドメインモデルを業務として考える
+ 
+概念を検討する ← レビュー
+* 消込とかプランの利用状況・消込ルールのところを見てみるとヒントになるかも
+* 業務を表現するためのdb
+* 集約ルート調べる
+*  
+次はAPI の設計
+
+
+
+
 Owner	service-infra
 Author	@Yu Usami (Unlicensed)
 Status	LIVING
