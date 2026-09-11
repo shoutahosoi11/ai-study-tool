@@ -1,1436 +1,1773 @@
-結論：
-カラムをどのDB・テーブルに置くかが決まっていても、実装前に「制約・更新ルール・性能・運用」を決める必要がある。
 
-1. NULLを許すか
+C-FO 組織内 dbt プロジェクトの「統一的な作り方」を定めるガイドです。 既存 22 リポジトリの横断調査から、すでに揃っている点は除き、割れている点はこれからも割れると考えて標準を1つ選ぶ方針で構成しています。（あらゆる標準を作るのは非効率なのでこの方針にしています）
+凡例
+* ✅ 標準 … 本ガイドで推奨する書き方
+* ❌ 避ける … 現状見られるが標準から外れる書き方
+「現状例」について: 各リポジトリの調査で確認した スタイル傾向を代表する再構成例 です。逐語のコピーではなく、そのリポジトリの書き癖を示すためのものです。
+参照実装: advisor-score-mart / crossing-report-datamart / benefit-coupon-recommendation（本ガイドに最も近い3リポジトリ。迷ったらこの3つを見る）
 
-NOT NULLにするか決める。
+全体方針
+標準化を 3つの階層 に分けて扱います。
+
+
 
-例：
-name TEXT NOT NULL
+階層	内容	強制方法
+構造	層トポロジー・命名・材質・依存方向	本ガイド＋レビューで合議
+表層	大小文字・カンマ・別名・インデント	.sqlfluff ＋ CI で機械強制（付録A）
+運用	テスト・ドキュメント・マクロ・環境切替	本ガイド＋テンプレリポジトリ
+
+
+表層は sqlfluff fix でほぼ自動整形できます。人が議論すべきは 構造 です。
+
+ディレクトリ構成とレイヤー
+Data Modeling Layer Policy
+
+  を参照してください。
+
+命名規約
+✅ 標準
+
+
+
+対象	規則	例
+staging モデル	stg_<source>__<entity>（ダブルアンダースコア区切り）	stg_accounting__companies
+intermediate モデル	int_<domain>__<entity>	int_accounting_advisors__advisor_client_links
+ディメンションモデル	dim_<entity>	dim_companies
+ファクトモデル	fct_<subject>	fct_monthly_charges
+モデル用 yml	_<table>__models.yml（先頭アンダースコア）	_accounting__models.yml
+ソース定義 yml	_<source>__sources.yml	_accounting__sources.yml
+
+
+* モデル名は簡潔に。過度に長い記述的命名は避ける。
+* 特にsourceやdomainに当たる部分が長い場合、一般的に使用される略称は用いて良い。しかし国際的な基準があるわけではなく個人の認識によって揺れるので、レビューアと認識が一致するならOKとする。
+    * ✅ standard → std、identifier → id、database → db など
+    * ❌ user → usr、customer → cust
+
+ソースと鮮度（source / freshness）
+✅ 標準
+* すべての source テーブルに description と freshness（error_after 目安 24h） を定義する。
+* source 定義は models/staging/<source>/_<source>__sources.yml に置く。
+* 鮮度を必要としない場合は除外。
+📍 参考
+* freshness 運用の手本: advisor-score-mart / crossing-report-datamart / benefit-coupon-recommendation（共通マクロ freshness_query で loaded_at を注入）。
+
+SQL コーディングスタイル（表層・.sqlfluff で機械強制）
+本章は個人グローバル設定 ~/.claude/rules/sql.md のルールを組織標準として採用したものです。 すべて .sqlfluff（付録A）で自動整形・CI強制できます。
+大文字・小文字：すべて小文字
+
+
+-- ✅ 標準
+select
+    company_id
+    , company_name
+from stg_accounting__companies
+-- ❌ 避ける
+SELECT
+    company_id
+    , company_name
+FROM stg_accounting__companies
+📍 corporate-master は .sqlfluff に小文字を指定しているのにコードは大文字＝lint が強制されていない。CI 必須化（付録A）で防ぐ。
+インデント：4スペース
+* 4文字の空白文字をインデントとして扱う。
+select 句とカンマ：先頭カンマ
+
+
+-- ✅ 標準：select の後に改行してインデント、2つ目以降は先頭カンマ、別名は as
+select
+    id as company_id
+    , name as company_name
+    , date(created_at, 'Asia/Tokyo') as created_date
+-- ❌ 避ける
+select
+    id as company_id,
+    name as company_name,
+    date(created_at, 'Asia/Tokyo') as created_date
+* カラム別名には as を付ける。
+from 句とテーブル別名：別名に as を付けない
+
+
+-- ✅ 標準：from は同一行にテーブル名、テーブル別名に as を書かない
+from stg_accounting__companies c
+-- ❌ 避ける
+from stg_accounting__companies as c
+join：可能な限り using、不可なら on
+
+
+-- ✅ 標準：結合キー名が一致するなら using
+from deals d
+    inner join companies c using (company_id)
+    left join advisors a on d.advisor_id = a.id and d.dt = a.dt
+* 結合キー名が左右で異なる場合のみ on を使う。
+* sqlfluffには無いルールのため、カスタムルールを作成して対応が必要。
+where 句
+
+
+-- ✅ 標準：where の後に条件、2つ目以降はインデントして and/or を先頭
+where dt = date_sub(current_date('Asia/Tokyo'), interval 1 day)
+    and status = 'active'
+-- ❌ 避ける
+where dt = date_sub(current_date('Asia/Tokyo'), interval 1 day) and
+    status = 'active'
+CTE と import CTE パターン
+
+
+-- ✅ 標準：最初の CTE は with と同一行、2つ目以降は新しい行で先頭カンマ
+with source as (
+    〜
+)
+, renamed as (
+    〜
+)
+select * from renamed
+* インラインサブクエリよりも CTE で段階分割する。
+* sqlfluffには無いルールのため、カスタムルールを作成して対応が必要。
 
-「未設定」をNULLで表すのか、空文字で表すのかも決める。
+テスト
+✅ 標準（最低ライン）
+* marts の主キーに unique ＋ not_null を必須。
+* テスト記法は data_tests:（新記法）に統一（旧 tests: は使わない）。
+* 複雑な変換ロジックには unit test を推奨。
 
-基本的には、意味のないNULLを増やさない方が扱いやすい。
 
-2. デフォルト値
+# _marts__models.yml
+models:
+  - name: dim_companies
+    columns:
+      - name: company_id
+        data_tests:
+          - unique
+          - not_null
 
-値を指定しなかった場合に何を入れるか決める。
+ドキュメント
+✅ 標準
+* 全モデル・全カラムに日本語 description を付ける。
+* yml のファイル方式は 1つに統一する（下記いずれか。テンプレリポジトリで固定）。
+    * 案A: _<table>__models.yml（テーブル単位。参照実装が採用）
+    * 案B: _<model>.yml サイドカー（dbt-osmosis 運用。bpaas 系 / ocr-…-dwh-a が採用）
 
-例：
-created_at DEFAULT now()
-status DEFAULT ‘draft’
-is_active DEFAULT true
+共通マクロ・パッケージ
+✅ 標準
+* 各リポジトリにほぼ同一のマクロが散在する場合 社内 dbt package に集約して共有する。
+    * freshness_query（source 鮮度）
+    * create_shared_views（on-run-end で共有ビュー生成）
+    * dev_source（本番/dev のソース切替）
+    * snapshot_dt（スナップショット断面のピン留め）
+* 外部パッケージは dbt_utils を標準採用。品質担保に dbt_project_evaluator の導入を推奨。
 
-アプリ側で設定するのか、DB側で設定するのかも決める。
+環境切替
+✅ 標準
+* 本番/dev やプロジェクト切替は env_var() に方式を統一する。
+* target.name の文字列分岐や、リポジトリ固有の環境名分岐（例: harbor）を各様に増やさない。
+
+スナップショット / 断面の扱い
+✅ 標準
+* 日次パーティション断面は JST 前日 を共通イディオムにする。
+* ただし、一部のデータソース(Salesforce)において特殊な理由がある場合は除外。
+* martsで作成したテーブルが対象
+
+
+where dt = date_sub(current_date('Asia/Tokyo'), interval 1 day)
+* 履歴保持（SCD Type2）は dbt の snapshot 機能を使う。
+
+付録A：.sqlfluff スターター設定
+各リポジトリのルートに配置し、CI（sqlfluff lint）で強制する。第6章のルールに対応。
+
+
+[sqlfluff]
+dialect = bigquery
+templater = dbt
+max_line_length = 120
+[sqlfluff:indentation]
+indent_unit = space
+tab_space_size = 4
+[sqlfluff:layout:type:comma]
+line_position = leading            ; 先頭カンマ（6.3）
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower      ; キーワード小文字（6.1）
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = lower
+[sqlfluff:rules:aliasing.table]
+aliasing = implicit                ; テーブル別名に as を付けない（6.4）
+[sqlfluff:rules:aliasing.column]
+aliasing = explicit                ; カラム別名に as を付ける（6.3）
+[sqlfluff:rules:references.consistent]
+force_enable = True
+導入時は sqlfluff fix で一括整形 → 差分レビュー → CI 必須化、の順で。大文字リポジトリ（Y-a）は差分が大きいので単独 PR で。
+
+
+
+
+
+
+
+freeeポイントDB設計 (UC最小構成)
+
+￼
+作成者: ryosuke-matsushita
+
+聴く
+
+8
+
+リアクションを追加
+￼
+Content Report
+
+
+
+
+
+サンクスレター機能 DB設計 (UC最小構成)
+本ドキュメントは、提示されたユースケース（UC-1 / UC-3従業員 / UC-5 / UC-3管理者）のみを満たすことを目的に、元ER図を最小構成へ絞り込んだDB設計です。
+employees はfreee人事労務マスタの外部参照とし、本サービス内には実テーブルを作成しません。各テーブルの *_employee_id は人事労務マスタ上の従業員IDへの論理参照です (物理外部キー制約は張りません)。
+1. 対象ユースケース
+
+
+
+UC	区分	概要
+UC-1	従業員	ポイント付きレターを送る (1 to 1, ポイント設定, メッセージ)
+UC-3	従業員	送付可能ポイント残数 (今週) を確認する
+UC-5	従業員	フィード閲覧 / もらった・送ったフィルタ / 今月もらった / 累積もらった
+UC-3	管理者	サンクスレターサービスのメンバー (利用者) と権限を管理する
+
+
+UC-管理者-3 の解釈について
+従業員マスタそのものは人事労務側で管理されるため、本サービスで実体を CRUD しません。本サービスにおける「マスタ管理」は「人事労務に在籍する従業員のうち、誰をこのサービスのメンバーとするか」の管理 (招待・停止・除外) + 権限割当 と解釈します。
+2. 設計方針
+* 従業員マスタは外部参照: 人事労務側の employee_id を論理参照のみで保持 (本サービスに実テーブルなし)
+* サービス利用状態: service_memberships で、人事労務在籍者のうちサンクスレターを使う人を管理 (招待/active/停止/削除)
+* 1 to 1限定: letter_recipients 子テーブルは作らず、letters に recipient_employee_id/points を埋め込む
+* 残数・集計: サマリテーブルは作らず、point_transactions からの集計で実現 (YAGNI)
+* マルチテナント: 全テーブルに company_id を保持しインデックス付与
+* 論理削除: service_memberships は deleted_at センチネル運用
+* 権限管理: 履歴管理可能な member_roles テーブルで admin/member を区別
+* 不変ログ: point_transactions は追記専用、updated_at を持たない
+3. ER図
+
+
+erDiagram
+    %% ===== freee人事労務マスタ（外部参照・本PJで管理しない） =====
+    companies ||--o{ employees : has
+    %% ===== サンクスレターサービス内テーブル =====
+    companies ||--o{ service_memberships : scopes
+    companies ||--o{ letters : scopes
+    companies ||--o{ member_roles : scopes
+    companies ||--o{ point_grants : scopes
+    companies ||--o{ point_transactions : scopes
+    employees ||--o{ service_memberships : "registered (外部参照)"
+    employees ||--o{ letters : "sends (sender)"
+    employees ||--o{ letters : "receives (recipient)"
+    employees ||--o{ member_roles : assigned
+    employees ||--o{ point_grants : granted
+    employees ||--o{ point_transactions : involves
+    letters ||--o{ point_transactions : "origin"
+    employees {
+        bigint id PK "freee人事労務マスタ・外部参照"
+        bigint company_id
+    }
+    service_memberships {
+        bigint id PK
+        bigint company_id "テナント"
+        bigint employee_id "人事労務マスタへの論理参照"
+        smallint status "1:invited/2:active/3:suspended"
+        datetime invited_at
+        datetime joined_at
+        datetime suspended_at
+        datetime created_at
+        datetime updated_at
+    }
+    member_roles {
+        bigint id PK
+        bigint company_id
+        bigint employee_id "人事労務マスタへの論理参照"
+        smallint role_kind "1:admin/2:member"
+        datetime effective_from
+        datetime effective_to "null=現在有効"
+    }
+    letters {
+        bigint id PK
+        bigint company_id
+        bigint sender_employee_id "送り手 (人事労務マスタ参照)"
+        bigint recipient_employee_id "受け手 (人事労務マスタ参照, 1to1)"
+        int points "送付ポイント(0以上)"
+        text message "メッセージ本文"
+        datetime created_at
+    }
+    point_grants {
+        bigint id PK
+        bigint company_id
+        date start_on "週の起算日"
+        date end_on "週の終了日(失効日)"
+        int granted_points "週内に送れる原資"
+        datetime created_at
+        datetime updated_at
+    }
+    point_transactions {
+        bigint id PK
+        bigint company_id
+        bigint subject_employee_id "取引対象 (人事労務マスタ参照)"
+        bigint counterpart_employee_id "相手 (人事労務マスタ参照)"
+        bigint letter_id FK "起点レター"
+        smallint kind "1:送付/2:受領"
+        int amount "送付/受領ポイント"
+        datetime occurred_at
+        datetime created_at
+    }
+￼
+4. テーブル定義
+4.1 employees (外部参照・本サービスでは管理しない)
+人事労務マスタの employees を参照します。本サービス内には実テーブルを作成せず、各テーブルが *_employee_id として論理参照を保持します。
+* 名前・メールアドレス等の従業員属性は表示時に人事労務マスタAPIから取得する想定
+* 物理外部キー制約は張らない (テナント越境・サービス越境のため)
+* 削除や名前変更は人事労務側で行われ、本サービスは追従するのみ
+4.2 service_memberships (UC-管理者-3 サービス利用管理)
+
+
+
+カラム	型	備考
+id	bigint PK	
+company_id	bigint	テナント
+employee_id	bigint	人事労務マスタへの論理参照
+status	smallint	1:invited / 2:active / 3:suspended
+invited_at	datetime	招待日時
+joined_at	datetime	初回ログイン (active化) 日時
+suspended_at	datetime	停止日時
+created_at / updated_at	datetime	
+
+
+Index: (company_id, employee_id, deleted_at) ユニーク
+4.3 member_roles (UC-管理者-3 権限管理)
+
+
+
+カラム	型	備考
+id	bigint PK	
+company_id	bigint	
+employee_id	bigint	人事労務マスタへの論理参照
+role_kind	smallint	1:admin / 2:member
+effective_from / effective_to	datetime	履歴で残す (effective_to IS NULL が現有効)
+
+
+Index: (company_id, employee_id, effective_to)
+4.4 letters (UC-1)
+
+
+
+カラム	型	備考
+id	bigint PK	
+company_id	bigint	
+sender_employee_id	bigint	送り手 (人事労務マスタ参照)
+recipient_employee_id	bigint	受け手 (人事労務マスタ参照, 1 to 1 のため埋め込み)
+points	int	0以上
+message	text	
+created_at	datetime	
+
+
+Index:
+* (company_id, recipient_employee_id, sent_at) — UC-5「もらった」フィード
+* (company_id, sender_employee_id, sent_at) — UC-5「送った」フィード
+4.5 point_grants (UC-3 残数算出の原資側)
+
+
+
+カラム	型	備考
+id	bigint PK	
+company_id	bigint	
+employee_id	bigint	人事労務マスタへの論理参照
+start_on / end_on	date	週単位
+granted_points	int	その週に送れる原資
+created_at / updated_at	datetime	
+
+
+Index: (company_id, employee_id, start_on) ユニーク
+4.6 point_transactions (UC-3 残数 / UC-5 集計)
+
+
+
+カラム	型	備考
+id	bigint PK	
+company_id	bigint	
+subject_employee_id	bigint	自分視点の主体 (人事労務マスタ参照)
+counterpart_employee_id	bigint	相手 (人事労務マスタ参照)
+letter_id	bigint	
+kind	smallint	1:送付 / 2:受領
+amount	int	送付/受領ポイント (正値)
+occurred_at	datetime	
+created_at	datetime	不変ログのため updated_at なし
+
+
+Index: (company_id, subject_employee_id, kind, occurred_at) — 残数・今月集計・累積集計に使用
+5. UC ↔ クエリの対応
+
+
+
+UC	解決方法
+UC-1 送付	letters 1件 + point_transactions 2件 (送付:sender, 受領:recipient) をトランザクションでINSERT
+UC-3 今週残数	point_grants.granted_points - SUM(point_transactions.amount WHERE kind=送付 AND 当週)
+UC-5 フィード	letters を sender/recipient で WHERE + sent_at DESC。表示時の氏名は人事労務マスタAPIから取得
+UC-5 今月もらった	SUM(point_transactions.amount WHERE subject=自分 AND kind=受領 AND 今月)
+UC-5 累積もらった	SUM(point_transactions.amount WHERE subject=自分 AND kind=受領)
+UC-管理者-3 メンバー追加	人事労務マスタから検索した employee_id を service_memberships に status=invited でINSERT
+UC-管理者-3 編集	service_memberships.status 更新、member_roles に新規行追加 (旧行は effective_to セット)
+UC-管理者-3 削除	service_memberships.deleted_at をセット (論理削除)。送付済みレターや取引履歴は残る
+
+
+6. 元ER図から削除したもの (理由)
+
+
+
+削除対象	理由
+letter_recipients	1 to 1 のため不要、letters に埋め込み
+labels / letter_labels	UCにラベル要件なし
+reactions / applauses / comments	UC-5はフィード閲覧のみでインタラクション要件なし
+company_point_settings / role_point_allowances / role_post_permissions	上限・付与設定はUC範囲外 (point_grantsに付与結果のみ保持)
+各種 notification / reminder 系	通知・リマインドはUC範囲外
+member_point_summaries / weekly_digests / ranking_snapshots	集計は transactions から直接算出 (必要に応じて後から導入)
+letter_exports	エクスポート機能はUC範囲外
+
+
+7. 人事労務マスタ参照に関する留意点
+* 従業員削除への追従: 人事労務側で従業員が削除/退職しても、本サービスの letters・point_transactions は履歴として残る。表示時は人事労務マスタAPIからの取得結果に応じて「(退職済み)」等の表示を行う想定
+* 氏名・属性のキャッシュ: パフォーマンス要件によっては表示用に氏名スナップショットを letters へ非正規化する判断もあり得るが、本UC範囲ではAPI直参照とし非正規化を保留
+* 不正な参照の検出: 本サービスで service_memberships に存在しない employee_id でレター送信を試みた場合の妥当性検証はアプリケーション層で実施
+8. 拡張余地
+本設計は UC最小構成 です。以下の機能を追加する際は元ER図のテーブルを参照する想定です。
+* 1 to N 送信 → letter_recipients 子テーブルへ分離
+* ラベル / リアクション / 拍手 / コメント → 各サブテーブル追加
+* ランキング・週次ダイジェスト → 集計用テーブル新設 (パフォーマンス劣化が顕在化したタイミングで)
+* 通知 → Delibird連携 + プリファレンステーブル
+* 氏名表示のパフォーマンス対策 → 人事労務マスタ参照のキャッシュ層または非正規化
+
+
+
+設計原則
+* マルチテナント（company_id で完全隔離）
+* FK制約禁止ポリシー（論理参照のみ）
+* 新規テーブルのPKは bigint unsigned
+* 他テーブルのIDを参照するカラム（company_id, employee_id など）は bigint で統一
+* 主要クエリが単一テーブル＋インデックスで完結すること
+* 「送るポイント」と「もらったポイント」は別概念。スキーマレベルで分離する
+テーブル構成（6テーブル）
+
+
+
+テーブル名	説明
+point_company_settings	テナント（事業所）ごとの設定
+point_memberships	サービス利用登録＋ロール
+point_weekly_grants	「送るポイント」の残高スナップショット（メンバー・週単位）
+point_letters	レター本体（不変）
+point_sendable_logs	「送るポイント」の変化ログ（付与・送付・失効）
+point_received_logs	「もらったポイント」の変化ログ（受領）
+
+
+2種類のポイントの性質
+
+
+
+	送るポイント	もらったポイント
+発生源	週次バッチで付与	レター受領
+失効	週末に失効	しない
+送付に使える	✅	❌
+残高スナップショット	point_weekly_grants	ログ集計で導出
+ログテーブル	point_sendable_logs	point_received_logs
+
+
+詳細定義
+1. point_company_settings
+テナントごとのサービス設定を1行で保持する。サービス開始時にINSERT、変更時はUPDATE。
+
+
+create_table :point_company_settings,
+             id: { type: :bigint, unsigned: true },
+             comment: 'freee-point テナント設定' do |t|
+  t.bigint  :company_id, null: false,
+            comment: '事業所ID（companies.id への論理参照）'
+  t.integer :weekly_grant_points, null: false, default: 100,
+            comment: '1週間に各メンバーへ付与する送るポイント数'
+  t.integer :grant_day_of_week, limit: 2, null: false, default: 1,
+            comment: '付与曜日（0:日 1:月 2:火 3:水 4:木 5:金 6:土）'
+  t.timestamps
+  t.index :company_id, unique: true,
+          name: 'idx_point_company_settings_company_id'
+end
+2. point_memberships
+誰がこのサービスのメンバーか、そのロールを1テーブルで管理する。ロールの変更頻度は極めて低いため temporal pattern は不要。変更履歴が必要になれば v2 以降で history テーブルを追加する。
+
+
+create_table :point_memberships,
+             id: { type: :bigint, unsigned: true },
+             comment: 'freee-point サービス利用登録（ロール含む）' do |t|
+  t.bigint  :company_id,  null: false,
+            comment: '事業所ID（companies.id への論理参照）'
+  t.bigint  :employee_id, null: false,
+            comment: '従業員ID（employees.id への論理参照）'
+  t.integer :role,   limit: 2, null: false, default: 2,
+            comment: 'ロール（1:admin / 2:general）'
+  t.integer :status, limit: 2, null: false, default: 1,
+            comment: '利用状態（1:invited / 2:active / 3:suspended）'
+  t.datetime :invited_at,   null: true, comment: '招待日時'
+  t.datetime :joined_at,    null: true, comment: '利用開始日時'
+  t.datetime :suspended_at, null: true, comment: '利用停止日時'
+  t.timestamps
+  t.index %i[company_id employee_id], unique: true,
+          name: 'idx_point_memberships_company_employee'
+  t.index %i[company_id status],
+          name: 'idx_point_memberships_company_status'
+  t.index %i[company_id role],
+          name: 'idx_point_memberships_company_role'
+  t.index :employee_id,
+          name: 'idx_point_memberships_employee_id'
+end
+3. point_weekly_grants
+「送るポイント」の残高スナップショット（メンバー・週単位）。「今週あと何ポイント送れるか」を O(1) で返す唯一の正。
+* レター送信のたびに remaining_points をデクリメント（楽観的ロックで競合防止）
+* 失効バッチが remaining_points = 0, expired_at = now に更新
+
+
+create_table :point_weekly_grants,
+             id: { type: :bigint, unsigned: true },
+             comment: 'freee-point 送るポイント残高スナップショット（メンバー・週単位）' do |t|
+  t.bigint   :company_id,  null: false, comment: '事業所ID'
+  t.bigint   :employee_id, null: false, comment: '従業員ID'
+  t.date     :week_start_on, null: false, comment: '週の起算日'
+  t.date     :week_end_on,   null: false, comment: '週の終了日＝失効日'
+  t.integer  :granted_points,   null: false, comment: '付与された送るポイント（変更不可）'
+  t.integer  :remaining_points, null: false, comment: '現在の送付可能残高（送信のたびに減算）'
+  t.datetime :expired_at, null: true, comment: '失効処理実行日時（null=まだ失効していない）'
+  t.timestamps
+  t.index %i[company_id employee_id week_start_on], unique: true,
+          name: 'idx_point_weekly_grants_member_week'
+  t.index %i[company_id week_start_on],
+          name: 'idx_point_weekly_grants_company_week'
+  t.index %i[week_end_on expired_at],
+          name: 'idx_point_weekly_grants_expiry'
+  t.index :employee_id,
+          name: 'idx_point_weekly_grants_employee_id'
+end
+4. point_letters
+1対1のサンクスレター本体。送信後は変更不可（updated_at を持たない）。
+
+
+create_table :point_letters,
+             id: { type: :bigint, unsigned: true },
+             comment: 'freee-point サンクスレター（不変）' do |t|
+  t.bigint  :company_id,            null: false, comment: '事業所ID'
+  t.bigint  :sender_employee_id,    null: false, comment: '送り手従業員ID'
+  t.bigint  :recipient_employee_id, null: false, comment: '受け手従業員ID'
+  t.integer :points, null: false, comment: '送付ポイント（正の整数）'
+  t.text    :message, null: false,  comment: 'メッセージ本文'
+  t.datetime :created_at, null: false  # updated_at は持たない（不変）
+  t.index %i[company_id created_at],
+          name: 'idx_point_letters_company_created_at'
+  t.index %i[company_id recipient_employee_id created_at],
+          name: 'idx_point_letters_company_recipient_created_at'
+  t.index %i[company_id sender_employee_id created_at],
+          name: 'idx_point_letters_company_sender_created_at'
+  t.index :sender_employee_id,
+          name: 'idx_point_letters_sender_employee_id'
+  t.index :recipient_employee_id,
+          name: 'idx_point_letters_recipient_employee_id'
+end
+5. point_sendable_logs
+「送るポイント」の変化ログ。付与・送付・失効の3種類のみ。すべてのイベントが weekly_grant_id に紐づく（送るポイントの操作は必ず週次付与に起因する）。
+
+
+create_table :point_sendable_logs,
+             id: { type: :bigint, unsigned: true },
+             comment: 'freee-point 送るポイント変化ログ（付与・送付・失効）（不変）' do |t|
+  t.bigint   :company_id,      null: false, comment: '事業所ID'
+  t.bigint   :employee_id,     null: false, comment: '従業員ID'
+  t.integer  :kind, limit: 2,  null: false,
+             comment: 'イベント種別（1:grant 週次付与 / 2:spend 送付 / 3:expire 失効）'
+  t.integer  :points,          null: false, comment: 'ポイント数（常に正の整数）'
+  t.bigint   :weekly_grant_id, unsigned: true, null: false,
+             comment: 'point_weekly_grants.id への論理参照（全 kind で必須）'
+  t.bigint   :letter_id, unsigned: true, null: true,
+             comment: 'point_letters.id への論理参照（kind=spend のときのみ）'
+  t.datetime :occurred_at, null: false, comment: 'イベント発生日時'
+  t.datetime :created_at,  null: false  # updated_at は持たない（不変）
+  t.index %i[company_id employee_id occurred_at],
+          name: 'idx_point_sendable_logs_employee_occurred'
+  t.index :weekly_grant_id, name: 'idx_point_sendable_logs_weekly_grant_id'
+  t.index :letter_id,       name: 'idx_point_sendable_logs_letter_id'
+  t.index :employee_id,     name: 'idx_point_sendable_logs_employee_id'
+end
+6. point_received_logs
+「もらったポイント」の変化ログ。v1ではレター受領のみ。kind カラムを持たない（このテーブルに入るイベントは受領のみであり、失効は構造上存在しない）。
+v2 以降でレター以外の受領イベント（管理者付与・拍手・外部連携）が発生する際は、letter_id を nullable にして source_type / source_id カラムを追加するマイグレーションで対応する。
+
+
+create_table :point_received_logs,
+             id: { type: :bigint, unsigned: true },
+             comment: 'freee-point もらったポイント変化ログ（レター受領）（不変）' do |t|
+  t.bigint   :company_id,  null: false, comment: '事業所ID'
+  t.bigint   :employee_id, null: false, comment: '受領した従業員ID'
+  t.integer  :points,      null: false, comment: 'ポイント数（常に正の整数）'
+  t.bigint   :letter_id, unsigned: true, null: false,
+             comment: 'point_letters.id への論理参照'
+  t.datetime :occurred_at, null: false, comment: 'イベント発生日時'
+  t.datetime :created_at,  null: false  # updated_at は持たない（不変）
+  t.index %i[company_id employee_id occurred_at],
+          name: 'idx_point_received_logs_employee_occurred'
+  t.index :letter_id, unique: true, name: 'idx_point_received_logs_letter_id'
+  t.index :employee_id, name: 'idx_point_received_logs_employee_id'
+end
+主要クエリとインデックスの対応
+
+
+
+#	ユースケース	テーブル	使用インデックス
+Q1	今週の送付可能残高	point_weekly_grants	UNIQUE(company_id, employee_id, week_start_on) → O(1)
+Q2	全社フィード（降順ページング）	point_letters	(company_id, created_at)
+Q3	もらったフィード	point_letters	(company_id, recipient_employee_id, created_at)
+Q4	送ったフィード	point_letters	(company_id, sender_employee_id, created_at)
+Q5	今月もらったポイント	point_received_logs	(company_id, employee_id, occurred_at) で月範囲
+Q6	累積もらったポイント	point_received_logs	(company_id, employee_id, occurred_at) で全件 SUM
+Q7	メンバー一覧	point_memberships	(company_id, status)
+Q8	権限チェック	point_memberships	UNIQUE(company_id, employee_id) → O(1)
+Q9	失効バッチ対象取得	point_weekly_grants	(week_end_on, expired_at)
+
+
+ユースケース別の操作フロー
+レター送信時（DBトランザクション内）
+1. point_weekly_grants : remaining_points -= letter.points（楽観的ロックで競合防止）
+2. point_letters INSERT
+3. point_sendable_logs INSERT（kind=2:spend, weekly_grant_id=現在の付与レコード）
+4. point_received_logs INSERT（letter_id=新レター）
+週次付与バッチ（week_start_on の朝）
+1. 全 active メンバーに対して point_weekly_grants INSERT
+2. point_sendable_logs INSERT（kind=1:grant）
+失効バッチ（week_end_on の夜）
+1. 対象 point_weekly_grants（week_end_on < today AND expired_at IS NULL）を取得
+2. remaining_points > 0 のレコードに対して point_sendable_logs INSERT（kind=3:expire, points=remaining_points）
+3. point_weekly_grants UPDATE：remaining_points = 0, expired_at = now
+設計判断まとめ
+
+判断事項	採用方針	理由
+判断事項	採用方針	理由
+2種類のポイントの分離	テーブルを分割（sendable_logs / received_logs）	v1から存在するドメインルール。1テーブルにすると全クエリに kind フィルタが必要になり、スキーマが概念を正しく表現できていないサインとなる
+ロール管理	point_memberships.role に統合	変更頻度が極めて低い。履歴が必要なら将来 history テーブルを追加
+送るポイントの残高管理	point_weekly_grants.remaining_points を保持	レター送信前に「残高 ≥ 送るポイント数」をリアルタイムで確認し、原子的にデクリメントする必要があるためスナップショットが必要
+もらったポイントに残高スナップショットを持たない	point_received_logs の集計で導出	v1ではもらったポイントを消費する操作が存在しないため、送信前の残高チェックが発生しない。「今月もらった」「累積もらった」はSUMで十分。v2でギフト交換が加わった時点で残高スナップショットテーブルを追加する
+received_logs の source_type	v1 では追加しない	v1→v2 移行は速く DB の変化は容認。実際の要件が確定してから追加する（YAGNI）
+point_transactions を使わない	sendable_logs / received_logs に分割	1テーブルで2種類のポイントを混在させると、weekly_grant_id が receive レコードで常に null になるなどカラムの意味が不整合になる
+tinyint(1) を boolean 以外で使わない	role / status / kind / grant_day_of_week は limit: 2（smallint）を使用	DBガイドライン準拠。データ基盤側で tinyint(1) は boolean として取り込まれるため、列挙値に使うと集計時に問題が起きる
+
+
+
+
+
+
+freeeポイント(仮)概念設計v0.4
+
+
+
+作成者: ryosuke-matsushita
+
+聴く
+
+4
+
+リアクションを追加
+アプリ アイコンContent Report
+freeeポイント(仮) 概念設計 v0.4
+本ドキュメントの位置づけ
+
+感謝メッセージ＋ピアボーナス型サービス「freeeポイント(仮)」の概念設計です。テーブル設計、設計思想、freee DBガイドラインへの準拠ポイントをまとめています。
+
+v0.4 では、週次ダイジェストで「誰に送ったか・誰からもらったか」を表示する要件に応えるため、子テーブル weekly_digest_partners を新設しました。
+
+1. 全体像
+本サービスは 8つのドメイン で構成されます。コアは「レター」と「ポイント取引」で、それ以外は周辺機能です。
+
+#
+
+ドメイン
+
+主要テーブル
+
+一言で
+
+①
+
+外部マスタ
+
+employees / companies / departments / department_memberships
+
+freee人事労務から参照（本PJでは作らない）
+
+②
+
+コア：レター
+
+letters / letter_recipients
+
+感謝メッセージ本体。下書きは sent_at IS NULL
+
+③
+
+ラベル（バリュー）
+
+labels / letter_labels
+
+会社の行動指針をタグ付け
+
+④
+
+ポイント取引
+
+point_transactions
+
+不変ログ。kindで送付/受領/付与/取消を表現
+
+⑤
+
+インタラクション
+
+reactions / applauses / comments
+
+スタンプ/拍手(ポイント可)/コメント
+
+⑥
+
+ポイント経済の制御
+
+company_point_settings / role_point_allowances / weekly_point_grants
+
+付与・上限・原資の3層管理
+
+⑦
+
+権限・組織モニタリング
+
+service_memberships / member_roles / role_post_permissions
+
+利用可否、ロール、投稿権限
+
+⑧
+
+通知・リマインド・集計
+
+member_notification_settings / company_notification_settings / member_point_summaries / weekly_digests / weekly_digest_partners / ranking_snapshots / letter_exports
+
+Delibird に委譲しつつ、freeeポイント固有のプリファレンス・集計を保持
+
+2. ER図
+
+
+erDiagram
+    %% ===== freee人事労務マスタ（外部参照・本PJで管理しない） =====
+    %% マネージャー配下関係は departments / department_memberships を直接参照する
+    companies ||--o{ employees : has
+    companies ||--o{ departments : has
+    departments ||--o{ department_memberships : has
+    employees ||--o{ department_memberships : belongs_to
+    %% ===== コア：レター =====
+    employees ||--o{ letters : "sends (sender)"
+    companies ||--o{ letters : scopes
+    letters ||--o{ letter_recipients : "addressed_to"
+    employees ||--o{ letter_recipients : "receives"
+    letters {
+        bigint id PK
+        bigint company_id "テナント"
+        bigint sender_employee_id "送り手"
+        text message "感謝メッセージ本文"
+        datetime sent_at "送信日時"
+        datetime created_at
+        datetime updated_at
+    }
+    letter_recipients {
+        bigint id PK
+        bigint company_id
+        bigint letter_id FK
+        bigint recipient_employee_id "受け手"
+        int points "この受け手に渡るポイント(0以上)"
+        datetime created_at
+        datetime updated_at
+    }
+    %% ===== ラベル（バリュー） =====
+    companies ||--o{ labels : defines
+    labels {
+        bigint id PK
+        bigint company_id
+        string name "ラベル名"
+        datetime created_at
+        datetime updated_at
+    }
+    letters ||--o{ letter_labels : tagged_with
+    labels ||--o{ letter_labels : applied_to
+    letter_labels {
+        bigint id PK
+        bigint company_id
+        bigint letter_id FK
+        bigint label_id FK
+        datetime created_at
+    }
+    %% ===== ポイント取引（不変ログ） =====
+    employees ||--o{ point_transactions : involves
+    letters ||--o{ point_transactions : "origin (nullable)"
+    letter_recipients ||--o{ point_transactions : "origin (nullable)"
+    point_transactions {
+        bigint id PK
+        bigint company_id
+        bigint subject_employee_id "取引対象(送り手or受け手)"
+        bigint counterpart_employee_id "相手(null可)"
+        bigint letter_id FK "起点レター(null可)"
+        bigint letter_recipient_id FK "起点受信者レコード(null可)"
+        smallint kind "1:送付/2:受領/3:週次付与/4:管理者個別付与/5:拍手贈与/6:拍手受領/7:送付取消/8:受領取消/9:拍手贈与取消/10:拍手受領取消"
+        int amount "正:加算,負:減算"
+        datetime occurred_at
+        datetime created_at
+    }
+    %% ===== インタラクション =====
+    letters ||--o{ reactions : has
+    employees ||--o{ reactions : posts
+    reactions {
+        bigint id PK
+        bigint company_id
+        bigint letter_id FK
+        bigint employee_id "リアクション主"
+        string emoji_code "スタンプ種別"
+        datetime created_at
+    }
+    letters ||--o{ applauses : has
+    employees ||--o{ applauses : posts
+    applauses {
+        bigint id PK
+        bigint company_id
+        bigint letter_id FK
+        bigint employee_id "拍手者"
+        int points "贈与ポイント(0可)"
+        datetime created_at
+        datetime updated_at
+    }
+    letters ||--o{ comments : has
+    employees ||--o{ comments : posts
+    comments {
+        bigint id PK
+        bigint company_id
+        bigint letter_id FK
+        bigint employee_id "コメント主"
+        text body
+        datetime created_at
+        datetime updated_at
+    }
+    %% ===== ポイント原資・上限 =====
+    companies ||--|| company_point_settings : configures
+    company_point_settings {
+        bigint id PK
+        bigint company_id
+        smallint reset_monthday "1〜31: 月リセットの日付"
+        smallint reset_weekday "0:日〜6:土 週リセット曜日"
+        string timezone "Asia/Tokyo等"
+        int monthly_grant_amount "月次付与ポイント数(一律)"
+        int weekly_grant_amount "週次付与ポイント数(一律)"
+        datetime effective_from
+        datetime effective_to
+    }
+    companies ||--o{ role_point_allowances : configures
+    role_point_allowances {
+        bigint id PK
+        bigint company_id
+        bigint position_type_id "Ohmu PositionType の外部参照ID"
+        int monthly_max_points "月次の送付上限"
+        int weekly_max_points "週次の送付上限"
+        datetime effective_from
+        datetime effective_to
+    }
+    employees ||--o{ weekly_point_grants : granted
+    point_grants {
+        bigint id PK
+        bigint company_id
+        date start_on "起算日(事業所設定の曜日)"
+        date end_on "終了日(失効日)"
+        int granted_points "期間中送れる原資"
+        datetime created_at
+    }
+    %% ===== 権限・組織モニタリング =====
+    %% マネージャー配下関係は freee人事労務の departments / department_memberships を直接参照
+    employees ||--o{ service_memberships : registered
+    companies ||--o{ service_memberships : scopes
+    service_memberships {
+        bigint id PK
+        bigint company_id
+        bigint employee_id "Ohmu PositionType の外部参照ID"
+        smallint status "1:invited/2:active/3:suspended"
+        datetime invited_at
+        datetime joined_at
+        datetime suspended_at
+        datetime created_at
+        datetime updated_at
+    }
+    service_memberships ||--o{ member_roles : has
+    employees ||--o{ member_roles : assigned
+    companies ||--o{ member_roles : scopes
+    member_roles {
+        bigint id PK
+        bigint company_id
+        bigint employee_id
+        smallint role_kind "1:admin/2:manager/3:member"
+        datetime effective_from
+        datetime effective_to
+        datetime created_at
+        datetime updated_at
+    }
+    companies ||--o{ role_post_permissions : configures
+    role_post_permissions {
+        bigint id PK
+        bigint company_id
+        smallint role_kind "1:admin/2:manager/3:member"
+        boolean can_send_letter
+        boolean can_send_with_points
+        int per_letter_max_points "1レターあたりの上限"
+        int per_recipient_weekly_max_points "同一人物への週次上限(不正利用防止)"
+        datetime updated_at
+    }
+    %% ===== 通知 =====
+    %% 通知配信は Delibird マイクロサービスに一元化。
+    %%   - Slack/Teams/LINE WORKS/モバイル/メール への配信・トークン管理は Delibird 側
+    %%   - freee-payroll は DelibirdClient 経由で gRPC リクエストするのみ
+    %% 本サービスが持つのは
+    %%   - イベント単位の通知プリファレンス（受信/リアクション/拍手/リマインド）
+    %%   - リマインドの発火スケジュール設定
+    %% に限定する。
+    employees ||--o{ member_notification_settings : has
+    member_notification_settings {
+        bigint id PK
+        bigint company_id
+        bigint employee_id
+        smallint event_kind "1:受信/2:リアクション/3:拍手/4:リマインド"
+        boolean enabled
+        datetime updated_at
+    }
+    companies ||--o{ company_notification_settings : configures
+    company_notification_settings {
+        bigint id PK
+        bigint company_id
+        smallint event_kind "1:受信/2:リアクション/3:拍手/4:リマインド"
+        boolean enabled
+        datetime updated_at
+    }
+    %% ===== リマインド =====
+    companies ||--o{ auto_reminder_settings : configures
+    auto_reminder_settings {
+        bigint id PK
+        bigint company_id
+        string schedule_cron "発火スケジュール"
+        smallint target_role_kind
+        boolean enabled
+        datetime created_at
+        datetime updated_at
+    }
+    employees ||--o{ manual_reminders : "sends/receives"
+    manual_reminders {
+        bigint id PK
+        bigint company_id
+        bigint sender_employee_id "管理者orマネージャー"
+        bigint recipient_employee_id
+        text message
+        datetime sent_at
+    }
+    %% ===== 集計・閲覧支援 =====
+    employees ||--o{ member_point_summaries : "summarized_in"
+    member_point_summaries {
+        bigint id PK
+        bigint company_id
+        bigint employee_id
+        date current_week_start_on "現在週の起算日"
+        int weekly_sent_points "今週送付済み合計"
+        int weekly_granted_points "今週付与原資"
+        int monthly_received_points "今月受領合計"
+        bigint cumulative_received_points "累積受領(サービス開始〜)"
+        datetime last_synced_at "最終同期時刻"
+        datetime created_at
+        datetime updated_at
+    }
+    %% ===== 週次ダイジェスト =====
+    %% v0.4 で weekly_digest_partners 子テーブルを新設。
+    %% 「誰に送ったか・誰からもらったか」をレター単位の明細として持つ
+    %% （同一相手が複数回登場し得る = 重複あり）。
+    employees ||--o{ weekly_digests : "owned_by"
+    weekly_digests {
+        bigint id PK
+        bigint company_id
+        bigint employee_id
+        date week_start_on
+        int sent_points "週内に送ったポイント合計"
+        int received_points "週内にもらったポイント合計"
+        int sent_letter_count "週内に送ったレター件数"
+        int received_letter_count "週内にもらったレター件数"
+        datetime created_at
+    }
+    companies ||--o{ ranking_snapshots : computed
+    ranking_snapshots {
+        bigint id PK
+        bigint company_id
+        smallint period_kind "1:weekly/2:monthly/3:all_time"
+        smallint ranking_kind "1:point/2:letter"
+        date period_start_on
+        date period_end_on
+        bigint employee_id
+        int rank
+        int value
+        datetime computed_at
+    }
+    companies ||--o{ letter_exports : requests
+    letter_exports {
+      bigint id PK
+      bigint company_id
+      bigint requested_by_employee_id
+      smallint format_kind "1:CSV/2:PDF"
+      date period_start_on
+      date period_end_on
+      smallint status "1:enqueued/2:working/3:complete/4:failed"
+      string s3_filename "S3オブジェクトキー（ダウンロード時に署名URLを動的生成）"
+      string filename "ダウンロード時の表示ファイル名"
+      text error_message "failed 時のエラー詳細（nullable）"
+      datetime created_at
+      datetime updated_at
+    }
+3. 主要ドメインの解説
+3.1 コア：レター（letters / letter_recipients）
+感謝メッセージのドメイン中心です。1対N構造により、1通のレターを複数の受け手に同時送付できます。
+
+letters: 1通のレター。sender_employee_id（送り手）と company_id（テナント）で送信元を特定
+
+letter_recipients: 1レターに対する受け手をN件保持。各受け手に個別の points 設定可能
+
+下書き対応: sent_at IS NULL で下書き状態を表現
+
+3.2 ポイント取引（point_transactions）— 不変ログ
+本設計の最大の特徴です。会計の複式簿記をイベントソーシングで実装しています。
+
+複式記録: 1回のレター送信で最低2レコード生成（送り手 kind=1 amount=-N、受け手 kind=2 amount=+N）
+
+不変性: UPDATE/DELETE 禁止。取消は逆仕訳レコードを追加（kind=7〜10）
+
+残高計算: SUM(amount) WHERE subject_employee_id = ? AND company_id = ?
+
+レター起点以外も表現可能: letter_id / letter_recipient_id は nullable
+
+運用上の注意
+
+テーブルが青天井に成長します。(company_id, subject_employee_id, occurred_at) の複合インデックスとパーティショニング戦略が必須です。残高参照は member_point_summaries をキャッシュとして使い、生クエリは read replica に向けます。
+
+3.3 インタラクション（reactions / applauses / comments）
+性質が異なる3種のインタラクションを別テーブルで分離。
+
+reactions: 軽量・大量発生、UPDATE不要。UNIQUE (letter_id, employee_id, emoji_code) を推奨
+
+applauses: ポイント贈与を伴う「重い」アクション。1人1レター1回制限が MVP では無難
+
+comments: 編集可能（updated_at あり）。ハードデリート前提
+
+3.4 ポイント原資・上限（3層構造）
+ポイント経済を3層で制御します。
+
+company_point_settings: 事業所単位の基本設定（週リセット曜日、TZ、付与額）
+
+role_point_allowances: ロール別週次送付上限（admin/manager/member）。effective_from で履歴管理
+
+weekly_point_grants: 個人別週次原資のスナップショット。失効日（week_end_on）で繰り越し不可を明示
+
+3.5 権限・組織モニタリング
+v0.2での変更点
+
+当初 manager_subordinates テーブルでマネージャー配下関係をキャッシュする設計でしたが、freee人事労務の departments / department_memberships を直接参照する方針に変更しました。
+
+service_memberships: サービス利用ステータス（invited / active / suspended）
+
+member_roles: ロール割当（effective_from / effective_to で履歴管理）
+
+role_post_permissions: ロール別投稿権限。per_recipient_weekly_max_points で自作自演・馴れ合いを防止
+
+変更理由:
+
+同期コスト不要（組織変更が即時反映）
+
+Single Source of Truth の維持
+
+freee社内の他サービスとの整合性
+
+性能要件で問題が出た時点でキャッシュテーブル導入を再検討可能
+
+3.6 通知 — Delibird への委譲（v0.3で整理）
+freee人事労務における通知配信は Delibird マイクロサービスに一元化されています。Slack DM／Slack チャンネル／Teams／LINE WORKS／モバイルプッシュ（FCM）／メールへの配信、各プロバイダのトークン管理、配信ステータス管理はすべて Delibird 側で完結します。
+
+このため本サービスでは、配信に関するインフラ機能は一切自前で持ちません。
+
+観点
+
+Delibird 側
+
+freeeポイント側
+
+Slack/Teams のトークン保持
+
+○
+
+×
+
+既定チャンネル設定
+
+○
+
+×
+
+配信ステータス（queued/sent/failed）
+
+○
+
+×
+
+イベントごとの ON/OFF プリファレンス
+
+×
+
+○ (member_notification_settings / company_notification_settings)
+
+リマインドの発火スケジュール
+
+×
+
+○ (auto_reminder_settings)
+
+v0.2 からの整理
+
+external_integrations テーブルを削除：Slack/Teams のトークン・既定チャンネル管理は Delibird に完全委譲。freee-payroll 側は list_slack_settings / check_teams_setting_exists で参照するのみ。
+
+notification_deliveries テーブルを削除：配信ステータス管理は Delibird 側で完結する。ローカルに持つと真実の二重化になる。
+
+各 *_notification_settings / auto_reminder_settings から channel_kind カラムを除去：チャンネル別の通知可否は Delibird のユーザー設定に委ね、本サービスは「どのイベントを通知するか」のプリファレンスに責務を絞る。
+
+参考実装:
+
+/lib/delibird_client.rb（gRPC Create 通知、ULID 生成、バッチ送信）
+
+/app/controllers/api/internal/delibird_controller.rb
+
+/app/models/delibird_user_time_clock_message_setting.rb
+
+3.7 週次ダイジェスト（v0.4で拡張）
+表示要件
+
+週次ダイジェスト画面では以下を従業員に提示します。
+
+今週送ったポイント合計 ／ もらったポイント合計
+
+今週送ったレター件数 ／ もらったレター件数
+
+今週誰に送ったか ／ 今週誰からもらったか（時系列）
+
+テーブル分割の考え方
+
+集計値（合計ポイント・件数）と明細（誰宛・誰から）は性質が異なるため、設計思想 4.3「読み取りはキャッシュテーブルへ分離」に揃えて 2 テーブルで管理します。
+
+weekly_digests: 1ユーザー × 1週で1行。サマリー指標（合計値）のみ
+
+weekly_digest_partners: 1ユーザー × 1週内のレター単位で 1行ずつ。重複あり（同一相手が複数回登場し得る）
+
+weekly_digest_partners の方針
+
+direction で sent_to ／ received_from を区別。送付方向と受領方向を 1 テーブルに集約することで、UI 側で「タイムライン表示」が単純な ORDER BY で実現できる。
+
+letter_id / letter_recipient_id を保持し、明細クリックでレター本体に遷移可能にする。
+
+points は当該レターでこの相手に動いた個別ポイント値（letter_recipients.points または applauses.points を写経）。
+
+上位N件に絞らず全件を保持。N件絞り込みは UI 側でのページネーション／フィルタリングで吸収する。
+
+occurred_at は letters.sent_at または applauses.created_at をコピー。並び替え専用カラム。
+
+生成タイミング
+
+週次バッチが週末締めで両テーブルを同時に生成。weekly_digests 1 行 INSERT → weekly_digest_partners 複数行 INSERT を 1 トランザクションで実施。
+
+「重複あり」設計の意味
+
+ユーザー A がユーザー B に同一週で 3 通レターを送った場合、weekly_digest_partners には direction=sent_to の B に紐づく行が 3 行できます。相手別の合計を出したい場合は SQL の GROUP BY で集約します。事前に相手別集計を持たないのは、
+
+拍手・コメントなど後付け要件が出たときに「行を追加するだけ」で済む
+
+レター単位の明細クリック導線が自然に作れる
+
+同一週で送・受両方向が発生したユーザーも 2 種の direction で素直に表現できる
+
+ため。
+
+4. 設計思想
+4.1 ポイントは複式簿記 × イベントログで扱う
+残高カラムを持たず、point_transactions の SUM を真実とする。残高がズレるバグが構造的に発生しない。
+
+4.2 設定変更は履歴型で持つ
+effective_from / effective_to 付きのテーブル群（role_point_allowances、member_roles）で、過去時点の運用ルールで判定可能にする。
+
+4.3 読み取りはキャッシュテーブルへ分離
+point_transactions は書き込み専用のログ、読み取りは member_point_summaries / weekly_digests (+ weekly_digest_partners) / ranking_snapshots に事前集計を保存。CQRS 的な役割分担。サマリーと明細は別テーブルに分け、性質に合わせた粒度で持つ。
+
+4.4 通知インフラは freee 標準（Delibird）に寄せる
+通知配信は freee 標準の Delibird マイクロサービスに完全に委譲し、本サービスは「いつ、誰に対して、どのイベントを送るか」というドメイン知識のみを持つ。Slack/Teams トークンや配信ステータスといったインフラ寄りの情報は持たない。
+
+5. freee DBガイドライン準拠ポイント
+項目
+
+対応
+
+外部キー制約
+
+使用しない（pt-osc 非対応のため）。ER図の関係線は論理表現のみ
+
+tinyint(1) はboolean専用
+
+kind / status / role_kind / direction 等は smallint（limit: 2）で実装
+
+ENUM型
+
+使用しない。smallint + コメントで列挙値を表現
+
+論理削除
+
+使用しない。物理削除またはアーカイブテーブル方式
+
+company_id
+
+全テーブルに付与（LeakCheckable によるテナント漏洩防止）
+
+unsigned bigint
+
+user_id / company_id は unsigned bigint で nest-auth と整合
+
+charset / collation
+
+migration で明示指定（utf8mb4, utf8mb4_general_ci）
+
+read replica活用
+
+残高計算・ランキング集計・週次ダイジェスト表示は Aurora reader へ向ける
+
+データ削除戦略
+
+point_transactions / ranking_snapshots / weekly_digest_partners は時系列で増えるためパーティショニング前提
+
+INSERT ... ON DUPLICATE KEY
+
+gap lock 回避のため SELECT → 分岐 INSERT/UPDATE で実装
+
+通知の自前実装
+
+行わない。配信は Delibird に委譲し、本サービスはプリファレンスのみ保持
 
-3. 型
+6. インデックス設計の指針
+テーブル
 
-どのデータ型を使うか決める。
+推奨インデックス
 
-例：
-TEXT
-INTEGER
-BIGINT
-BOOLEAN
-UUID
-DATE
-TIMESTAMPTZ
-NUMERIC
-JSONB
+用途
 
-型によって、保存できる値や容量、検索性能が変わる。
+point_transactions
 
-4. 文字数制限
+(company_id, subject_employee_id, occurred_at)
 
-文字数の上限・下限を決める。
+個人別残高計算・期間集計
 
-例：
-VARCHAR(100)
+point_transactions
 
-または
+(company_id, subject_employee_id, kind, occurred_at)
 
-CHECK (char_length(name) <= 100)
+kind別集計（週次付与のみ等）
 
-フロント、バックエンド、DBの3箇所で制限することも多い。
+letter_recipients
 
-5. 数値範囲
+(company_id, recipient_employee_id, created_at)
 
-数値に許される範囲を決める。
+受信履歴の時系列取得
 
-例：
-CHECK (price >= 0)
+letters
 
-CHECK (age BETWEEN 0 AND 150)
+(company_id, sender_employee_id, sent_at)
 
-6. 候補値の制限
+送信履歴の時系列取得
 
-statusなど、入れていい値を限定する。
+reactions
 
-例：
-CHECK (status IN (‘draft’, ‘published’, ‘deleted’))
+UNIQUE (letter_id, employee_id, emoji_code)
 
-バックエンド側でEnumとして管理する方法もある。
+重複防止・トグル動作
 
-7. UNIQUE制約
+weekly_point_grants
 
-同じ値を複数登録してよいか決める。
+(company_id, employee_id, week_start_on)
 
-例：
-UNIQUE(email)
+週次原資の検索
 
-複数カラムの組み合わせにも設定できる。
+member_roles
 
-例：
-UNIQUE(user_id, book_id)
+(company_id, employee_id, effective_from, effective_to)
 
-これは
-「同じユーザーが同じ本を2回登録できない」
-というルールをDBで保証できる。
+有効ロールの判定
 
-8. PRIMARY KEY
+weekly_digests
 
-レコードを一意に識別するIDを決める。
+UNIQUE (company_id, employee_id, week_start_on)
 
-例：
-id UUID PRIMARY KEY
+ユーザー×週で一意
 
-または
+weekly_digest_partners
 
-id BIGSERIAL PRIMARY KEY
+(company_id, weekly_digest_id, direction, occurred_at)
 
-9. IDの種類
+ダイジェスト内の方向別時系列表示
 
-UUIDにするか連番IDにするか決める。
+weekly_digest_partners
 
-UUID
-メリット：
-複数サーバーからでもIDを生成しやすい。
-外部にIDを見せても件数を推測されにくい。
+(company_id, weekly_digest_id, partner_employee_id)
 
-デメリット：
-BIGINTよりサイズが大きい。
-インデックスも大きくなりやすい。
+相手別 GROUP BY 集計
 
-BIGINT
-メリット：
-小さい。
-高速。
-インデックス効率が良い。
+インデックス設計の原則（DBガイドラインより）
 
-デメリット：
-連番なので件数などを推測されやすい。
-分散環境ではID生成方法を考える必要がある。
+範囲検索・order by するカラムは複合 index の最後に配置
 
-10. FOREIGN KEY
+cardinality の低いカラム単独の index は避ける（kind / direction など）
 
-他のテーブルとの関係をDBで保証するか決める。
+redundant index を作らない
 
-例：
-user_id UUID REFERENCES users(id)
+covering index を狙えるなら積極的に活用
 
-存在しないuser_idを登録できなくなる。
+7. 残課題・今後の判断ポイント
+項目
 
-11. 親データ削除時の動作
+論点
 
-FOREIGN KEYを使う場合、親を削除したときにどうするか決める。
+判断時期
 
-ON DELETE CASCADE
+applauses の重複可否
 
-親を削除すると子も削除する。
+1人1レター1回 vs 何度でも可（クラップ型）
 
-ON DELETE RESTRICT
+仕様確定時
 
-子が存在する場合は親を削除できない。
+point_transactions.applause_id 追加
 
-ON DELETE SET NULL
+拍手起点取引の逆引き経路
 
-親が消えたら子の外部キーをNULLにする。
+applauses 仕様確定時
 
-12. CHECK制約
+effective_to の有無統一
 
-データのルールをDBで保証する。
+履歴管理テーブル間で運用ルールがばらつく
 
-例：
-CHECK (start_at <= end_at)
+実装前
 
-CHECK (score >= 0)
+company_point_settings の履歴型化
 
-CHECK (char_length(content) <= 500)
+付与額の遡及変更を許すか
 
-単純なデータ不変条件に向いている。
+仕様確定時
 
-13. 複数カラム間のルール
+weekly_grant_amount のロール別化
 
-1つのカラムだけでなく、複数カラムの関係も決める。
+「正社員100pt、契約社員50pt」要件への対応
 
-例：
-start_at <= end_at
+仕様確定時
 
-min_price <= max_price
+manager_subordinates の再導入
 
-DBのCHECK制約で保証できる場合もある。
+EmployeeMaster 直参照のクエリ性能次第
 
-14. 削除方法
+MVP リリース後計測
 
-物理削除か論理削除か決める。
+point_transactions パーティショニング戦略
 
-物理削除：
-DELETE FROM users …
+パーティションキー設計（occurred_at / company_id）
 
-完全にDBから消す。
+実装前
 
-メリット：
-シンプル。
-DB容量が増えにくい。
+Delibird 配信結果の表示要否
 
-デメリット：
-復元できない。
+「Slackに送れた／失敗した」をUIで見せる場合は Delibird API 連携 or イベント購読を検討
 
-論理削除：
-deleted_atを持つ。
+UI要件確定時
 
-deleted_at TIMESTAMPTZ
+weekly_digest_partners に拍手・コメントも含めるか
 
-メリット：
-復元できる。
-履歴を残せる。
+「誰に送ったか／誰からもらったか」を拡張し「誰に拍手したか」等まで含めるか
 
-デメリット：
-毎回
-WHERE deleted_at IS NULL
-などが必要になる。
-クエリやUNIQUE制約が複雑になりやすい。
+UI要件確定時
 
-15. 更新可能なカラム
+weekly_digest_partners の取消反映
 
-作成後に変更できるカラム、できないカラムを決める。
+取消後のダイジェストに行を残すか／フラグ立てか／物理削除か
 
-例：
+取消仕様確定時
 
-email
-→変更可能
+8. Revision
+version
 
-created_at
-→変更不可
+date
 
-user_id
-→基本変更不可
+主な変更点
 
-status
-→特定条件でのみ変更可能
+v0.1
 
-16. created_at / updated_at
+—
 
-作成日時と更新日時を持つか決める。
+初版（コアスキーマ策定）
 
-例：
-created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+v0.2
 
-監査やバグ調査でかなり重要。
+2026-05-19
 
-17. タイムゾーン
+manager_subordinates 削除（EmployeeMaster 直接参照へ）／ tinyint → smallint（DBガイドライン準拠）／ 設計思想・ガイドライン準拠ポイントを明文化
 
-日時をどの基準で保存するか決める。
+v0.3
 
-PostgreSQLならTIMESTAMPTZを使うことが多い。
+2026-05-19
 
-DB内部ではUTC基準で扱い、
-画面表示するときにJSTなどへ変換する設計が一般的。
+通知系を Delibird に委譲：external_integrations / notification_deliveries を削除、各 *_notification_settings / auto_reminder_settings から channel_kind を除去、3.6 節と設計思想 4.4 を新設
 
-18. Enum / status設計
+v0.4
 
-どんな状態が存在するか決める。
+2026-05-19
 
-例：
-pending
-processing
-completed
-failed
+週次ダイジェストに weekly_digest_partners 子テーブルを新設（誰に送ったか・誰からもらったかをレター単位で重複あり全件保持）。3.7 節を新設、インデックス指針・残課題を追記
 
-さらに、
 
-pending → processing
-processing → completed
-processing → failed
 
-のように状態遷移も決める。
 
-19. INDEX
+スキーマ設計 ver0
 
-どのカラムにインデックスを付けるか決める。
 
-例：
-CREATE INDEX ON questions(user_id);
 
-INDEXを検討する対象：
+作成者: ryosuke-matsushita
 
-WHEREでよく使う
-JOINでよく使う
-ORDER BYでよく使う
-検索条件によく使う
+聴く
 
-メリット：
-検索が高速になる。
+3
 
-デメリット：
-INSERT / UPDATEが遅くなる。
-DB容量を使う。
+リアクションを追加
+アプリ アイコンContent Report
+概念設計 — freeeポイント(仮)
+物理テーブル設計の前段として、4本のPRD（ポイント付きレター送信 / タイムライン / ポイント確認画面 / メンバーのポイント状況確認）と「管理者・マネージャーは従業員マスタを管理できる」要件から、業務上のエンティティを論理名で整理する。テーブル名・カラム型は出さず業務用語で記述する。物理設計は別ページ「freeeポイント(仮) DB設計 - rio」を参照。
 
-そのため、全部のカラムにINDEXを付ければいいわけではない。
+1. エンティティ一覧
+1-1. 中核エンティティ（業務の主体・客体）
+エンティティ
 
-20. 複合INDEX
+役割
 
-複数条件で検索する場合に使う。
+PRD出典
 
-例：
-CREATE INDEX ON questions(user_id, created_at);
+事業所
 
-例えば
+サービス利用組織。すべての操作のスコープ
 
-WHERE user_id = ?
-ORDER BY created_at DESC
+全PRD
 
-のようなクエリで使える。
+メンバー
 
-21. トランザクション境界
+事業所に所属する人。送り手・受け手・閲覧者・管理対象はすべてメンバーの一面
 
-どの処理をまとめて成功・失敗させるか決める。
+全PRD
 
-例：
+部門
 
-問題を生成する
-↓
-questionsに保存
-↓
-ユーザーのトークンを消費
+事業所内の組織単位。フィルタ・配下定義の基礎
 
-この2つは、
+PRD2, PRD4
 
-問題保存成功
-トークン消費失敗
+ロール
 
-になるとデータがおかしくなる。
+管理者 / マネージャー / 一般メンバー の3種
 
-そのため、
+PRD4, 追加要求
 
-BEGIN
-問題保存
-トークン消費
-COMMIT
+1-2. 行為・イベントエンティティ
+エンティティ
 
-のように同じトランザクションにする。
+役割
 
-22. 同時更新
+PRD出典
 
-同時に複数リクエストが来た場合を考える。
+レター
 
-例えば残りトークンが1。
+1人の送り手 → 1人の受け手 への感謝の単位（メッセージ + ポイント数 + 送信日時）
 
-リクエストA
-残り1を確認
+PRD1, PRD2
 
-リクエストB
-残り1を確認
+ポイント付与
 
-両方が使えてしまう可能性がある。
+事業所からメンバーへポイントが配布されるイベント
 
-対策：
+PRD3, PRD4
 
-SELECT FOR UPDATE
-楽観ロック
-Atomic UPDATE
-UNIQUE制約
+「ポイント送付」「ポイント受領」はレターの一側面なので独立エンティティ化しない（レターを介してポイントが動くため）。
 
-など。
+1-3. 状態・残高エンティティ
+エンティティ
 
-23. 楽観ロック
+役割
 
-versionカラムなどを使って同時更新を検出する。
+PRD出典
 
-例：
-version = 3
+送付ポイント残高
 
-更新するとき
+「今週送れるポイント」の現在値。期間とともに失効する
 
-WHERE id = ?
-AND version = 3
+PRD1, PRD3, PRD4
 
-更新後
+ポイント有効期限ポリシー
 
-version = 4
+残高の失効周期（事業所単位の設定）
 
-他の処理が先に更新していた場合、更新できない。
+PRD4
 
-メリット：
-ロック時間が短い。
+1-4. 関係性エンティティ
+エンティティ
 
-デメリット：
-競合時にリトライ処理が必要。
+関連するモノ
 
-24. 悲観ロック
+PRD出典
 
-DBレコードをロックする。
+補足
 
-例：
-SELECT …
-FOR UPDATE
+部門所属
 
-他のトランザクションが同じレコードを更新するのを待たせる。
+メンバー × 部門
 
-メリット：
-競合を確実に防ぎやすい。
+PRD2, PRD4
 
-デメリット：
-ロック時間が長いと性能が落ちる。
+多対多
 
-25. 件数制限
+部門管理関係
 
-例えば
+マネージャー（メンバー）× 管理対象部門
 
-1ユーザー100件まで
+PRD4
 
-など。
+「配下メンバー」の根拠
 
-これは単純なDB制約では実装しにくいことがある。
+ロール付与
 
-バックエンドのUseCase / Domain側で制御することが多い。
+メンバー × ロール
 
-26. 業務ルール
+PRD4, 追加要求
 
-例えば
+「誰が管理者か」の根拠
 
-無料ユーザーは1日20問まで
-有料ユーザーは1日500問まで
+1-5. 派生・集計エンティティ（履歴から算出可能）
+エンティティ
 
-これはDBの構造ではなく業務ルール。
+算出元
 
-Domain / Application層で管理するのが基本。
+PRD出典
 
-27. JSONを使うか
+送付サマリ
 
-柔軟なデータをJSONBで持つか、カラムに分けるか決める。
+レター（送り手側を期間で集計）
 
-JSONB
-メリット：
-仕様変更に強い。
-柔軟。
+PRD4
 
-デメリット：
-型安全性が低い。
-制約を付けにくい。
-JOINや検索が複雑になることがある。
+受領サマリ
 
-通常のカラム
-メリット：
-型や制約が明確。
-検索しやすい。
+レター（受け手側を期間で集計）
 
-デメリット：
-構造変更時にmigrationが必要。
+PRD3, PRD4
 
-28. 正規化
+派生エンティティはレター履歴から都度SUMで計算可能。性能要件次第でキャッシュ化する。
 
-データを1テーブルにまとめるか、複数テーブルに分けるか決める。
+1-6. 値オブジェクト（独立したエンティティではない属性）
+感謝メッセージ（レターの属性）
 
-例えば
+送付ポイント数（レターの属性）
 
-users
-books
-highlights
+送信日時（レターの属性）
 
-のように責務ごとに分ける。
+集計期間（週次 / 月次 / 累積 / 特定期間 / 有効期限前）
 
-メリット：
-重複データが減る。
-整合性を守りやすい。
+2. エンティティ関連図
 
-デメリット：
-JOINが増える。
 
-29. 非正規化
+erDiagram
+    事業所 ||--o{ メンバー : "所属する"
+    事業所 ||--o{ 部門 : "保有する"
+    事業所 ||--|| ポイント有効期限ポリシー : "定める"
+    メンバー }o--o{ 部門 : "部門所属"
+    メンバー ||--o{ ロール付与 : "持つ"
+    ロール付与 }o--|| ロール : "種別"
+    メンバー ||--o{ レター : "送る（送り手）"
+    メンバー ||--o{ レター : "受け取る（受け手）"
+    ポイント有効期限ポリシー ||--o{ ポイント付与 : "周期で発生"
+    メンバー ||--o{ ポイント付与 : "受け取る"
+    ポイント付与 ||--|{ 送付ポイント残高 : "形成する"
+    レター }o--|| 送付ポイント残高 : "消費する"
+    メンバー }o--o{ 部門 : "部門管理関係（マネージャー→管理対象）"
+    レター }o..o{ 送付サマリ : "集計対象（派生）"
+    レター }o..o{ 受領サマリ : "集計対象（派生）"
+凡例: 実線 = 業務上必須の関係、点線 = 派生（履歴から計算可能で物理化はオプション）
 
-性能などの理由で、あえて重複データを持つ場合もある。
+3. ロールと「できること」
+ロール
 
-例：
-集計結果を別カラムに保存する。
+レター送信
 
-メリット：
-読み込みが速い。
+自分のサマリ閲覧
 
-デメリット：
-元データとの同期を考える必要がある。
+全メンバーのサマリ閲覧
 
-30. migration
+配下メンバーのサマリ閲覧
 
-本番DBに変更をどう適用するか決める。
+従業員マスタ管理
 
-例：
+一般メンバー
 
-カラム追加
-INDEX追加
-NOT NULL追加
-型変更
-テーブル追加
+✓
 
-本番データがすでに存在する場合、
+✓
 
-いきなりNOT NULLを追加すると失敗する
+–
 
-などの問題がある。
+–
 
-そのため、
+–
 
-カラム追加
-↓
-既存データを埋める
-↓
-NOT NULL追加
+マネージャー
 
-のように段階的にmigrationする。
+✓
 
-31. データ量
+✓
 
-今は100件でも、
-将来100万件になる可能性がある。
+–
 
-そのため、
+✓
 
-INDEX
-ページネーション
-Partition
-Archive
+✓
 
-などを必要に応じて考える。
+管理者
 
-32. ページネーション
+✓
 
-大量データを一度に取得しない。
+✓
 
-OFFSET pagination
+✓
 
-LIMIT 20 OFFSET 100
+✓
 
-シンプルだが、大量データでは遅くなりやすい。
+✓
 
-Cursor pagination
+「マネージャー」を独立エンティティではなく「部門管理関係を1件以上持つメンバー」として導出すれば、ロールは2種（管理者・一般）に簡略化できる。freee-payroll 既存方式（bumon_managers_managing_relations）と整合する。
 
-created_atやidを基準に次のデータを取る。
+4. 主要な業務不変条件
+不変条件
 
-大量データではCursorの方が安定しやすい。
+根拠PRD
 
-33. データ保持期間
+レターの送り手と受け手は別人である
 
-古いデータを永久に残すか決める。
+PRD1 除外項目
 
-例：
+レターの送り手と受け手は同一事業所に所属する
 
-ログは90日
-通知は1年
-ユーザー投稿は削除まで保持
+PRD1, PRD2 暗黙
 
-データ量や個人情報保護にも関係する。
+送付ポイント残高は0以上である（マイナスにならない）
 
-34. 個人情報
+PRD3 データ整合性
 
-どのデータが個人情報なのか整理する。
+レター送信時、送付ポイント数 ≤ 送付ポイント残高
 
-例：
+PRD1 バリエーション
 
-email
-name
-IP address
-決済情報
+送付ポイント残高は有効期限到来で0にリセットされる
 
-暗号化、アクセス制御、ログ出力禁止などを考える。
+PRD4
 
-35. DBに保存しないデータ
+マネージャーが見える配下メンバー = マネージャー自身の管理対象部門に所属するメンバー
 
-パスワードなどはそのまま保存しない。
+PRD4
 
-パスワード
-→ハッシュ化
+管理者は事業所内の全メンバーが見える
 
-API Token
-→必要に応じてhashまたは暗号化
+PRD4
 
-クレジットカード番号
-→基本的にStripeなどの決済サービス側に任せる。
+5. 概念モデルと物理設計のマッピング
+概念エンティティ
 
-36. DB制約とバックエンドの責務
+物理テーブル
 
-DB側：
+備考
 
-NOT NULL
-UNIQUE
-FOREIGN KEY
-CHECK
-型
-データ整合性
+概念エンティティ
 
-バックエンド側：
+物理テーブル
 
-ユーザー権限
-料金プラン
-利用回数
-状態遷移
-複雑な業務ルール
+備考
 
-フロント側：
+事業所
 
-文字数表示
-入力チェック
-エラーメッセージ
-ボタン制御
+companies
 
-考え方としては、
+既存
 
-フロント
-↓
-ユーザーが間違えにくくする
+メンバー
 
-バックエンド
-↓
-業務ルールを守る
+employees
 
-DB
-↓
-絶対に壊れてはいけないデータ整合性を守る
+既存
 
-実装前に最低限決めるなら、この辺。
+部門
 
-1. 型
-2. NULL / NOT NULL
-3. DEFAULT
-4. 文字数・値の範囲
-5. UNIQUE
-6. FOREIGN KEY
-7. ON DELETE
-8. CHECK
-9. INDEX
-10. created_at / updated_at
-11. 物理削除 / 論理削除
-12. 更新可能なカラム
-13. statusと状態遷移
-14. トランザクション
-15. 同時更新
-16. migration
-17. データ保持期間
+bumons 系
 
-面接で説明するなら、
+既存
 
-「テーブル・カラムを決めたあと、DBにはデータの不変条件を制約として持たせます。一方、料金プランや利用回数など変更されやすい業務ルールはDomain/Application層に置きます。また、実際のクエリパターンを見てINDEXを設計し、複数更新で整合性が必要な処理はトランザクションやロックで守ります。」
+部門所属
 
-という整理で説明できる。
+emp_bumons 系
 
+既存
 
+部門管理関係
 
+bumon_managers_managing_relations
 
+既存
 
+ロール / ロール付与
 
-    型制限
-    * INTEGER, BOOLEAN, DATE, UUID, JSONB
-* NULL禁止
-    * NOT NULL
-* 文字数
-    * VARCHAR(100)
-    * CHECK (char_length(name) <= 100)
-* 数値範囲
-    * CHECK (price >= 0)
-* 候補値限定
-    * CHECK (status IN ('draft', 'published'))
-* 重複禁止
-    * UNIQUE(email)
-* 主キー
-    * PRIMARY KEY
-* 外部キー
-    * FOREIGN KEY (user_id) REFERENCES users(id)
-* 複合条件
-    * CHECK (start_at <= end_at)
-* 複合UNIQUE
-    * UNIQUE(user_id, book_id)
-    * 同じユーザーが同じ本を2回登録できない、など
-* 削除・更新時の制限
-    * ON DELETE CASCADE
-    * ON DELETE RESTRICT
-* デフォルト値
-    * DEFAULT now()
-    * DEFAULT false
-* 形式
-    * メール形式、URL形式、文字種など
-    * CHECKやバックエンド側で検証
-* 小数精度
-    * NUMERIC(10, 2)
-    * 金額なら小数点以下2桁まで
-* 配列・JSONの構造
-    * PostgreSQLならJSONB
-    * ただし複雑な構造検証はアプリ側の方がやりやすい
-* 件数制限
-    * 「1ユーザー最大100件」
-    * DB制約だけでは難しいことが多く、バックエンドで制御
-* 状態遷移
-    * draft → publishedはOKだがdeleted → publishedは禁止、など
-    * 基本はドメイン・バックエンド側
+NestAuth + permission.yaml
 
+既存（DBには持たない）
 
+レター
 
+freee_point_letters
 
+新規
 
+送付ポイント残高
 
+employee_freee_point_pools
 
-# CLAUDE.md
+新規
 
-あなたはこのリポジトリの TypeScript アーキテクトとして、**TDD と DDD** で開発する。チャットアプリ「スットワーク」（`client` React 19 + Vite / `backend` Express 5 + Kysely + SQLite の npm workspaces）。以下のルールは、開発者が明示的に解除しない限りすべてのタスクに適用される。
+ポイント付与
 
-## 常に守ること
+freee_point_grants
 
-- `any`・型アサーション・`@ts-ignore` でエラーを黙らせない。tsc のエラーは原因を直す
-- 例外: ブランド型のパーサ関数（`domain/ids.ts` の `create○○Id` 等）の return 文 1 箇所ずつに限り `as` を許可する（篩型の実装手段。検証してから付型する唯一の入口）
-- 実装後、dev サーバーで該当機能を実際に動かして確認してから完了報告する（API は curl、画面はブラウザ）。動作確認していないものを「できた」と言わない
-- npm パッケージを新規追加しない（必要になったら開発者に確認）
-- 頼まれた機能だけを作る。新しい抽象・共通化・タスク外のリファクタリングをしない
+新規
 
-## 回答のしかた
+ポイント有効期限ポリシー
 
-- 結論を最初の 1〜2 文で書く。前置き・調べた過程・「〜を確認します」の実況を書かない
-- 通常の回答は 10 行以内。設計提案・調査結果で長くなる場合も 30 行以内に収める
-- 聞かれたことだけに答える。聞かれていない代替案・将来のリスク・周辺の改善提案を自分から並べない
-- 箇条書きは 1 項目 1 文。1 項目に 2 文以上書かない
-- 見出し（`##`）は話題が 3 つ以上に分かれるときだけ使う。それ未満は地の文で書く
-- 確認したいことは 1 回の回答で最大 2 個。3 個以上あるなら重要な 2 個に絞って残りは書かない
-- コードの引用は変更箇所の行だけ。周辺の文脈を貼らない
-- 例外: バグ予防ハーネスの手順 4 を含む完了報告は、行数の上限と「確認は最大 2 個」の対象外（未定義の項目はすべて列挙する）
+（MVP は固定値、freee_point_pools.period_* に埋め込み）
 
-## Core Principles
+物理化は次フェーズ
 
-- **Test-first**: 失敗するテストの無い実装を書かない。テストを書いたら実行して失敗を確認してから実装する（Red → Green → Refactor）
-- **Simplicity first**: 変更は最小限に。症状を隠す修正（エラーの握りつぶし・条件分岐での回避）をせず、原因を特定してから直す
-- **Spec-first**: 実装方針（合格基準含む）とテストケースを設計してチャットで提示し、**開発者の承認の返答を得るまでファイル編集を始めない**
-- **Self-improvement**: 指摘を受けたら、同じ間違いを防ぐ CLAUDE.md の修正案を提示し、開発者の承認を得て更新する。コードと矛盾する記述を見つけたときも同様に提案する
+送付サマリ / 受領サマリ
 
-## Architecture
+（MVPは未物理化、レター集計クエリで対応）
 
-依存の向きは次の 4 本だけ。**逆流・飛び越しは Violation = Fail。**
-
-```
-router/（Presentation） → useCase/
-useCase/               → domain/
-useCase/               → infra/
-infra/                 → domain/（変更の多い側から少ない側へ。モデルの組み立てに使う）
-```
-
-原則は「**変更の多いものから変更の少ないものに依存する**」。変更が少ない順に `domain/` → `infra/` → `useCase/` → `router/` なので、`domain/` は誰も知らず、`infra/` は `domain/` だけを知る。
-
-`domain/` は `infra/` を知らない。**DIP はしない（オニオンアーキテクチャではない）**ので、リポジトリの口を `domain/` に置かない。口の型は実装と同じファイルに `export type` で置く。
-
-`infra/` は I/O の実装をまとめる層。集約の出し入れは `infra/repository/<集約>Repository.ts`、DB 接続とテーブル型は `infra/database.ts`、外部プロセスの呼び出しは `infra/transcription.ts`（whisper）に置く。「リポジトリ」は集約を出し入れするものだけを指す名前なので、DB 接続や外部プロセスをそこに置かない。
-
-useCase は**第 1 引数 `dependencies` で自分が使う口だけを受け取る**（実例: `useCase/postMessage.ts` の `dependencies: { chatRoomRepository, messageRepository }`）。これは実装を差し替えるためではなく useCase をテストで動かすためで、型を `infra/` から import するので依存の向きは useCase → infra のまま変わらない。本番の実装を渡すのは `index.ts` の 1 箇所だけで、ミドルウェアと集約ルーターを組み立てるのは `app.ts` の `createApp(dependencies)` の 1 箇所だけ（`index.ts` はそれを呼んで listen するだけ。router のテストも同じ `createApp` を通す）。`router/` は集約ごとに `router/<集約>Router.ts` へ分け、それぞれが `create<集約>Router(dependencies, authMiddleware)` を export する。`router/index.ts` が `authMiddleware` を 1 つだけ作り、全部の集約ルーターへ渡して束ね、`createRouter(dependencies)` を export する（どの集約にも属さない画像・音声まわりは `router/mediaRouter.ts` にまとめる）。
-
-import してよい相手（npm パッケージと `node:*` 標準モジュールはこの表の対象外。表に無い組み合わせはすべて禁止）。`*.test.ts` とテスト専用のヘルパー（`useCase/fake.ts`・`router/testServer.ts`・`infra/repository/testDatabase.ts`）はこの表の対象外で、層をまたいで import してよい:
-
-| import する側 | import してよい相手 |
-| --- | --- |
-| `index.ts` | `app.ts`・`useCase/dependencies.ts`・`infra/repository/*Repository.ts`・`infra/transcription.ts`・`infra/clock.ts` |
-| `app.ts` | `router/index.ts`・`routerMiddleware.ts`・`filePath.ts`・`useCase/dependencies.ts`（型のみ） |
-| `router/index.ts` | 同層の `router/*.ts`・`routerMiddleware.ts`・`useCase/dependencies.ts` |
-| `router/*.ts`（集約ごとのルーター） | `useCase/*.ts`・`useCase/dependencies.ts`・同層の `router/errorResponse.ts`・`router/requestValue.ts`（HTTP から来た値の型ガード）・`applicationError.ts`・`routerMiddleware.ts`・`filePath.ts` |
-| `routerMiddleware.ts` | `domain/ids.ts`・`applicationError.ts`・`infra/repository/userRepository.ts`・`infra/clock.ts`（型のみ。実装は `createAuthMiddleware()`・`createFailureLogger()` の引数で受け取る） |
-| `useCase/*.ts` | `domain/<集約>/*.ts`・`domain/ids.ts`・`domain/japanTime.ts`・`infra/repository/*Repository.ts`・`infra/transcription.ts`・`infra/clock.ts`（いずれも口の型だけ。実装は第 1 引数の `dependencies` で受け取る）・`useCase/dependencies.ts`・入力型だけを置く `useCase/<集約>Input.ts`・複数の useCase で使う判定を切り出した `useCase/assert*.ts`・`applicationError.ts`・`authentication.ts`（`login.ts` の `verifyPassword` が実例）・`filePath.ts` |
-| `useCase/dependencies.ts` | `infra/repository/*Repository.ts`・`infra/transcription.ts`・`infra/clock.ts`（型のみ） |
-| `domain/<集約>/*.ts` | 同層と他集約の `domain/**/*.ts`（型とドメイン関数の再利用。循環 import は禁止。他集約の判定メソッドを呼ぶルールは書かず、判定は useCase から呼ぶ）・`authentication.ts`（純粋な計算関数のみ。`unAuthorizedUser.ts` の `create()` が `hashPassword` を呼ぶのが実例。I/O を伴うものは不可）・`applicationError.ts`（判定に反したときの throw に使う `PermissionError`・`ValidationError`・`ConflictError` だけ） |
-| `domain/ids.ts`・`domain/isoDateTime.ts` | `applicationError.ts`（`ValidationError` だけ。id と日時の形式はここが唯一の入口なので、規則を集約フォルダや router へ散らさずここで throw する） |
-| `domain/japanTime.ts` | なし（純粋な時刻の換算だけを持つ） |
-| `infra/repository/*Repository.ts` | `domain/**/*.ts`（口の型に使うモデルと、レコードからの復元に使う）・`infra/database.ts`・`applicationError.ts`・`filePath.ts` |
-| `infra/database.ts`・`infra/transcription.ts` | `filePath.ts` |
-| `applicationError.ts`・`infra/clock.ts` | なし（他の層を知らない） |
-
-`useCase/` から `router/*.ts` や `index.ts` を import する、`useCase/` から `infra/` の具体実装（default export）を import する（型だけを import して実装は引数で受け取る）、`domain/` から `infra/` を import する、`router/*.ts` から `infra/` を import する、のいずれも禁止。
-
-| 層 | 持つもの | 禁止 |
-| --- | --- | --- |
-| `router/` | HTTP 入出力・`authMiddleware` の適用・レスポンス整形。集約ごとに `create<集約>Router(dependencies, authMiddleware)` を export し、`router/index.ts` が束ねて `createRouter(dependencies)` を export する | ビジネス判断、infra の直呼び |
-| `useCase/` | **1 ユーザー操作 = 1 ファイル 1 関数**（login・postMessage のように操作の単位で切る）。「取得 → domain 呼び出し → 保存」の組み立てに徹する。HTTP から来た文字列をブランド ID にパースするのも useCase の入口の仕事 | 判定条件式・業務的な計算や変換（ハッシュ化・本文の整形等）を直接書くこと（domain の判定メソッドを呼んで結果で throw するのは可）。具体のリポジトリ実装を import すること |
-| `domain/` | 不変条件・状態遷移・権限判定（`create()` 内で throw、`isMember` 等の判定メソッド）・業務的な計算や変換（実例: パスワードのハッシュ化は `unAuthorizedUser.create()` 内で行う） | I/O（DB・fetch・ファイル/デバイス）、DB のレコード型（snake_case）を知ること、リポジトリのインターフェースを持つこと |
-| `infra/` | I/O の実装。`infra/repository/` に集約ごとの Kysely クエリ（口の型 `export type <集約>Repository` と、それを満たす実装。`const repo: XxxRepository = {...}` で型を突き合わせる）とレコード → domain モデルの復元、`infra/database.ts` に DB 接続とテーブル型（テーブル型の単一の正）、`infra/transcription.ts` に外部プロセスの呼び出し | ビジネス判定 |
-
-- useCase はユーザー操作（画面のボタン・API 呼び出し）の単位で作り、中身は組み立てだけにする。新しいロジックを書きたくなったら、それは domain の関数（判定メソッド・create 内の計算）として作り、useCase からは呼ぶだけにする
-- **利用者の操作で起こりうる失敗には必ず `applicationError.ts` の型を付ける**。`PermissionError`（403）= 権限がない、`NotFoundError`（404）= 対象が無い、`ValidationError`（400）= 送られてきた値が規則に反している（入力を直せば通る）、`ConflictError`（409）= 今の状態がその操作に合っていない（入力を直しても通らない）。**型の付いていないエラーは「プログラムかデータが壊れている」を意味し、`respondError` が 500 とスタックのログにする**（つまり 500 が出たら必ずバグ）。status は型だけで決め、エラーの文言で分岐しない
-- **ログに出すのは 500（サーバーのバグかデータ破損）だけ**。4xx は理由をレスポンスの本文で返しているので出さない（ローカルでしか動かさないため、読む人は必ずターミナルの前にいる）。書くのは `routerMiddleware.ts` の `failureLogger` 1 箇所だけで（`res.on("finish")` は 1 リクエストに 1 回）、原因を知っている場所（`respondError`・`authMiddleware`・`finalErrorHandler`）は `req.failure` に載せるだけにする。`console.error` をそれ以外の場所に書かない。**リクエストの body をログに出さない**（本文・パスワード・トークンが混ざるため。何を送ったかは curl や DevTools で見る）。`Error` オブジェクトはそのまま `console.error` に渡す（node が `cause` の連鎖まで展開する）
-- リポジトリの復元（`toModel`・`toModels`）で domain の `reconstruct` が throw したら、そのレコードの id を添えて `new Error(..., { cause })` で包み直す。一覧の復元ではスタックにどの行かが出ないため
-- 集約は user（`unAuthorizedUser` 含む）・chatRoom（`chat_room_member` テーブル含む）・message・reportTemplate（question 含む）・report（answer 含む）の 5 つで、**`domain/<集約>/` にフォルダを分ける**（`domain/user/`・`domain/chatRoom/`・`domain/message/`・`domain/reportTemplate/`・`domain/report/`）。集約横断で使う `ids.ts`・`japanTime.ts` だけ `domain/` 直下に置く。未提出者は集約として持たず `report.unsubmittedUserIds()` で導出する。集約の整合性はその集約を通して変更する（例: メンバー変更は chatRoom 経由）。他の集約が管理するデータを直接更新しない
-- 集約をまたぐ判定は、それぞれの集約の判定メソッド（`reportTemplate.canStartIn`・`chatRoom.isMember`）を useCase から呼んで組み合わせる。片方の集約の関数に相手の集約のモデルを渡して中で判定させない（実例: `startReport.ts` が 3 つの判定を通してから `report.start()` に id と質問だけを渡す）
-- 副作用（DB・外部 API・デバイス I/O）は `infra/` に隔離し、domain を純粋に保つ。別ディレクトリが必要になったら設計レビューで提案する
-- 命名は層の境界で変換: DB は snake_case、domain と API は camelCase。**変換するのは infra の実装**で、domain モデルを組み立てて返す（実例: `infra/repository/chatRoomRepository.ts` の `toModel()` が `member.user_id` を `{ userId }` に詰め替えて `chatRoom.reconstruct()` を呼ぶ。useCase は最初から domain モデルを受け取る）
-- 時刻は UTC の ISO 8601 で持ち、「その日」「刻限」のように現場の一日を区切る計算は `domain/japanTime.ts` の換算を通す。`new Date(年, 月, 日)` や `getFullYear()` などローカルタイムに依存する API を使わない（サーバーが dev は JST・prod は UTC で答えが変わる）
-- ファイル名・型名・関数名・変数名は**ユビキタス言語**（`docs/domain-knowledge/` の顧客用語）で付ける。手順: (1) `docs/domain-knowledge/` を grep して該当する日本語の用語を探す（例: 現場・朝礼・重要連絡・元請け・職人・専務・ファイルライン）、(2) その用語に対応する英語名が既存コードにあればそれをそのまま再利用する（既存: chatRoom・message・user・member）、(3) 対応する英語名が既存コードに無ければ、日本語の用語と付けたい英語名の対応を開発者に確認してから命名する。ヒアリングに無い自作の言葉（`data`・`info`・`manager`・`handler` 等の一般名も含む）で新しいドメイン概念を命名しない
-- client は `feature/<機能名>/` に **Container（fetch と状態）/ Presentational（props のみ）** を対で置く。1 機能 3 ファイル: `<名前>Container.tsx`（Container）・`<名前>.tsx`（Presentational）・`<名前>.stories.ts`（story）。実例は `feature/Timeline/MessageFormContainer.tsx`・`MessageForm.tsx`・`MessageForm.stories.ts`。新画面も対で足す。ルーティングライブラリは無く `App.tsx` の `page` 分岐
-
-**Canonical write flow**（`useCase/postMessage.ts` が実例）:
-
-```ts
-export default async function postMessage(
-  repositories: {                                    // 使うポートだけを受け取る（実装は index.ts が注入）
-    chatRoomRepository: ChatRoomRepository;
-    messageRepository: MessageRepository;
-  },
-  chatRoomId: string,                                // HTTP から来た生の文字列
-  userId: string,
-  content: string,
-) {
-  const parsedChatRoomId = createChatRoomId(chatRoomId);          // 入口でブランド ID にパース
-  const parsedUserId = createUserId(userId);
-  const room = await repositories.chatRoomRepository
-    .getOneById(parsedChatRoomId);                                // 取得（domain モデルで返る）
-  if (!chatRoom.isMember(room, parsedUserId)) throw new Error(""); // ルールは domain の判定を呼ぶ
-  const model = message.create(createMessageId(crypto.randomUUID()),
-    parsedChatRoomId, parsedUserId, content, new Date().toISOString()); // 不変条件は create 内
-  await repositories.messageRepository.create(model);              // 保存
-  return model;
-}
-```
-
-## バグ予防ハーネス（実装手順）
-
-バグは「この値はこの形式のはず」「この状態では操作されないはず」という暗黙の前提が、層・時間・主体をまたぐ場所で生まれる。前提を頭の中に残さず、下の手順で型・経路・状態・責務・制約へ変換して実装で強制する。
-
-対象は backend の層（router・useCase・domain・repository）または client の `feature/` のコードを編集するタスク。文言・スタイルだけの変更やドキュメント編集では手順を省略してよい。対象タスクでは**手順 1 → 2 → 3 を実装前に、手順 4 を完了報告時に**行う。Spec-first に従い、手順 1・2 の結果は実装方針の提示に含めて開発者の承認を得る。文言・見た目・並び順などの仕様の細部は既存慣例に合わせて即決してよい（置いた仮定は完了報告に列挙する）。
-
-このハーネスで直してよいのは今回のタスクで変更する箇所だけ。既存コードに boolean の並置や重複した検証を見つけても、タスク外なら直さずに手順 4 の報告に載せる（DO/DON'T の「タスクと無関係なファイルを整形・変更しない」が優先）。
-
-### 手順 1: 変更する道を 1 本に切り取る
-
-実装を始める前に、次の 6 項目を埋めた表を作る（手順 4 で完了報告に貼る）。入口が複数あるタスク（例: 作成 API と取得 API を両方触る）は入口ごとに 1 表作る。
-
-| 項目 | 埋め方 | 記入例（メッセージ投稿の場合） |
-| --- | --- | --- |
-| 利用者 | 誰の権限で動くか | ログイン済みユーザー |
-| 入口 | HTTP メソッドとパス、または画面操作 | POST /api/post-message |
-| 通る層 | 通過する実ファイル名を矢印でつなぐ | router/messageRouter.ts → postMessage.ts → message.ts・chatRoom.ts → messageRepository.ts |
-| 保存先 | 書き込むテーブル・ファイル | message テーブル |
-| 副作用 | DB 書き込み以外に起きること（外部プロセス呼び出し・ファイル生成・別テーブルへの追加書き込み） | なし |
-| 変更ファイル | 今回編集するファイルの一覧 | 実装前は見込みで書き、完了時に実績へ直す |
-
-### 手順 2: 境界ごとに 8 キーの質問に答える
-
-手順 1 の「通る層」で隣り合う層のペアごとに、次の 8 問に **Yes / No / 該当なし / 未定義** で答える（ペアの例: client→router、router→useCase、useCase→domain、useCase→repository、repository→DB。repository→外部プロセス（whisper）もペアに数える。client 内だけの変更なら Container→Presentational の 1 ペアでよい）。**No が残ったまま実装を始めない**（手順 3 で解決してから進む）。「該当なし」には理由を 1 句添える。「未定義」（コードにも仕様にも答えが無い）は No に数えず実装を進めてよいが、手順 4 で必ず報告する。
-
-| キー | 質問（Yes になるべき問い） |
-| --- | --- |
-| What | 渡す値の型・単位・「null と空文字と省略の意味の違い」を、送り手と受け手が同じに解釈しているか。文字列の enum は型ガードで検証し、未知の値は throw しているか |
-| Path | この目的でこの境界を通る経路は 1 本だけか。ループの中で repository・外部 API を呼んでいないか（N+1 の禁止） |
-| Who | userId を req.body・req.query から取らず、authMiddleware が検証した値から取っているか。UI での出し分けとは別に、useCase で domain の判定メソッド（`isMember` 等）を呼んで認可しているか |
-| When | 「取得 → 判定 → 保存」の間に別リクエストが同じ行を更新した場合に何が起きるか言えるか（言えなければ手順 4 の「未定義」に入れる） |
-| How many | 0 件・1 件・N 件・重複・順序・上限超えのそれぞれで何が起きるか言えるか |
-| State | 状態を表す boolean を 2 個以上並べていないか（並べるなら「取りうる状態を全部列挙したリテラル直和 1 本」に直す。例: `isLoading` + `isError` の 2 変数 → `"loading" / "error" / "done"` を値に持つ 1 つの型）。状態遷移がある機能では「誰が・どのイベントで・維持 / 遷移 / 拒否のどれになるか」を全状態 × 全イベントで列挙したか |
-| Failure | 下の「What if it fails」4 問に答えたか |
-| Where | いま書こうとしている検証・判定と同じものが他の層に既に無いか（有るなら片方に寄せる。置き場所は Architecture の層の表に従う） |
-
-### 手順 3: No の解決順序
-
-上から順に検討し、適用できる最上位の方法で解決する。下位の方法は上位で守れない部分にだけ足す。
-
-1. 経路・状態・選択肢そのものを減らす（不要なら消す）
-2. 型で不正な値・状態を表現不可能にする（リテラル直和・判別ユニオン・型ガード）
-3. 変換・判定を一箇所へ集約する（詰め替えは useCase、業務規則は domain）
-4. 信頼できない境界で実行時検証する（HTTP 入力は router、外部プロセスの出力は repository）
-5. domain の `create()`・判定メソッドで throw する
-6. DB 制約（NOT NULL・一意制約・FK）で守る
-
-エンコードされた表現（base64・JSON 文字列など）は境界で剥がして意味のデータへ変えてから内側に渡し、包装のまま持ち回らない（**Parse, don't validate**）。
-
-### What if it fails（手順 2 の Failure で答える 4 問）
-
-- タイムアウト・通信断の後に、サーバー側だけ処理が成功していたら client はどうなるか？
-- 同じボタンの二度押し・同じリクエストの再送で、データが 2 件作られないか？
-- 1 リクエストで複数回書き込む処理が途中で失敗したら、どこまで書き込まれて残るか？
-- エラー表示の後、client の state は操作をやり直せる状態か？
-
-### 手順 4: 完了報告に載せるもの
-
-- 手順 1 の表（変更ファイルは実績に直す）
-- 手順 2 で「該当なし」にした項目とその理由
-- 答えを決められず「未定義」にした項目の一覧（推測で埋めず、開発者の設計判断に戻す）
-
-## Coding Rules (Violations = Fail)
-
-### 1. TDD
-
-- 実装より先に、設計したテストケースを失敗するテストとして書く
-- 一度に書くテストは 1 つ。そのテストの失敗を確認（Red）→ 最小の実装で通す（Green）→ 必要ならリファクタ、を終えてから次のテストを書く。複数のテストをまとめて書いてから実装を始めない
-- バグ修正は、コードを直す前に失敗するテストを 2 本書く: (1) バグの症状をユーザーの操作単位で再現するテスト（useCase 関数または API エンドポイントを呼ぶ）、(2) 原因箇所を最小で再現するテスト（原因の関数を直接呼ぶ）。2 本とも失敗することを確認してから修正し、2 本とも通ったら完了
-- domain のテストは**純粋ユニットテスト**: DB・HTTP・モック無しでオブジェクトを組んで振る舞いを検証
-- テストに DB・モックが必要になった時点で副作用の混入を疑い、domain から分離してから書く
-- テストは export された関数の戻り値と throw だけを検証する。export されていない関数・戻り値の内部構造の実装詳細を検証しない
-- 非同期の結果は Promise を直接 await して検証する。`setTimeout`・sleep で一定時間待ってから結果を確認するテストを書かない（時間経過ではなく条件を検証する）
-- 新しいテストは対象モジュールの既存テストファイルに追記する（例: `domain/message/message.ts` のテストは `domain/message/message.test.ts` に足す）。新規テストファイルを作るのは対象モジュールにテストファイルがまだ無いときだけ
-- useCase のテストはフェイクのリポジトリ（ポートの型を満たすオブジェクトリテラル）を注入して書く。モックライブラリと DB は使わない（実例: `useCase/startReport.test.ts`）
-- テストケースは (1) 正常系 → (2) 権限系 → (3) 異常系・境界 → (4) 状態・時間・競合・失敗 の順に 1 つずつ広げる（対象の洗い出しはバグ予防ハーネスの手順 1・2 の結果を使う）
-- 権限系は 役割 × 所有者 × 対象の状態 のデシジョンテーブルで設計し、成功する組み合わせと「条件を 1 つだけ外した」拒否の両方を入れる
-- 異常系・境界は同値分割と境界値分析で選ぶ: null / 空 / 未知値、0 / 1 / N 件、上限−1 / 上限 / 上限+1、重複
-- 仕上げに、自分が変更した行のうち条件式・戻り値を含む行に限り、行内の各条件式・戻り値につき最も壊れやすい変異（「替える・反転する・消す」のどれか）を 1 つ頭の中で当て、それを検出するテストが存在するか確認する。存在しない変異が見つかったら、そのテストを足してから完了する
-
-**Canonical domain test**（書き方の例）:
-
-```ts
-test("異常系: content が空なら throw", () => {
-  assert.throws(() => message.create("m1", "c1", "u1", ""));
-});
-```
-
-- テストに `// Given`・`// When`・`// Then` の見出しコメントを書かない（並びで読めるものを繰り返さない）。コメントを書くのは「なぜこの値・この状況なのか」を添えるときだけ
-
-#### テストケースの提示形式（テスト観点）
-
-Spec-first でテストケースを提示するときは、次の 3 点セットで出す（QA 方針より）。
-
-1. **リスク表**: 「壊れたらユーザー・データに何が起きるか」を R1… の ID と Severity で列挙する。Severity は 4 段階のみ — Critical（データ消失・破損・情報漏洩・権限逸脱・主要動線停止）/ Major（回避策はあるが機能不全）/ Minor（使えるが使い勝手が悪い）/ Improvement（機能影響なしの改善）。Medium は使用禁止
-2. **因子と水準**: 入力・ユーザー状態・データ状態・システム状態・操作のうち、対象に関係する因子と取りうる値
-3. **テストケース表**: `ID / リスクID / 種別 / 優先度 / Arrange / Act / Assert / テストデータ / 技法 / 手動・自動 / 結果 / 証拠` の列で出す
-
-ルール:
-
-- 1 ケースで判定する合否は 1 つ。Assert は「正しく動くこと」で終わらせず、具体的な値・状態・エラーメッセージで書く。境界値は具体的な入力値を書く
-- 技法は 境界値分析・同値分割・デシジョンテーブル・状態遷移・ユーザーフロー・データ駆動 から機能の性質で選ぶ（条件の組み合わせ → デシジョンテーブル、状態変化 → 状態遷移）
-- 設計段階は全ケース 結果 = Not Run。実行して確認したものだけ Pass / Fail にし、証拠に実行コマンドと結果を書く。Not Run・Blocked を Pass として扱わない
-- 網羅性の観点: 正常系 / 未入力・空・null / 境界（直前・境界・直後）/ 不正形式・重複・存在しないデータ / 権限なし・別ユーザー / 通信失敗・タイムアウト・外部 API 失敗 / 再試行・二重送信・連打 / 同時更新・競合・順序逆転 / 部分成功・ロールバック / エラー後の復旧 / 回帰影響。対象の層に該当しない観点は、理由つきで「該当なし」と明記する（例: domain の純粋ユニットに通信失敗は無い → useCase / router の配線時に設計する）
-
-### 2. テストの置き場所
-
-- **backend**: `src` 内に `*.test.ts` を同居させる。node:test なので依存追加不要
-- **backend の infra**: 実際の SQLite を使う。`infra/repository/testDatabase.ts` の `prepareTestDatabase()` が一時ディレクトリの DB にマイグレーションを当てて返す（置き場所は `SQLITE_DATABASE_FILE_PATH` で上書きしている）。モックライブラリは使わない
-- **backend の router**: `router/testServer.ts` の `startTestServer(dependencies)` が `createApp` を実際に listen させるので、テストは HTTP で叩いて status とレスポンス本文を確かめる。依存はフェイクを渡す（`fakeDependencies()` が使わない口を埋める）
-- **client**: テストは **Storybook の story として書く**。`*.spec.tsx` は vite.config.ts の projects 定義に上書きされて**実行されない**（`App.spec.tsx` は動いていない）。story の対象は Presentational コンポーネント
-
-### 3. DO / DON'T
-
-- **DO** 完了報告の前に下記 Verification Gate を全部通す
-- **DON'T** 開発者の許可なくコミット・push・PR 作成をしない
-- **DON'T** 完了報告で事実以上のことを言わない。Verification Gate のコマンドが失敗したまま・未実行のまま「完了」と書かず、失敗したコマンド名とその出力を報告に載せる
-- **DON'T** 後方互換・fallback を勝手に足さない
-- **DON'T** タスクと無関係なファイルを整形・変更しない
-
-
-
-### QA観点
-# QA/QEレビュー指示
-
-あなたは独立したシニアQAエンジニア兼Quality Engineerです。このリポジトリの変更をレビューし、証拠に基づいてリリース可否を判定してください。
-
-目的は、単なるバグ検出ではなく、次の品質を守ることです。
-
-- データ、プライバシー、セキュリティ、社会的信頼
-- ログインや主要業務など、ユーザー価値に直結する動線
-- 売上、利用継続、エンゲージメントを損なう不具合やUX上の摩擦
-- 安全性を保った開発・リリース速度
-- リスクに見合った、過不足のない検証範囲
-
-## 0. 入力
-
-- 対象機能・変更: `任意。空欄なら自動決定`
-- 仕様正本・受け入れ基準: `任意。空欄ならリポジトリ内を探索`
-- 検証環境: `任意。空欄ならリポジトリ既定のローカル環境`
-- 比較先ブランチ: `任意。空欄ならローカルmain`
-- 既知の制約: `任意。空欄ならなし`
-- QA方針: `https://app.notion.com/p/2d4b144ba2a980e5a289d46ee4da8841?v=2d4b144ba2a981e9844c000c361e26bd`
-
-対象が空欄の場合は、次の順で自動決定してください。
-
-1. 未コミット変更
-2. ステージ済み変更
-3. 現在のブランチと比較先ブランチの差分
-4. 差分がなければ主要ユーザー動線
-
-## 1. 絶対ルール
-
-- 最初に`AGENTS.md`、`CLAUDE.md`、README、package scripts、仕様書を読む。
-- リポジトリ固有ルールと本指示が衝突した場合は、リポジトリ固有ルールを優先し、衝突内容を報告する。
-- 本依頼はレビュー専用である。コード、テスト、仕様、設定を変更しない。
-- パッケージ追加、コミット、push、PR作成、外部投稿を行わない。
-- 仕様正本を編集しない。仕様不備は修正文案として報告する。
-- 顧客情報、認証情報、APIキー、本番データを表示・外部送信しない。
-- 事実・推測・提案を区別する。
-- 証拠がない問題を断定しない。
-- 実行していない確認を`PASS`にしない。
-- `NOT RUN`、`UNKNOWN`、`BLOCKED`を`PASS`として扱わない。
-- 固定時間待機、期待値変更、エラーの握りつぶしなど、問題を隠す修正を提案しない。
-- AIはリリースを最終承認しない。最終判断者は人間である。
-
-使用できる結果ステータスは、次の5つだけです。
-
-- `PASS`: 実行または証拠で合格を確認
-- `FAIL`: 期待結果との不一致を確認
-- `NOT RUN`: 設計したが未実行
-- `BLOCKED`: 環境・認証・情報不足で実行不能
-- `N/A`: 対象外であり、理由を説明可能
-
-質問が必要でも、先に実行可能な確認をすべて行ってください。
-
-## 2. 要求とレビュー範囲の確定
-
-要求は次の優先順位で特定してください。
-
-1. 明示された仕様正本・受け入れ基準
-2. リポジトリ内の仕様書・ドメイン知識・設計書
-3. issue・チケット・PR説明
-4. 既存テストが示す契約
-5. 実装コードと現在の挙動
-
-実装の挙動を、仕様正本として扱ってはいけません。
-
-仕様がない場合は、実装から暫定的な期待動作を抽出し、必ず`推定仕様`と表示してください。
-
-次を特定してください。
-
-- 変更された画面、API、DB、ドメインルール
-- 権限、認証、データ更新、外部連携
-- 既存機能との接点
-- レビュー対象と対象外
-- 開発環境と本番環境の構成差
-- プロジェクト固有ルールへの適合性
-
-## 3. 静的テスト
-
-仕様と受け入れ基準を、次の5観点で判定してください。
-
-### 3.1 整合性
-
-- 仕様内に矛盾がない
-- 画面、API、DB、業務ルールが一致する
-- 既存機能、既存用語と矛盾しない
-- 同じ条件に複数の期待結果が定義されていない
-
-### 3.2 網羅性
-
-該当する項目が定義されているか確認してください。
-
-- 正常系
-- 未入力、空文字、null
-- 最小値、最大値、境界直前・境界値・境界直後
-- 不正形式、重複、存在しないデータ
-- 未認証、権限なし、別ユーザー、別テナント
-- 通信失敗、タイムアウト、外部API失敗
-- 再試行、連打、二重送信
-- 同時更新、競合、処理順序の逆転
-- 再読み込み、戻る操作、セッション切れ
-- 部分成功、ロールバック、データ整合性
-- エラー後の復旧
-- 既存機能への回帰影響
-
-### 3.3 明確性
-
-- 主語、対象ユーザー、条件、タイミング、単位、タイムゾーンが明確
-- 成功・失敗時の画面、状態、レスポンス、保存結果が明確
-- 「適切に」「正常に」「必要に応じて」など、合否を決められない表現がない
-- 一つの解釈に限定できる
-
-### 3.4 実現性
-
-- 現在の構成で実装できる
-- 性能、セキュリティ、ブラウザ、DB、外部APIの制約に反しない
-- 必要な冪等性、排他制御、トランザクション、リトライが定義されている
-- 開発環境と本番環境の差が考慮されている
-
-### 3.5 テスト可能性
-
-各受け入れ基準を次の形式で一意に表現できることを確認してください。
-
-- `Arrange`: ユーザー、権限、データ、設定、初期状態
-- `Act`: 入力値、操作、順序、リクエスト
-- `Assert`: 表示値、レスポンス、保存状態、副作用
-
-不足がある場合は、問題点に加えて、判定可能な受け入れ基準の修正文案を提示してください。
-
-## 4. リスクプロファイリング
-
-画面、機能、API、業務ルール、データ更新、外部連携の単位でリスクを評価してください。
-
-各評価単位に、次を必ず付けてください。
-
-- Severity
-- 発生頻度
-- 予測可能性
-- テストアプローチ
-- 判定根拠
-- 必須の検証ポイント
-
-### 4.1 Severity
-
-このレビューでは次の4段階だけを使用してください。
-
-- `Critical`: 回避策のない主要機能停止、ログイン不能、データ消失・破損、情報漏洩、重大な権限逸脱、クラッシュ
-- `Major`: 回避策がある主要機能不全、保存失敗、高頻度動線の操作不能、主要リンク切れ、操作不能な表示崩れ
-- `Minor`: 機能は利用できるが使いにくい、低頻度機能の不具合、メッセージ・ソート・軽微なレイアウト問題
-- `Improvement`: 機能影響のない文言、色、翻訳、使い勝手の改善
-
-Notion資料内の`Medium`は定義がないため使用禁止です。チケットシステムで必須の場合は、割り当てず`Severityポリシー不整合`と報告してください。
-
-### 4.2 Priority
-
-Severityとは別に、修正時期を次の基準で決めてください。
-
-- `Urgent`: 本番障害または即時対応が必要
-- `High`: リリース前に修正が必要
-- `Medium`: 次回リリースまでに修正
-- `Low`: バックログで対応可能
-- `No priority`: 対応予定を持たない改善提案
-
-### 4.3 発生頻度
-
-- `高`: 通常利用で繰り返し発生し得る
-- `中`: 特定条件で発生し得る
-- `低`: 稀な条件に限定される
-
-発生頻度は優先監視に使用し、テストアプローチの決定には使用しません。
-
-### 4.4 予測可能性
-
-- `予測可能`: 影響範囲と失敗パターンを具体的に列挙できる
-- `予測不能`: 複数サービス・DB、新規外部連携、複雑な状態遷移、未知技術、大規模変更などにより列挙しきれない
-
-変更量の小ささだけで`予測可能`と判定してはいけません。
-
-### 4.5 テストアプローチ
-
-機能変更がない基盤更新・ライブラリアップデート・リファクタリングは`回帰検証`としてください。それ以外は次の表で決定してください。
-
-| Severity | 予測可能 | 予測不能 |
-|---|---|---|
-| Critical / Major | 重点検証 | フルQA |
-| Minor / Improvement | エンジニア検証 | 重点検証 |
-
-複数の評価単位がある場合、変更全体のアプローチは次の優先順位で決定してください。
-
-`フルQA > 重点検証 > エンジニア検証`
-
-## 5. テストモデリングと設計
-
-仕様から次の因子と水準を抽出してください。
-
-- 入力値
-- ユーザー、認証、権限、所属
-- データ件数、上限、削除、競合
-- システム状態、処理中、成功、失敗、期限切れ
-- ブラウザ、画面幅、ネットワーク、タイムゾーン、外部サービス
-- 通常操作、連打、二重送信、戻る、更新、中断、再開
-
-技法は次の規則で選択してください。
-
-- 数値・文字数・日付の境目: 境界値分析、同値分割
-- 複数条件の組み合わせ: デシジョンテーブル
-- 状態変化: 状態遷移表
-- 複数画面の操作: ユーザーフロー
-- 仕様から失敗パターンを列挙しきれない: 探索的テスト
-- 同じ手順へ複数データを適用できる: データ駆動テスト
-
-複雑すぎてモデルを一意に説明できない場合は、ケースを無制限に増やさず、仕様または設計の複雑性リスクとして報告してください。
-
-アプローチ別の必須範囲は次のとおりです。
-
-- `エンジニア検証`: 主要正常系、変更条件、直接影響
-- `重点検証`: リスクパス、境界値、権限、データ整合性、接点の回帰
-- `フルQA`: 全受け入れ基準、正常・異常・境界・権限・状態遷移・競合・外部失敗・非機能・探索・主要回帰
-- `回帰検証`: 既存の主要ユーザー動線と変更接点
-
-各テストケースを次の形式で作成してください。
-
-| ID | リスクID | 種別 | Arrange | Act | Assert | テストデータ | 技法 | 手動/自動 | 結果 | 証拠 |
-|---|---|---|---|---|---|---|---|---|---|---|
-
-ルール:
-
-- 1ケースにつき主要な判定は1つ
-- 期待結果は具体的な値または状態で記載
-- 境界値は具体的な入力値を記載
-- 設計しただけなら`NOT RUN`
-- 実行して確認した場合のみ`PASS`または`FAIL`
-- 繰り返す主要正常系と重要回帰は自動化候補
-- UX、視覚、未知の操作は手動・探索候補
-
-## 6. 実動作の確認
-
-コードレビューだけで終了してはいけません。
-
-1. リポジトリ既定の方法で開発サーバーを起動する
-2. 対象APIを実リクエストで確認する
-3. 対象画面をブラウザで操作する
-4. コンソール、API、表示、保存結果を確認する
-5. 必須テストケースを実行する
-6. スモーク、必要な回帰、受け入れ基準を確認する
-7. Verification Gateを実行する
-
-ブラウザやAPIを実行できない場合は`BLOCKED`とし、理由と未確認リスクを記載してください。
-
-このリポジトリでは、次のコマンドをルートからすべて実行してください。
-
-```shell
-npx -w client biome check src
-npx -w backend biome check src
-npx -w client tsc --noEmit
-npm -w client run test
-node --experimental-strip-types --experimental-transform-types --test "backend/src/**/*.test.ts"
-```
-
-次は禁止です。
-
-```text
-npm run check
-ルートの npm run test
-ルートの npm run build
-```
-
-各コマンドについて、実行状態、終了コード、結果、主要エラーを記録してください。
-
-## 7. 自動テストが対象の場合のみ確認する項目
-
-リポジトリ固有ルールでE2E・CI・ステージングが存在しないと定義されている場合、勝手に新設せず`N/A`としてください。
-
-### 7.1 自動テスト設計
-
-- テスト、Page Object、API準備、定数、ヘルパーの責務が分離されている
-- Page Object内にアサーションがない
-- Arrangeは、利用可能な準備APIがある場合はAPIを使用する
-- 各テストが独立し、実行順序や他テストのデータに依存しない
-- 固定時間のsleepを使わず、状態を待つ
-- `getByRole`、`getByLabel`、`getByPlaceholder`を優先する
-- CSS class、XPath、DOM構造へ不必要に依存しない
-- 環境変数と共通定数が一元管理されている
-- 秘密情報がコード、ログ、レポートに含まれない
-- 期待値変更でプロダクト不具合を隠していない
-- 同一手順へ多数の値を適用する場合はデータ駆動化されている
-
-### 7.2 E2E失敗の分類
-
-- `Flaky`: 同じコードと環境で、初回失敗後のリトライだけ成功
-- `Test-side defect`: アプリが仕様どおりであることを独立確認でき、テストだけが古い
-- `Product regression`: アプリが仕様に違反
-- `Uncertain`: 原因を確定できない
-
-`Uncertain`はリリース判定上`Product regression`と同じ扱いにしてください。
-
-テスト起因と判断しても、対象動線を手動または独立した方法で確認できるまで`PASS`にしてはいけません。
-
-### 7.3 自動テスト基盤
-
-基盤自体がレビュー対象の場合だけ、次を確認してください。
-
-- 定期実行と手動実行が可能
-- 結果JSON、HTMLレポート、traceが保存される
-- レポートにアクセス制御がある
-- 実行結果と自動解析結果が通知される
-- 失敗がFlaky、Test-side defect、Product regression/Uncertainへ分類される
-- Flakyだけが、反復検証成功後に自動マージ可能
-- Test-side defectはdraft PRまでとし、人間がレビューする
-- Product regression/Uncertainではコードを変更しない
-- 自動修復でアサーション、期待値、プロダクトコードを変更しない
-- 秘密情報を保存・通知しない
-- すべての自動処理が監査可能
-
-本依頼はレビュー専用なので、実際の修復、PR作成、マージは行わないでください。
-
-## 8. Findingの作成
-
-確認した問題だけをFindingにしてください。同じ根本原因の症状は1件にまとめ、異なる修正が必要な場合だけ分けてください。
-
-### `[Finding ID] タイトル`
-
-- Severity:
-- Priority:
-- ODC Impact:
-- ISO 25010:
-- 混入工程:
-- 信頼度:
-- 対象環境:
-- 事前条件:
-- 再現手順:
-- 実際の結果:
-- 期待結果:
-- ユーザー・事業への影響:
-- 証拠:
-- 推定原因:
-- 最小の修正方針:
-- 再確認範囲:
-
-使用値:
-
-- ODC Impact: `Capability / Usability / Performance / Reliability / Integrity-Security / Installability / Standards / Maintenance / Documentation`
-- ISO 25010: `Functional Suitability / Performance Efficiency / Compatibility / Usability / Reliability / Security / Maintainability / Portability`
-- 混入工程: `phase:requirement / phase:design / phase:implementation / phase:test / Undetermined`
-- 信頼度: `High / Medium / Low`
-
-混入工程は、根本原因として最も上流のものを1つだけ指定してください。根拠がなければ`Undetermined`としてください。
-
-証拠には、次のいずれかを含めてください。
-
-- ファイルパスと行番号
-- コマンドと終了コード
-- URL、操作、観測結果
-- エラーログ
-- スクリーンショット、trace、レスポンス
-
-## 9. リリース判定
-
-次の順番で、最初に該当した判定を採用してください。
-
-1. 重要な検証が環境・認証・仕様不足で実行できない → `BLOCKED`
-2. Critical/Major、主要ACのFAIL、Verification Gate失敗、データ破損、情報漏洩、権限逸脱、主要動線停止がある → `NO-GO`
-3. 残件がMinor/Improvementだけで、影響・回避策が明確かつステークホルダーの明示承認がある → `CONDITIONAL GO`
-4. 全AC、必須テスト、Verification Gate、スモーク、必要な回帰がPASSし、未解決Critical/Majorがない → `GO`
-5. 上記のどれにも確定できない → `BLOCKED`
-
-`UNKNOWN`、`NOT RUN`、`BLOCKED`を根拠にGOを出してはいけません。
-
-`NO-GO`または`BLOCKED`でも、最短で安全にリリースするための次の行動と再確認範囲を提示してください。
-
-## 10. 不具合分析が対象の場合のみ確認する項目
-
-バグチケットには、次を確認してください。
-
-- Severity
-- Priority
-- ODC Impact
-- ISO 25010品質特性
-- 再現手順
-- 環境
-- 修正完了時の`phase:*`ラベル
-
-`phase:*`は1チケットにつき1つとし、最も上流の根本原因を付けます。
-
-定期分析が対象の場合は、次を確認してください。
-
-- 月次: Open aging、新規Critical
-- 四半期: Severity×ODC Impact、Severity×phase、Severity×月、Reporter×Severity、Open aging×Severity
-- 年次: Severity・phase分布の再較正
-- KPI: DRE、Defect Density、Severity別MTTR、Reopen Rate、phase:test比率
-
-過去6か月超のチケットは強制的に再分類せず、直近3か月以内だけを任意の遡及対象としてください。
-
-## 11. 資料の適用判断
-
-次の資料をすべて確認対象として扱い、最終報告で`適用 / 参考 / N/A / BLOCKED`のいずれかに分類してください。同じ項目を複数分類してはいけません。
-
-### 常に適用
-
-- QA方針
-- 予測可能性に基づくテスト戦略
-- 重篤度定義
-- QAプロセス
-- 静的テスト
-- リスク分析
-- リスクプロファイリング
-- テストモデリング
-- テスト計画
-- テスト設計
-- テスト実行と結果確認
-- チャーン・エンゲージメント・不具合の因果関係
-
-### 対象の場合のみ適用
-
-- 標準QAリポジトリ
-- 自動テスト概要
-- 自動テスト基盤
-- 自動テスト設計方針
-- Playwright概要
-- Playwright環境構築
-- Cursor環境設定
-- AIエージェントによるテスト作成フロー
-- E2Eテスト失敗時の対応
-- データ駆動テスト
-- 不具合分析ガイドライン
-- 不具合分析サンプルレポート
-
-### 原則として参考
-
-- QA組織の種類と構造
-- 2026年ソフトウェアテスト業界動向
-
-### 判定基準が存在しない
-
-- 企業特殊能力と一般能力
-
-「企業特殊能力と一般能力」は資料内に具体的な判定基準がないため、内容が追加されるまでは`N/A`としてください。
-
-組織設計をレビューする場合は、規制要件、リリース頻度、プロダクト数、自動化成熟度、QA採用力、コスト、需要変動を基に、独立型・組み込み型・マトリックス型・QAギルド型・アウトソース型を評価してください。
-
-QA戦略またはAI品質をレビューする場合は、次も確認してください。
-
-- Shift Leftと本番観測によるShift Right
-- オブザーバビリティ
-- 障害時の回復性
-- AI出力の非決定性、バイアス、倫理、ガバナンス
-- QAがゲートキーパーではなく、品質と速度を両立する支援者になっているか
-
-## 12. 最終出力
-
-次の順番で出力してください。
-
-### 1. 結論
-
-- 判定: `GO / CONDITIONAL GO / NO-GO / BLOCKED`
-- テストアプローチ
-- 判定理由を3行以内
-- Severity別件数
-- `NOT RUN`と`BLOCKED`の件数
-
-### 2. 対象と根拠
-
-- 対象差分
-- 仕様正本
-- 推定仕様
-- 対象外
-- 検証環境
-- リポジトリ固有ルールとの衝突
-
-### 3. Finding
-
-Severityの高い順に記載してください。0件の場合は`Findingなし`と記載してください。
-
-### 4. 静的テスト結果
-
-| 観点 | 結果 | 証拠 | 指摘・修正文案 |
-|---|---|---|---|
-
-### 5. リスクプロファイル
-
-| 評価単位 | Severity | 発生頻度 | 予測可能性 | アプローチ | 根拠 | 必須検証 |
-|---|---|---|---|---|---|---|
-
-### 6. テストモデル・ケース・実行結果
-
-テストモデルと、指定したテストケース表を記載してください。
-
-### 7. 自動テストレビュー
-
-対象外の場合は、理由つきで`N/A`としてください。
-
-### 8. Verification Gate
-
-| コマンド・確認 | 状態 | 結果 | 終了コード | 証拠・エラー |
-|---|---|---|---|---|
-
-### 9. リリース基準
-
-| 基準 | 結果 | 根拠 |
-|---|---|---|
-
-### 10. 次の行動
-
-優先順に、担当、実施内容、再確認範囲を記載してください。
-
-### 11. 仮定・未確認事項
-
-仕様不足、環境制約、認証待ち、未確認条件を記載してください。
-
-### 12. 資料適用結果
-
-セクション11の全資料を、次のどれかに1回だけ分類してください。
-
-- 適用
-- 参考
-- N/A
-- BLOCKED
-
-各項目に理由または対応セクションを付けてください。
-
-最後に、証拠で確認できた事実だけを総括してください。「おそらく」「一般的には問題ない」などの曖昧な表現は禁止です。
+必要なら employee_freee_point_received_summaries を追加
 
