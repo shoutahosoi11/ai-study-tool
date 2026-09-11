@@ -1,3 +1,15 @@
+仕様書などからテストすべき項目を洗い出し、システムの内部構造を考慮せずに実施するテスト技法
+代表的なものに、以下のような技法があります
+同値分割法(equivalence partitioning)
+境界値分析(boundary value analysis)
+デシジョンテーブル(decision table testing)
+状態遷移テスト(state transition testing)
+ドメイン分析(domain analysis)
+ユースケーステスト(use case testing)
+組み合わせテスト(combinatorial testing)
+クラシフィケーションツリー法(classification tree method)
+原因結果グラフ法(cause-effect graphing)
+
 
 
 https://jira.atlassian.freee.co.jp/browse/APAR-4206Can't find link  あなたは図書館の管理人です。本の管理システムを作りたいと思っています。 以下の機能を実現させ、本の管理システムを作成してください。
