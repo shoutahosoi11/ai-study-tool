@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,8 +51,7 @@ func (h *UserHandler) DeleteMe(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
-		slog.Error("user_handler_error", "operation", "delete_me", "user_id", user.ID.String(), "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete account")
+		return internalError(c, "user.delete_me", err)
 	}
 
 	return c.NoContent(http.StatusNoContent)
@@ -84,8 +82,7 @@ func (h *UserHandler) SignUp(c echo.Context) error {
 		if errors.Is(err, domain.ErrAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "username already taken")
 		}
-		slog.Error("user_handler_error", "operation", "signup", "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "user.signup", err)
 	}
 
 	return c.JSON(http.StatusOK, dto.ToMeResponse(user))
@@ -112,8 +109,7 @@ func (h *UserHandler) GetUser(c echo.Context) error {
 		if errors.Is(err, domain.ErrNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
-		slog.Error("user_handler_error", "operation", "get_public_profile", "user_id", id.String(), "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "user.get_public_profile", err)
 	}
 
 	return c.JSON(http.StatusOK, dto.ToPublicUserProfileResponse(user))
@@ -143,8 +139,7 @@ func (h *UserHandler) UpdateProfile(c echo.Context) error {
 		if errors.Is(err, domain.ErrAlreadyExists) {
 			return echo.NewHTTPError(http.StatusConflict, "username already taken")
 		}
-		slog.Error("user_handler_error", "operation", "update_profile", "user_id", me.ID.String(), "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "user.update_profile", err)
 	}
 
 	return c.JSON(http.StatusOK, dto.ToMeResponse(updated))
@@ -171,8 +166,7 @@ func (h *UserHandler) UpdateQuestionSettings(c echo.Context) error {
 		if errors.Is(err, domain.ErrInvalidInput) {
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid question settings")
 		}
-		slog.Error("user_handler_error", "operation", "update_question_settings", "user_id", me.ID.String(), "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "user.update_question_settings", err)
 	}
 
 	return c.JSON(http.StatusOK, dto.ToMeResponse(updated))

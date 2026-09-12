@@ -49,6 +49,10 @@ type stubQuestionSyncUsecase struct {
 	evaluatedQuestionID     string
 }
 
+func (s *stubQuestionSyncUsecase) GetQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error) {
+	return s.SyncQuestionStock(ctx, user)
+}
+
 func (s *stubQuestionSyncUsecase) SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error) {
 	if s.syncQuestionStock != nil {
 		return s.syncQuestionStock(ctx, user)

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -50,7 +51,7 @@ func (m *SessionAuthMiddleware) Authenticate(next echo.HandlerFunc) echo.Handler
 			return echo.NewHTTPError(http.StatusUnauthorized, "missing session cookie")
 		}
 
-		token, err := m.verifier.VerifySessionCookieAndCheckRevoked(c.Request().Context(), cookie.Value)
+		token, err := m.verifier.VerifySessionCookie(c.Request().Context(), cookie.Value)
 		if err != nil {
 			return firebaseSessionCookieError(err)
 		}
@@ -79,5 +80,6 @@ func firebaseSessionCookieError(err error) *echo.HTTPError {
 	if isFirebaseSessionCookieClientError(err) {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid, expired, or revoked session")
 	}
+	slog.Error("firebase_session_cookie_verify_failed", "error", err.Error())
 	return echo.NewHTTPError(http.StatusServiceUnavailable, "authentication service unavailable")
 }

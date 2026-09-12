@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { syncQuestionStock, type QuestionStockBook, type QuestionStockSyncResponse } from '../api/questions'
+import { getApiErrorStatus } from '../api/errors'
+import { getQuestionStock, syncQuestionStock, type QuestionStockBook, type QuestionStockSyncResponse } from '../api/questions'
 
 type QuestionSyncStatus = 'idle' | 'syncing' | 'done' | 'error'
 
@@ -12,6 +13,7 @@ export type QuestionSyncSnapshot = QuestionStockSyncResponse & {
 const STORAGE_KEY = 'ai-study-tool:question-sync:v1'
 export const QUESTION_SYNC_EVENT = 'ai-study-tool:question-sync'
 const QUESTION_SYNC_POLL_INTERVAL_MS = 30_000
+const QUESTION_SYNC_POLL_MAX_INTERVAL_MS = 300_000
 
 function emptySnapshot(): QuestionSyncSnapshot {
   return {
@@ -115,6 +117,13 @@ export function useQuestionSync(options: { enabled: boolean }) {
 
   const runningRef = useRef(false)
   const startedRef = useRef(false)
+  const snapshotRef = useRef(snapshot)
+  snapshotRef.current = snapshot
+
+  // Polling is paused after a 429 or when the daily generation limit is
+  // reached, until the user explicitly triggers a sync again.
+  const pollingStoppedRef = useRef(false)
+  const pollDelayRef = useRef(QUESTION_SYNC_POLL_INTERVAL_MS)
 
   const runSync = useCallback(
     async function () {
@@ -123,8 +132,10 @@ export function useQuestionSync(options: { enabled: boolean }) {
       }
 
       runningRef.current = true
+      pollingStoppedRef.current = false
+      pollDelayRef.current = QUESTION_SYNC_POLL_INTERVAL_MS
       const syncingSnapshot: QuestionSyncSnapshot = {
-        ...snapshot,
+        ...snapshotRef.current,
         status: 'syncing',
         message: '問題ストックを確認しています...',
       }
@@ -133,6 +144,9 @@ export function useQuestionSync(options: { enabled: boolean }) {
 
       try {
         const response = await syncQuestionStock()
+        if (response.skipped_due_to_daily_limit) {
+          pollingStoppedRef.current = true
+        }
         const nextSnapshot: QuestionSyncSnapshot = {
           ...response,
           status: 'done',
@@ -142,8 +156,11 @@ export function useQuestionSync(options: { enabled: boolean }) {
         setSnapshot(nextSnapshot)
         writeQuestionSyncSnapshot(nextSnapshot)
       } catch (error) {
+        if (getApiErrorStatus(error) === 429) {
+          pollingStoppedRef.current = true
+        }
         const nextSnapshot: QuestionSyncSnapshot = {
-          ...snapshot,
+          ...snapshotRef.current,
           status: 'error',
           message: '問題ストックの同期に失敗しました',
         }
@@ -154,7 +171,49 @@ export function useQuestionSync(options: { enabled: boolean }) {
         runningRef.current = false
       }
     },
-    [enabled, snapshot]
+    [enabled]
+  )
+
+  // Read-only refresh used by polling (interval + window focus). Never throws.
+  const runPoll = useCallback(
+    async function () {
+      if (!enabled || runningRef.current || pollingStoppedRef.current) {
+        return
+      }
+
+      runningRef.current = true
+      try {
+        const response = await getQuestionStock()
+        pollDelayRef.current = QUESTION_SYNC_POLL_INTERVAL_MS
+        if (response.skipped_due_to_daily_limit) {
+          pollingStoppedRef.current = true
+        }
+        const nextSnapshot: QuestionSyncSnapshot = {
+          ...response,
+          status: 'done',
+          message: buildDoneMessage(response),
+          synced_at: new Date().toISOString(),
+        }
+        setSnapshot(nextSnapshot)
+        writeQuestionSyncSnapshot(nextSnapshot)
+      } catch (error) {
+        if (getApiErrorStatus(error) === 429) {
+          pollingStoppedRef.current = true
+        } else {
+          pollDelayRef.current = Math.min(pollDelayRef.current * 2, QUESTION_SYNC_POLL_MAX_INTERVAL_MS)
+        }
+        const nextSnapshot: QuestionSyncSnapshot = {
+          ...snapshotRef.current,
+          status: 'error',
+          message: '問題ストックの同期に失敗しました',
+        }
+        setSnapshot(nextSnapshot)
+        writeQuestionSyncSnapshot(nextSnapshot)
+      } finally {
+        runningRef.current = false
+      }
+    },
+    [enabled]
   )
 
   useEffect(
@@ -172,32 +231,43 @@ export function useQuestionSync(options: { enabled: boolean }) {
       }
 
       startedRef.current = true
-      void runSync()
+      runSync().catch(function () {})
     },
     [enabled, runSync]
   )
 
   useEffect(
     function () {
-      if (!enabled || !hasPreparingBooks(snapshot.books)) {
+      if (!enabled || !hasPreparingBooks(snapshot.books) || pollingStoppedRef.current) {
         return
       }
 
-      function handleFocus() {
-        void runSync()
+      let cancelled = false
+      let timerId = 0
+
+      function schedule() {
+        timerId = window.setTimeout(function () {
+          runPoll().then(function () {
+            if (!cancelled && !pollingStoppedRef.current) {
+              schedule()
+            }
+          })
+        }, pollDelayRef.current)
       }
 
-      const intervalId = window.setInterval(function () {
-        void runSync()
-      }, QUESTION_SYNC_POLL_INTERVAL_MS)
+      function handleFocus() {
+        void runPoll()
+      }
 
+      schedule()
       window.addEventListener('focus', handleFocus)
       return function () {
-        window.clearInterval(intervalId)
+        cancelled = true
+        window.clearTimeout(timerId)
         window.removeEventListener('focus', handleFocus)
       }
     },
-    [enabled, runSync, snapshot.books]
+    [enabled, runPoll, snapshot.books]
   )
 
   return {

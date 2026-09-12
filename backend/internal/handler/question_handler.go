@@ -37,6 +37,7 @@ type QuestionUsecase interface {
 
 type QuestionSyncUsecase interface {
 	SyncQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
+	GetQuestionStock(ctx context.Context, user *domain.User) (*usecase.SyncQuestionStockResult, error)
 	EvaluateBookAfterAnswer(ctx context.Context, user *domain.User, questionID string) error
 }
 
@@ -209,6 +210,10 @@ func (h *QuestionHandler) SyncStock(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
+	return c.JSON(http.StatusOK, buildSyncQuestionStockResponse(result))
+}
+
+func buildSyncQuestionStockResponse(result *usecase.SyncQuestionStockResult) dto.SyncQuestionStockResponse {
 	response := dto.SyncQuestionStockResponse{
 		Books:                  make([]dto.SyncQuestionStockBookResponse, 0, len(result.Books)),
 		QueuedCount:            result.QueuedCount,
@@ -224,8 +229,27 @@ func (h *QuestionHandler) SyncStock(c echo.Context) error {
 			Preparing:  book.Preparing,
 		})
 	}
+	return response
+}
 
-	return c.JSON(http.StatusOK, response)
+// GetStock serves the polling clients: identical response shape to SyncStock
+// but read-only, so it neither creates jobs nor consumes the generation rate
+// budget.
+func (h *QuestionHandler) GetStock(c echo.Context) error {
+	user, err := h.currentUser(c)
+	if err != nil {
+		return err
+	}
+
+	result, err := h.questionSyncUsecase.GetQuestionStock(c.Request().Context(), user)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return internalError(c, "question.get_stock", err)
+	}
+
+	return c.JSON(http.StatusOK, buildSyncQuestionStockResponse(result))
 }
 
 func (h *QuestionHandler) ManualGenerate(c echo.Context) error {

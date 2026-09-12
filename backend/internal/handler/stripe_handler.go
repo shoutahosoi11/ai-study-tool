@@ -44,9 +44,10 @@ func (h *StripeHandler) CreateCheckoutSession(c echo.Context) error {
 	sessionURL, err := h.billingUsecase.CreateCheckoutSession(c.Request().Context(), user, email)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidInput) {
+			middleware.RequestLogger(c).Error("handler_error", "operation", "stripe.checkout_unconfigured", "error", err.Error())
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "stripe is not configured")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return internalError(c, "stripe.create_checkout_session", err)
 	}
 
 	return c.JSON(http.StatusOK, dto.CheckoutSessionResponse{URL: sessionURL})
@@ -59,7 +60,13 @@ func (h *StripeHandler) HandleWebhook(c echo.Context) error {
 	}
 
 	if err := h.billingUsecase.HandleWebhook(c.Request().Context(), payload, c.Request().Header.Get("Stripe-Signature")); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid webhook")
+		if errors.Is(err, domain.ErrInvalidInput) {
+			middleware.RequestLogger(c).Warn("stripe_webhook_rejected", "error", err.Error())
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid webhook")
+		}
+		// Processing failure (e.g. DB outage): return 500 so Stripe retries the
+		// event instead of dropping a paid-but-not-upgraded state on the floor.
+		return internalError(c, "stripe.handle_webhook", err)
 	}
 
 	return c.NoContent(http.StatusOK)

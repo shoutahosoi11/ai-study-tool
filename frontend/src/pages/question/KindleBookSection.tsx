@@ -153,6 +153,9 @@ export function KindleBookSection({ onQuestionsGenerated }: Props) {
 
   const previousSyncedAtRef = useRef('')
   const progressRefreshKeyRef = useRef('')
+  const progressFetchTimerRef = useRef<number | null>(null)
+  const lastProgressFetchAtRef = useRef(0)
+  const wasSyncingRef = useRef(false)
   const questionBookStatusMap = new Map(
     (questionSyncSnapshot.books ?? []).map(function (book) {
       return [book.book_key, book] as const
@@ -206,12 +209,33 @@ export function KindleBookSection({ onQuestionsGenerated }: Props) {
     [syncSnapshot?.synced_at]
   )
 
+  useEffect(function () {
+    return function () {
+      if (progressFetchTimerRef.current !== null) {
+        window.clearTimeout(progressFetchTimerRef.current)
+        progressFetchTimerRef.current = null
+      }
+    }
+  }, [])
+
   useEffect(
     function () {
       if (syncSnapshot?.status !== 'syncing') {
         progressRefreshKeyRef.current = ''
+        if (progressFetchTimerRef.current !== null) {
+          window.clearTimeout(progressFetchTimerRef.current)
+          progressFetchTimerRef.current = null
+        }
+        if (wasSyncingRef.current) {
+          // Always refresh once when a sync finishes.
+          wasSyncingRef.current = false
+          lastProgressFetchAtRef.current = Date.now()
+          fetchSavedBooks(true)
+        }
         return
       }
+
+      wasSyncingRef.current = true
 
       const nextKey = [
         syncSnapshot.processed_book_count ?? 0,
@@ -225,7 +249,24 @@ export function KindleBookSection({ onQuestionsGenerated }: Props) {
       }
 
       progressRefreshKeyRef.current = nextKey
-      fetchSavedBooks(true)
+
+      // Debounce progress-driven refreshes to at most one fetch per 2 seconds.
+      const elapsed = Date.now() - lastProgressFetchAtRef.current
+      if (elapsed >= 2_000) {
+        lastProgressFetchAtRef.current = Date.now()
+        fetchSavedBooks(true)
+        return
+      }
+
+      if (progressFetchTimerRef.current !== null) {
+        return
+      }
+
+      progressFetchTimerRef.current = window.setTimeout(function () {
+        progressFetchTimerRef.current = null
+        lastProgressFetchAtRef.current = Date.now()
+        fetchSavedBooks(true)
+      }, 2_000 - elapsed)
     },
     [
       syncSnapshot?.failed_book_count,

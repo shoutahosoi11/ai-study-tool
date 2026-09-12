@@ -172,9 +172,11 @@ export function MobileKindleAutoSync({ enabled, onImported, onStatusChange }: Pr
       finish({
         state: failedRef.current === books.length ? 'error' : 'done',
         message:
-          syncedRef.current > 0
-            ? `モバイル同期が完了しました。${syncedRef.current}冊を更新しました`
-            : 'モバイル同期が完了しました。新規ハイライトはありませんでした',
+          failedRef.current > 0
+            ? `モバイル同期が完了しました（${failedRef.current}冊は同期に失敗しました）`
+            : syncedRef.current > 0
+              ? `モバイル同期が完了しました。${syncedRef.current}冊を更新しました`
+              : 'モバイル同期が完了しました。新規ハイライトはありませんでした',
       })
       return
     }
@@ -271,6 +273,7 @@ export function MobileKindleAutoSync({ enabled, onImported, onStatusChange }: Pr
           await reloadSyncedBooks()
         }
       } catch (error) {
+        console.warn('mobile.kindleAutoSync.import.failed', error)
         if (!isApiStatus(error, 422)) {
           failedRef.current += 1
         }

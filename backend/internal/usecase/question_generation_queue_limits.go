@@ -51,16 +51,53 @@ func warnDangerousQuestionJobQueueLimits(limits questionGenerationQueueLimits) {
 	}
 }
 
-func ensureQuestionJobQueueDepth(ctx context.Context, repo domain.QuestionGenerationJobRepository, limits questionGenerationQueueLimits, userID uuid.UUID, bookKey string) error {
-	if repo == nil {
+// questionJobQueueDepthCounters carries the user/global pending counts that do
+// not vary per book, so a sync pass over N candidate books issues them once
+// instead of N times. Jobs created during the pass are added via record().
+type questionJobQueueDepthCounters struct {
+	userPending   int
+	globalPending int
+	loaded        bool
+}
+
+func (c *questionJobQueueDepthCounters) load(ctx context.Context, repo domain.QuestionGenerationJobRepository, userID uuid.UUID) error {
+	if c.loaded {
 		return nil
 	}
-
 	userPending, err := repo.CountPendingByUserID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("question job queue depth: count user pending: %w", err)
 	}
-	if userPending >= limits.MaxPendingPerUser {
+	globalPending, err := repo.CountPending(ctx)
+	if err != nil {
+		return fmt.Errorf("question job queue depth: count global pending: %w", err)
+	}
+	c.userPending = userPending
+	c.globalPending = globalPending
+	c.loaded = true
+	return nil
+}
+
+func (c *questionJobQueueDepthCounters) record() {
+	c.userPending++
+	c.globalPending++
+}
+
+func ensureQuestionJobQueueDepth(ctx context.Context, repo domain.QuestionGenerationJobRepository, limits questionGenerationQueueLimits, counters *questionJobQueueDepthCounters, userID uuid.UUID, bookKey string) error {
+	if repo == nil {
+		return nil
+	}
+
+	if counters == nil {
+		counters = &questionJobQueueDepthCounters{}
+	}
+	if err := counters.load(ctx, repo, userID); err != nil {
+		return err
+	}
+	if counters.userPending >= limits.MaxPendingPerUser {
+		return domain.ErrQuestionQueueDepthExceeded
+	}
+	if counters.globalPending >= limits.MaxPendingGlobal {
 		return domain.ErrQuestionQueueDepthExceeded
 	}
 
@@ -69,14 +106,6 @@ func ensureQuestionJobQueueDepth(ctx context.Context, repo domain.QuestionGenera
 		return fmt.Errorf("question job queue depth: count book pending: %w", err)
 	}
 	if bookPending >= limits.MaxPendingPerBook {
-		return domain.ErrQuestionQueueDepthExceeded
-	}
-
-	globalPending, err := repo.CountPending(ctx)
-	if err != nil {
-		return fmt.Errorf("question job queue depth: count global pending: %w", err)
-	}
-	if globalPending >= limits.MaxPendingGlobal {
 		return domain.ErrQuestionQueueDepthExceeded
 	}
 

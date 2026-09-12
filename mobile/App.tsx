@@ -115,6 +115,8 @@ type QuizEntry = {
 type QuizSummaryStep = 'review' | 'share'
 type QuestionListKind = 'saved' | 'incorrect' | null
 
+const FOREGROUND_REFRESH_MIN_INTERVAL_MS = 5 * 60 * 1000
+
 export default function App() {
   const shareIntentEnabled = Platform.OS !== 'web'
   const { isReady, hasShareIntent, shareIntent, resetShareIntent, error: shareIntentError } = useShareIntent({
@@ -146,6 +148,7 @@ export default function App() {
   const [lastShareSignature, setLastShareSignature] = useState('')
   const [activeTab, setActiveTab] = useState<AppTab>('timeline')
   const mainScrollRef = useRef<ScrollView | null>(null)
+  const lastForegroundRefreshAtRef = useRef<number>(0)
 
   const [savedHighlights, setSavedHighlights] = useState<HighlightResponse[]>([])
   const [syncedKindleBooks, setSyncedKindleBooks] = useState<KindleBook[]>([])
@@ -448,8 +451,14 @@ export default function App() {
         console.debug('mobile.share.appState.active')
         requestPendingShareIntent()
         if (authUser) {
-          void loadSyncedKindleBooks()
-          void loadQuestionStock({ silent: true })
+          const now = Date.now()
+          if (now - lastForegroundRefreshAtRef.current >= FOREGROUND_REFRESH_MIN_INTERVAL_MS) {
+            Promise.all([loadSyncedKindleBooks(), loadQuestionStock({ silent: true })])
+              .then(function () {
+                lastForegroundRefreshAtRef.current = Date.now()
+              })
+              .catch(function () {})
+          }
         }
       }
     })
@@ -2048,13 +2057,13 @@ function toReadableError(error: unknown, fallback: string): string {
     if (message === 'questions are still preparing') return '問題はまだ準備中です'
     if (message === 'question generation failed') return '問題の準備に失敗しました'
     if (message === 'source text is unavailable') return 'この本からはまだ問題を作れません'
-    return message
+    return __DEV__ ? `${fallback}（${message}）` : fallback
   }
   if (isApiError(error)) {
     return fallback
   }
   if (error instanceof Error && error.message) {
-    return error.message
+    return __DEV__ ? `${fallback}（${error.message}）` : fallback
   }
   return fallback
 }

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,7 +52,7 @@ func TestStripeWebhookUsesRawBodyAndSignatureHeader(t *testing.T) {
 
 func TestStripeWebhookRejectsInvalidSignature(t *testing.T) {
 	e := echo.New()
-	handler := NewStripeHandler(&stubStripeBillingUsecase{err: errors.New("bad signature")}, nil)
+	handler := NewStripeHandler(&stubStripeBillingUsecase{err: fmt.Errorf("%w: bad signature", domain.ErrInvalidInput)}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/stripe", strings.NewReader(`{"id":"evt_1"}`))
 	req.Header.Set("Stripe-Signature", "bad")
 	rec := httptest.NewRecorder()
@@ -64,5 +65,24 @@ func TestStripeWebhookRejectsInvalidSignature(t *testing.T) {
 	httpErr, ok := err.(*echo.HTTPError)
 	if !ok || httpErr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %#v", err)
+	}
+}
+
+func TestStripeWebhookProcessingFailureReturns500(t *testing.T) {
+	e := echo.New()
+	handler := NewStripeHandler(&stubStripeBillingUsecase{err: errors.New("db unavailable")}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/stripe", strings.NewReader(`{"id":"evt_1"}`))
+	req.Header.Set("Stripe-Signature", "t=1,v1=sig")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := handler.HandleWebhook(c)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	// Processing failures must be 500 so Stripe retries the event.
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok || httpErr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %#v", err)
 	}
 }

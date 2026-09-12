@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"log"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -22,10 +21,7 @@ func resolveCurrentUser(c echo.Context, userUsecase usecase.UserUsecaseInterface
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
-		if logPrefix != "" {
-			log.Printf("%s currentUser error: %v", logPrefix, err)
-		}
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return nil, internalError(c, logPrefix+".resolve_current_user", err)
 	}
 
 	return user, nil

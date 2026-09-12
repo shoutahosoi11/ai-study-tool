@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -61,7 +62,7 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 		}
 	}
 
-	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, user.ID, bookKey); err != nil {
+	if err := ensureQuestionJobQueueDepth(ctx, u.jobRepo, u.queueLimits, nil, user.ID, bookKey); err != nil {
 		return nil, err
 	}
 
@@ -85,7 +86,13 @@ func (u *ManualGenerationUsecase) Generate(ctx context.Context, user *domain.Use
 	if u.taskEnqueuer == nil {
 		return job, nil
 	}
-	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, user.ID); err != nil {
+	if err := u.taskEnqueuer.EnqueueQuestionGeneration(ctx, job.ID, user.ID, job.RetryCount); err != nil {
+		slog.Error("question_generation_event=enqueue_failed",
+			"source", "manual",
+			"job_id", job.ID.String(),
+			"user_id", user.ID.String(),
+			"error", err.Error(),
+		)
 		if markErr := u.jobRepo.MarkEnqueueFailed(ctx, job.ID, user.ID, err.Error()); markErr != nil {
 			return nil, fmt.Errorf("manual generation usecase: mark enqueue failed: %w", markErr)
 		}

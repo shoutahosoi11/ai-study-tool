@@ -12,7 +12,7 @@ type AuthToken struct {
 }
 
 type SessionVerifier interface {
-	VerifySessionCookieAndCheckRevoked(ctx context.Context, sessionCookie string) (*AuthToken, error)
+	VerifySessionCookie(ctx context.Context, sessionCookie string) (*AuthToken, error)
 }
 
 type SessionCookieManager interface {

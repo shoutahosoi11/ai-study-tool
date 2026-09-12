@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,9 +34,9 @@ func (u *HighlightImportJobUsecase) ProcessAll(ctx context.Context) error {
 	// stale な processing を queued に戻す
 	cutoff := time.Now().UTC().Add(-domain.ImportQueueStaleTimeout)
 	if requeued, err := u.queueRepo.RequeueStale(ctx, cutoff); err != nil {
-		log.Printf("highlight import job: requeue stale error: %v", err)
+		slog.Error("highlight_import_requeue_stale_failed", "error", err.Error())
 	} else if requeued > 0 {
-		log.Printf("highlight import job: requeued %d stale items", requeued)
+		slog.Info("highlight_import_requeued_stale", "count", requeued)
 	}
 
 	processed := 0
@@ -51,13 +51,13 @@ func (u *HighlightImportJobUsecase) ProcessAll(ctx context.Context) error {
 
 		for _, item := range batch {
 			if err := u.processOne(ctx, item); err != nil {
-				log.Printf("highlight import job: process item %s error: %v", item.ID, err)
+				slog.Error("highlight_import_item_failed", "item_id", item.ID, "error", err.Error())
 			}
 		}
 		processed += len(batch)
 	}
 
-	log.Printf("highlight import job: processed %d items", processed)
+	slog.Info("highlight_import_processed", "count", processed)
 	return nil
 }
 
@@ -85,13 +85,13 @@ func (u *HighlightImportJobUsecase) processClaimed(ctx context.Context, item *do
 			return u.fail(ctx, item, fmt.Sprintf("bulk upsert (max retry reached): %v", err))
 		}
 		if requeueErr := u.queueRepo.RequeueWithRetry(ctx, item.ID, err.Error()); requeueErr != nil {
-			log.Printf("highlight import job: requeue error for %s: %v", item.ID, requeueErr)
+			slog.Error("highlight_import_requeue_failed", "item_id", item.ID, "error", requeueErr.Error())
 		}
 		return nil
 	}
 
 	if err := u.queueRepo.MarkCompleted(ctx, item.ID); err != nil {
-		log.Printf("highlight import job: mark completed error for %s: %v", item.ID, err)
+		slog.Error("highlight_import_mark_completed_failed", "item_id", item.ID, "error", err.Error())
 	}
 	return nil
 }
@@ -109,7 +109,7 @@ func (u *HighlightImportJobUsecase) deserializePayload(item *domain.HighlightImp
 
 func (u *HighlightImportJobUsecase) fail(ctx context.Context, item *domain.HighlightImportQueue, reason string) error {
 	if err := u.queueRepo.MarkFailed(ctx, item.ID, reason); err != nil {
-		log.Printf("highlight import job: mark failed error for %s: %v", item.ID, err)
+		slog.Error("highlight_import_mark_failed_failed", "item_id", item.ID, "error", err.Error())
 	}
 	return fmt.Errorf("queue_id=%s failed: %s", item.ID, reason)
 }

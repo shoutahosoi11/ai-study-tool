@@ -30,6 +30,9 @@ const (
 	MinHighlightsForRefresh = 5
 	MaxHighlightsPerJob     = 10
 	JobMaxRetryCount        = 3
+	// JobStaleProcessingTimeout is how long a job may sit in processing before
+	// it is considered orphaned by a dead worker and becomes reclaimable.
+	JobStaleProcessingTimeout = 15 * time.Minute
 )
 
 type QuestionGenerationJob struct {
@@ -62,6 +65,8 @@ type QuestionGenerationJobRepository interface {
 	ListQueuedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	ListEnqueueFailedByUserID(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	ClaimQueued(ctx context.Context, jobID, userID uuid.UUID) (*QuestionGenerationJob, bool, error)
+	RequeueStaleProcessing(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
+	FailExhaustedStaleProcessing(ctx context.Context, userID uuid.UUID, limit int) ([]*QuestionGenerationJob, error)
 	MarkQueued(ctx context.Context, jobID, userID uuid.UUID) error
 	MarkCompleted(ctx context.Context, jobID, userID uuid.UUID) error
 	MarkEnqueueFailed(ctx context.Context, jobID, userID uuid.UUID, lastError string) error
@@ -69,5 +74,9 @@ type QuestionGenerationJobRepository interface {
 }
 
 type QuestionGenerationTaskEnqueuer interface {
-	EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID) error
+	// attempt is the job's retry_count at enqueue time. It becomes part of the
+	// Cloud Tasks task name: reusing one fixed name per job made re-enqueues
+	// after a stale requeue (or an admin retry) dedup against the completed
+	// original task and silently no-op for up to ~1 hour.
+	EnqueueQuestionGeneration(ctx context.Context, jobID uuid.UUID, userID uuid.UUID, attempt int) error
 }

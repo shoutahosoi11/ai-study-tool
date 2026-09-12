@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ func (f *fakeSocialRepository) ListComments(ctx context.Context, input domain.Li
 
 func requireSocialValidationError(t *testing.T, err error) {
 	t.Helper()
-	if err == nil || !strings.HasPrefix(err.Error(), "validation:") {
+	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
 }
