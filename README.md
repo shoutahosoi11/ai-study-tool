@@ -198,37 +198,13 @@ python3 scripts/secret_scan.py
 
 ## ドキュメント一覧
 
-ポートフォリオとデモ:
-
-- [アーキテクチャ概要](docs/architecture-summary.md)
-- [ポートフォリオメモ](docs/portfolio.md)
-- [面接用メモ](docs/interview-notes.md)
-- [デモ台本](docs/demo-script.md)
-- [スクリーンショットチェックリスト](docs/screenshots.md)
-- [今後のロードマップ](docs/future-roadmap.md)
-
-セキュリティ:
-
-- [セキュリティアーキテクチャ](docs/security-architecture.md)
-- [クライアントセキュリティモデル](docs/security-clients.md)
-- [セキュリティ runbook](docs/security-runbook.md)
-- [Admin Dashboard 運用](docs/admin-dashboard.md)
-
-運用とリリース:
-
-- [Cloud Armor 運用計画](docs/ops-cloud-armor.md)
-- [監視とアラート計画](docs/ops-monitoring-alerts.md)
-- [本番準備チェックリスト](docs/production-readiness-checklist.md)
-- [本番環境と secret](docs/env-production.md)
-- [デプロイ / rollback runbook](docs/deploy-runbook.md)
-- [smoke test チェックリスト](docs/smoke-test.md)
-- [QA チェックリスト](docs/qa-checklist.md)
+運用・設計資料はリポジトリ外のローカルアーカイブで管理しています。
+`docs/` は Git 管理対象外です。
 
 クライアントとテスト:
 
 - [拡張機能 README](extension/README.md)
 - [Extension Store 準備](extension/STORE_READINESS.md)
-- [Mobile リリース準備](docs/mobile-release-readiness.md)
 - [E2E テストガイド](e2e/README.md)
 - [k6 負荷テスト](loadtest/k6/README.md)
 
@@ -240,5 +216,3 @@ python3 scripts/secret_scan.py
 - Chrome Web Store の最終スクリーンショット、store copy、review assets がまだ必要です。
 - 実運用の alert routing、dashboard、on-call process は環境ごとの設定が必要です。
 - Spaced repetition は現在の復習フローからさらに改善できます。
-
-優先順位付きの計画は [今後のロードマップ](docs/future-roadmap.md) を参照してください。
