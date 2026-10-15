@@ -37,3 +37,9 @@ reasoning/
 .env*
 !.env.example
 /docs/
+/AGENTS.md
+/CLAUDE.md
+/.claude/skills/
+/extension/STORE_READINESS.md
+/infra/cloud-armor.example.yaml
+/infra/monitoring-alerts.example.yaml
