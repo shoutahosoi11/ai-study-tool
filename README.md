@@ -204,7 +204,6 @@ python3 scripts/secret_scan.py
 クライアントとテスト:
 
 - [拡張機能 README](extension/README.md)
-- [Extension Store 準備](extension/STORE_READINESS.md)
 - [E2E テストガイド](e2e/README.md)
 - [k6 負荷テスト](loadtest/k6/README.md)
 
