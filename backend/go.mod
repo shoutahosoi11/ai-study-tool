@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	cloud.google.com/go/cloudtasks v1.18.0
-	firebase.google.com/go/v4 v4.20.0
+	firebase.google.com/go/v4 v4.21.0
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.15.4
