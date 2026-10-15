@@ -12,13 +12,9 @@ Web・Mobile・Extension を Go 製バックエンドへ接続し、認証、取
 
 ## 主な機能
 
-- Web / Mobile ユーザー向け Firebase Auth ログイン。
 - Kindle Notebook のハイライトを取り込む Chrome 拡張機能のペアリングフロー。
 - 取り込んだハイライトからの AI 問題生成。
 - 解答、復習、間違えた問題、保存済み問題の学習フロー。
-- プレミアム購読と報酬トークンモデル。
-- 運用確認と限定的なサポート操作のための Admin Dashboard。
-- セキュリティと運用の強化: セッション Cookie、署名付き CSRF、App Check、スコープ付き拡張トークン、予算制限、secret scan、セキュリティヘッダ、E2E smoke test。
 
 ## 技術構成
 
@@ -55,10 +51,6 @@ handler -> usecase -> domain <- infrastructure / repository
 - `domain`: 業務上の型・定数・エラーと、永続化や外部サービスの interface。
 - `infrastructure` / `repository`: PostgreSQL、Firebase、LLM、Stripe、Cloud Tasks などの外部 I/O。
 - `di`: interface と具体的な実装の組み立て。
-
-この分離により、usecase にテスト用実装を渡し、DB やネットワークに依存せず業務ルールを検証できます。AI を使った開発でも変更箇所の責務を絞りやすく、外部サービスの変更を業務ロジックへ広げにくくすることが狙いです。一方、interface・DTO・依存の組み立てが必要になるため、小さな機能にも一定の実装量がかかります。
-
-現時点では単一の Go バックエンドとして運用する構成です。マイクロサービスの分散通信や個別デプロイを導入するより、モジュール境界を保ちながら開発・検証できることを優先しています。
 
 問題生成は、取り込んだテキストを保存し、生成ジョブを作成して Cloud Tasks から HTTP worker を呼び、生成結果を保存する流れです。API リクエストから重い LLM 処理を切り離し、ジョブ状態と予算を確認しながら処理します。
 
@@ -268,11 +260,6 @@ cd e2e && npm run test
 ```bash
 python3 scripts/secret_scan.py
 ```
-
-## ドキュメント
-
-運用・設計資料はリポジトリ外のローカルアーカイブで管理しています。
-`docs/` は Git 管理対象外です。
 
 ## 制限事項 / 今後の作業
 
