@@ -12,7 +12,7 @@ Web・Mobile・Extension を Go 製バックエンドへ接続し、認証、取
 
 ## 主な機能
 
-- Kindle Notebook のハイライトを取り込む Chrome 拡張機能のペアリングフロー。
+- Chrome 拡張機能によってKindle Notebook のハイライトを取り込む
 - 取り込んだハイライトからの AI 問題生成。
 - 解答、復習、間違えた問題、保存済み問題の学習フロー。
 
@@ -80,7 +80,6 @@ Go + Echo は、AI 開発アプリのバックエンドをシンプルかつ堅�
 - **Cloud Run 上の単一バイナリ**。Dockerfile は静的バイナリを 1 つだけ作るため、イメージが小さく、起動が速く、メモリ使用量を読みやすくできます。ゼロスケール運用で重要です。
 - **`database/sql` の接続プール**。Cloud Run は一気に多数インスタンスを立ち上げることがあります。`MaxOpenConns`、`MaxIdleConns` を明示し、Neon への接続スパイクを抑えます。
 - **高速なコンパイルとビルド時エラー**。型や import の問題を早い段階で潰せます。
-- **後方互換性が強い**。長期運用でのアップグレード負荷を抑えられます。
 
 ### React + React Native + Expo
 
@@ -90,13 +89,6 @@ Web と Mobile は TypeScript、React の状態管理、API 設計の考え方�
 
 Mobile アプリでは Expo を使っています。共有シート、端末 API 連携、ビルドツールを初期段階から深いネイティブ設定なしで扱えるため、ハイライト取り込み、問題フロー、課金の検証可能な状態へ早く到達できます。
 
-### Gemini API
-
-Gemini はコンテキストウィンドウが広大です。複数のハイライトをまとめて送信し、1 回の API 呼び出しで複数問題を生成できます。ハイライトごとに 1 回呼び出す方式より、レイテンシとコストを抑えられます。
-
-また、Google の検索結果を利用する grounding と親和性があり、将来的にリアルタイム情報を取り入れた問題生成や解説生成へ拡張しやすい点も選定理由です。現行の主要フローでは、コストと再現性を優先し、取り込んだハイライト本文を中心に問題を生成します。
-
-バックエンドには provider adapter 層 (`infrastructure/gemini`, `infrastructure/openai`) があり、usecase logic を変えずに LLM provider の差し替えや併用ができます。
 
 ### Cloud Run + Cloud Tasks
 
@@ -178,38 +170,6 @@ Cloud Run へのデプロイ workflow は、必要な環境変数・secret 参�
 
 デモでは、実メールアドレス、secret、生 token、cookie、webhook payload、SSV query string、prompt、ハイライト本文を表示しないでください。
 
-## ローカル開発
-
-バックエンド:
-
-```bash
-cd backend
-go run ./cmd/main.go
-```
-
-フロントエンド:
-
-```bash
-cd frontend
-npm ci
-npm run dev
-```
-
-拡張機能:
-
-```bash
-cd extension
-npm ci
-npm run build
-```
-
-モバイル:
-
-```bash
-cd mobile
-npm ci
-npx expo start --dev-client --lan --port 8081
-```
 
 データベース:
 
@@ -221,44 +181,7 @@ npx expo start --dev-client --lan --port 8081
 
 Cloud Tasks を使う非同期生成は、キュー・worker の URL・呼び出し認証の設定が必要です。アプリを起動しただけで、本番サービスとの連携まで完了するわけではありません。
 
-物理端末の Mobile では、`EXPO_PUBLIC_API_BASE_URL` に Mac の LAN アドレスを設定し、base path として `/api/v1` を含めてください。
-
-## テストコマンド
-
-バックエンド:
-
-```bash
-cd backend && go test ./... && go build ./...
-```
-
-フロントエンド:
-
-```bash
-cd frontend && npm run typecheck && npm test && npm run build
-```
-
-拡張機能:
-
-```bash
-cd extension && npm run typecheck && npm test && npm run build
-```
-
-モバイル:
-
-```bash
-cd mobile && npm run typecheck && npm test
-```
-
-E2E:
-
-```bash
-cd e2e && npm run test
-```
-
-セキュリティスキャン:
-
-```bash
-python3 scripts/secret_scan.py
+物理端末の Mobile では、`EXPO_PUBLIC_API_BASE_URL` に Mac の LAN アドレスを設定し、base path として `/api/v1` を含めて
 ```
 
 ## 制限事項 / 今後の作業
