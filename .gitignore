@@ -36,3 +36,4 @@ reasoning/
 !.dev.vars.example
 .env*
 !.env.example
+/docs/
