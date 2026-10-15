@@ -43,3 +43,9 @@ reasoning/
 /extension/STORE_READINESS.md
 /infra/cloud-armor.example.yaml
 /infra/monitoring-alerts.example.yaml
+/backend/db/migrations/README.md
+/e2e/README.md
+/extension/README.md
+/kindle-highlights-extension/README.md
+/loadtest/k6/README.md
+/mobile/README.md

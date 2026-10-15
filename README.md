@@ -196,16 +196,10 @@ cd e2e && npm run test
 python3 scripts/secret_scan.py
 ```
 
-## ドキュメント一覧
+## ドキュメント
 
 運用・設計資料はリポジトリ外のローカルアーカイブで管理しています。
 `docs/` は Git 管理対象外です。
-
-クライアントとテスト:
-
-- [拡張機能 README](extension/README.md)
-- [E2E テストガイド](e2e/README.md)
-- [k6 負荷テスト](loadtest/k6/README.md)
 
 ## 制限事項 / 今後の作業
 
