@@ -126,7 +126,7 @@ func (r *highlightRepository) fillMissingBookOrderIndexes(ctx context.Context, h
 	UPDATE highlights h
 	SET book_key = `+bookKeyExpressionSQL+`
 	WHERE NULLIF(trim(coalesce(h.book_key, '')), '') IS NULL
-	  AND h.id::text = ANY($1)
+	  AND h.id = ANY($1::uuid[])
 	`, highlightIDArgs); err != nil {
 		return fmt.Errorf("highlight repo: fill missing book keys: %w", err)
 	}
@@ -140,7 +140,7 @@ func (r *highlightRepository) fillMissingBookOrderIndexes(ctx context.Context, h
 	           ) AS rn
 	    FROM highlights h
 	    WHERE h.book_order_index IS NULL
-	      AND h.id::text = ANY($1)
+	      AND h.id = ANY($1::uuid[])
 	      AND NULLIF(trim(coalesce(h.book_key, '')), '') IS NOT NULL
 	),
 	offsets AS (
@@ -611,7 +611,7 @@ SELECT
     h.failed_at, h.book_order_index, h.created_at, h.updated_at
 FROM highlights h
 WHERE h.user_id = $1
-  AND h.id::text = ANY($2)
+  AND h.id = ANY($2::uuid[])
 ORDER BY h.created_at ASC`
 
 	highlights, err := r.listHighlights(ctx, query, userID, pq.Array(uuidStrings(highlightIDs)))
@@ -632,7 +632,7 @@ SET status = 'processing',
     processing_started_at = NOW(),
     updated_at = NOW()
 WHERE user_id = $1
-  AND id::text = ANY($2)
+  AND id = ANY($2::uuid[])
   AND status = 'pending'
 `, userID, pq.Array(uuidStrings(highlightIDs)))
 	if err != nil {
@@ -654,7 +654,7 @@ SET status = 'pending',
     last_error = NULL,
     updated_at = NOW()
 WHERE user_id = $1
-  AND id::text = ANY($2)
+  AND id = ANY($2::uuid[])
   AND status = 'processing'
 `, userID, pq.Array(uuidStrings(highlightIDs)))
 	if err != nil {
@@ -703,7 +703,7 @@ SET
 	    last_error = NULL,
 	    updated_at = NOW()
 WHERE user_id = $1
-  AND id::text = ANY($2)`
+  AND id = ANY($2::uuid[])`
 
 	if _, err := r.db.ExecContext(ctx, query, userID, pq.Array(uuidStrings(highlightIDs))); err != nil {
 		return fmt.Errorf("highlight repo: mark generation completed: %w", err)
@@ -731,7 +731,7 @@ SET
 	    last_error = LEFT($3, 500),
 	    updated_at = NOW()
 WHERE user_id = $1
-  AND id::text = ANY($2)`
+  AND id = ANY($2::uuid[])`
 
 	if _, err := r.db.ExecContext(ctx, query, userID, pq.Array(uuidStrings(highlightIDs)), strings.TrimSpace(lastError), maxRetry); err != nil {
 		return fmt.Errorf("highlight repo: mark generation failed: %w", err)

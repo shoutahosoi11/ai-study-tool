@@ -98,10 +98,10 @@ type ImportPastedHighlightResult struct {
 
 func (u *HighlightImportUsecase) ImportKindleHighlights(ctx context.Context, userID uuid.UUID, items []ImportHighlightItem) (*ImportKindleResult, error) {
 	if len(items) == 0 {
-		return nil, fmt.Errorf("%w: highlights must not be empty", domain.ErrInvalidInput)
+		return nil, domain.NewValidationError("highlights must not be empty")
 	}
 	if len(items) > maxKindleImportItems {
-		return nil, fmt.Errorf("%w: highlights must be at most %d items", domain.ErrInvalidInput, maxKindleImportItems)
+		return nil, domain.NewValidationError(fmt.Sprintf("highlights must be at most %d items", maxKindleImportItems))
 	}
 
 	// キューが設定されている場合は非同期処理に委譲する

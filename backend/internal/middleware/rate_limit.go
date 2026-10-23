@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,7 +56,7 @@ func (m *RateLimitMiddleware) Limit(next echo.HandlerFunc) echo.HandlerFunc {
 
 		_, exceeded, err := m.store.IncrementAndCheck(c.Request().Context(), userID, m.bucket, m.limit)
 		if err != nil {
-			log.Printf("rate limit increment error: %v", err)
+			slog.Error("rate_limit_increment_failed", "error", err.Error())
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "rate limit service unavailable")
 		}
 		if exceeded {
@@ -121,7 +121,7 @@ func (m *ShortWindowRateLimitMiddleware) Limit(next echo.HandlerFunc) echo.Handl
 		bucket := m.bucket + ":" + m.now().UTC().Format("200601021504")
 		_, exceeded, err := m.store.IncrementAndCheck(c.Request().Context(), identifier, bucket, m.limit)
 		if err != nil {
-			log.Printf("rate limit increment error: %v", err)
+			slog.Error("rate_limit_increment_failed", "error", err.Error())
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "rate limit service unavailable")
 		}
 		if exceeded {

@@ -22,13 +22,16 @@ import (
 	"github.com/shout/ai-study-tool/backend/internal/di"
 	dbinfra "github.com/shout/ai-study-tool/backend/internal/infrastructure/db"
 	"github.com/shout/ai-study-tool/backend/internal/logging"
+	appmiddleware "github.com/shout/ai-study-tool/backend/internal/middleware"
 	"github.com/shout/ai-study-tool/backend/internal/router"
 )
 
 const (
 	readinessTimeout       = 2 * time.Second
 	startupDatabaseTimeout = 5 * time.Second
-	defaultShutdownSeconds = 90
+	// Cloud Run sends SIGKILL roughly 10 seconds after SIGTERM; the drain
+	// window must fit inside that, not the other way around.
+	defaultShutdownSeconds = 8
 	readHeaderTimeout      = 10 * time.Second
 	readTimeout            = 120 * time.Second
 	writeTimeout           = 130 * time.Second
@@ -67,12 +70,21 @@ func main() {
 	e.IPExtractor = cloudRunIPExtractor
 	configureServerTimeouts(e)
 	e.Use(requestLogger())
-	e.Use(echomiddleware.Recover())
+	e.Use(echomiddleware.RecoverWithConfig(echomiddleware.RecoverConfig{
+		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
+			appmiddleware.RequestLogger(c).Error("panic_recovered",
+				"error", err.Error(),
+				"path", c.Request().URL.Path,
+				"stack", string(stack),
+			)
+			return err
+		},
+	}))
 	e.Use(container.SecurityHeadersMiddleware.Secure)
 	e.Use(echomiddleware.CORSWithConfig(echomiddleware.CORSConfig{
 		AllowOrigins:     allowedOrigins(),
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowHeaders:     []string{"Authorization", "Content-Type", "X-CSRF-Token", "X-Firebase-AppCheck", "X-App-Version", "X-Platform"},
 		AllowCredentials: true,
 	}))
 
@@ -148,6 +160,13 @@ func requestLogger() echo.MiddlewareFunc {
 				return next(c)
 			}
 
+			trace := cloudLoggingTrace(c.Request().Header.Get("X-Cloud-Trace-Context"))
+			requestScoped := slog.Default()
+			if trace != "" {
+				requestScoped = requestScoped.With("logging.googleapis.com/trace", trace)
+			}
+			appmiddleware.SetRequestLogger(c, requestScoped)
+
 			startedAt := time.Now()
 			err := next(c)
 			if err != nil {
@@ -175,7 +194,10 @@ func requestLogger() echo.MiddlewareFunc {
 				"remote_ip", c.RealIP(),
 				"user_agent", req.UserAgent(),
 			}
-			if trace := cloudLoggingTrace(req.Header.Get("X-Cloud-Trace-Context")); trace != "" {
+			if err != nil {
+				args = append(args, "error", err.Error())
+			}
+			if trace != "" {
 				args = append(args, "logging.googleapis.com/trace", trace)
 			}
 			slog.Log(req.Context(), level, "http_request", args...)

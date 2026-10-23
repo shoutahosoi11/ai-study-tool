@@ -74,3 +74,8 @@ export async function syncQuestionStock(): Promise<QuestionStockSyncResponse> {
   const res = await apiClient.post<QuestionStockSyncResponse>("/questions/sync", {});
   return res.data;
 }
+
+export async function getQuestionStock(): Promise<QuestionStockSyncResponse> {
+  const res = await apiClient.get<QuestionStockSyncResponse>("/questions/stock");
+  return res.data;
+}

@@ -15,7 +15,7 @@ type stubTokenVerifier struct {
 	verifyFunc func(ctx context.Context, idToken string) (*auth.Token, error)
 }
 
-func (s stubTokenVerifier) VerifyIDTokenAndCheckRevoked(ctx context.Context, idToken string) (*auth.Token, error) {
+func (s stubTokenVerifier) VerifyIDToken(ctx context.Context, idToken string) (*auth.Token, error) {
 	return s.verifyFunc(ctx, idToken)
 }
 

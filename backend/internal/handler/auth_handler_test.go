@@ -31,7 +31,7 @@ func (s *stubSessionCookieManager) CreateSessionCookie(ctx context.Context, idTo
 	return s.createSessionCookieFunc(ctx, idToken, expiresIn)
 }
 
-func (s *stubSessionCookieManager) VerifySessionCookieAndCheckRevoked(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
+func (s *stubSessionCookieManager) VerifySessionCookie(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
 	return s.verifySessionCookieAndRevokedFunc(ctx, sessionCookie)
 }
 

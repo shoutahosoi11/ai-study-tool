@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -60,6 +61,7 @@ func (m *AdminMiddleware) RequireAdminRole(required domain.AdminRole) echo.Middl
 				if errors.Is(err, domain.ErrNotFound) {
 					return echo.NewHTTPError(http.StatusForbidden, "admin access required")
 				}
+				slog.Error("admin_identity_lookup_failed", "error", err.Error())
 				return echo.NewHTTPError(http.StatusServiceUnavailable, "admin authorization unavailable")
 			}
 			if admin == nil || admin.UserID == uuid.Nil || !domain.IsValidAdminRole(admin.Role) {

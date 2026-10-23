@@ -29,6 +29,7 @@ type HighlightQuestionSyncReader interface {
 	ListPendingHighlightsByBook(ctx context.Context, userID uuid.UUID, bookKey string, limit int) ([]*Highlight, error)
 	MarkHighlightsProcessing(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error
 	MarkHighlightsPending(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID) error
+	MarkGenerationFailed(ctx context.Context, userID uuid.UUID, highlightIDs []uuid.UUID, lastError string, maxRetry int) error
 	MarkHighlightPendingForQuestion(ctx context.Context, userID uuid.UUID, questionID uuid.UUID) (string, error)
 }
 

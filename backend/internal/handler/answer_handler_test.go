@@ -94,7 +94,7 @@ func TestAnswerHandlerSubmitAnswerMapsNotFound(t *testing.T) {
 	assertHTTPStatus(t, err, http.StatusNotFound)
 }
 
-func TestAnswerHandlerSubmitAnswerMapsSyncFailure(t *testing.T) {
+func TestAnswerHandlerSubmitAnswerToleratesSyncFailure(t *testing.T) {
 	e := echo.New()
 	handler := NewAnswerHandler(
 		&stubAnswerUsecase{result: &usecase.SubmitAnswerResult{}},
@@ -113,6 +113,13 @@ func TestAnswerHandlerSubmitAnswerMapsSyncFailure(t *testing.T) {
 	c.SetParamValues("q1")
 	c.Set(middleware.ContextFirebaseUIDKey, "firebase-uid-1")
 
-	err := handler.SubmitAnswer(c)
-	assertHTTPStatus(t, err, http.StatusInternalServerError)
+	// The answer is already persisted when the post-answer evaluation runs, so
+	// an evaluation failure must not fail the request (it would invite a
+	// duplicate submission); it is logged and the grading result is returned.
+	if err := handler.SubmitAnswer(c); err != nil {
+		t.Fatalf("SubmitAnswer should succeed despite sync failure, got %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
 }

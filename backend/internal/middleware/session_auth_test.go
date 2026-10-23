@@ -15,7 +15,7 @@ type stubSessionVerifier struct {
 	verifyFunc func(ctx context.Context, sessionCookie string) (*domain.AuthToken, error)
 }
 
-func (s stubSessionVerifier) VerifySessionCookieAndCheckRevoked(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
+func (s stubSessionVerifier) VerifySessionCookie(ctx context.Context, sessionCookie string) (*domain.AuthToken, error) {
 	return s.verifyFunc(ctx, sessionCookie)
 }
 

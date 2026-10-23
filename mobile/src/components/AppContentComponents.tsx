@@ -896,8 +896,8 @@ function toReadableError(error: unknown, fallback: string): string {
   }
 
   const debugMessage = serializeApiDebugError(error)
-  if (debugMessage) {
-    return `${fallback}: ${debugMessage}`
+  if (debugMessage && __DEV__) {
+    return `${fallback}: ${JSON.stringify(debugMessage)}`
   }
   return fallback
 }
