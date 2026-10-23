@@ -1,195 +1,217 @@
 # AI Study Tool
 
-AI Study Tool は、Kindle のハイライトや任意のテキストから AI でクイズを生成し、解答・復習・共有できる学習アプリです。解いた問題に自分の解説や感想を添えて投稿でき、他のユーザーも投稿を読んだり問題に解答したりできます。
+KindleのハイライトからAIで問題を生成し、回答・復習・知識共有ができる学習アプリです。
 
-テキストの取り込み方法は次の3つです。
+単に問題を解くだけでなく、同じ本を学ぶ人の解説や思考過程を蓄積し、次の学習者が活用できることを目指しています。
 
-1. Chrome 拡張機能で Kindle Notebook (`read.amazon.co.jp/notebook` / `read.amazon.com/notebook`) からハイライトを取り込む。
-2. モバイルの共有シートからテキストを送る。
-3. アプリ内にテキストを貼り付ける。
+## 1. アプリ概要
 
-Web・Mobile・Extension を Go 製バックエンドへ接続し、認証、取り込み、問題生成、課金、報酬トークン、運用管理をまとめて扱います。
+Kindleで読んだ内容を問題として復習し、自分の理解や考え方を他のユーザーと共有できます。
 
-## 主な機能
+主な学習フローは以下のとおりです。
 
-- Chrome 拡張機能によってKindle Notebook のハイライトを取り込む
-- 取り込んだハイライトからの AI 問題生成。
-- 解答、復習、間違えた問題、保存済み問題の学習フロー。
+1. Kindleで重要な文章をハイライトする
+2. Chrome拡張機能からハイライトを取り込む
+3. AIがハイライトをもとに問題を生成する
+4. 問題に回答し、間違えた問題や保存した問題を復習する
+5. 解説や思考過程を投稿し、他の学習者と共有する
 
-## 技術構成
+Web・Mobile・Chrome拡張機能に対応しています。
 
-| 領域 | 採用技術 |
+## 2. 開発背景と解決したい課題
+
+同じ教科書や参考書で勉強していても、学習者によって理解度や成績には差が生まれます。
+
+その違いは、単に知識を覚えている量だけでなく、何に着目し、どのように理解し、関連する知識と結び付けているかにもあると考えました。
+
+大学の過去問では、過去の学生が残した解説や考え方が、次の学生の学習に役立つことがあります。しかし、こうした知識は個人のノートや一時的な資料に分散し、継続的に蓄積されにくいという課題があります。
+
+そこで、学習内容を書籍や教材に紐付け、優れた解説や思考過程を次の学習者へ引き継げる仕組みを作りたいと考えました。
+
+AIによる問題生成は、知識を思い出す機会を増やすための手段です。最終的には、学習者同士のアウトプットを共有・蓄積し、個人の学習を集合知へ変えることを目指しています。
+
+## 3. 主な機能
+
+- **Kindleハイライト取り込み**：Chrome拡張機能からハイライトを取得
+- **AI問題生成**：ハイライトや入力テキストから選択式問題を生成
+- **回答・復習**：問題への回答、間違えた問題や保存した問題の復習
+- **知識共有**：問題に解説や考え方を添えて投稿し、他のユーザーと共有
+- **マルチデバイス対応**：Web・Mobile・Chrome拡張機能から利用
+
+## 4. 使用技術
+
+| 領域 | 技術 |
 | --- | --- |
-| Web Frontend | React / TypeScript / Vite / Tailwind CSS |
-| Frontend Deploy | Cloudflare Workers Static Assets |
+| Web | React / TypeScript / Vite |
 | Mobile | React Native / Expo |
-| Chrome Extension | Manifest V3 / TypeScript |
+| Chrome拡張機能 | TypeScript / Manifest V3 |
 | Backend | Go / Echo |
-| Auth | Firebase Authentication |
-| DB | Neon PostgreSQL |
+| Database | PostgreSQL / Neon |
 | DB Access | database/sql / sqlc |
-| Async Job | Cloud Tasks / Cloud Run HTTP worker |
-| AI | Gemini API / OpenAI provider adapter |
+| Authentication | Firebase Authentication |
+| Async Job | Cloud Tasks / Cloud Run |
+| AI | Gemini API / OpenAI Provider Adapter |
 | Payment | Stripe |
-| Ad Reward Verification | AdMob Server-Side Verification |
-| Backend Deploy | Cloud Run |
-| Secret Management | Secret Manager |
+| Infrastructure | Cloud Run / Cloudflare |
 | CI/CD | GitHub Actions |
 
-Cloudflare・Cloud Run などはデプロイ構成の採用先です。設定ファイルや実装があることと、本番での設定・審査・公開が完了していることは区別しています。
+## 5. 技術的に工夫した点
 
-## アーキテクチャ
+### 5.1 部分ユニークインデックスによるジョブの重複防止
 
-バックエンドは、業務ルールを HTTP・DB・外部 SDK から分離するため、クリーンアーキテクチャの依存方向を採用しています。
+**課題**：問題生成リクエストの連打や同時実行によって、同じユーザー・書籍に対する生成ジョブが重複する可能性がある。
 
-```text
-handler -> usecase -> domain <- infrastructure / repository
+**設計**：PostgreSQLの部分ユニークインデックスを使用し、`queued`・`processing`・`enqueue_failed`状態のジョブだけに一意制約を適用。
+
+**理由**：アプリケーション側の事前チェックだけでは同時実行時の競合を防げない。DBで重複を保証しつつ、完了・失敗したジョブは履歴として保持できる。
+
+**検証**：実DBを使った統合テストで、同じユーザー・書籍の有効なジョブを重複登録できないことを確認するテストを実装。
+
+**参考OSS**：River
+
+**実装**：`032_create_question_generation_jobs.sql`
+
+### 5.2 トランザクションによる問題生成結果の整合性保証
+
+**課題**：問題の保存とジョブの完了状態を別々に更新すると、途中で失敗した際に「ジョブは完了したのに問題が保存されていない」などの不整合が発生する。
+
+**設計**：問題の保存・旧問題の更新・ハイライト状態の更新・ジョブの完了を1つのDBトランザクションで処理する。
+
+**理由**：個別に更新する方式と異なり、すべて成功した場合だけコミットすることで、部分的な更新を防げる。一方、トランザクション内の処理が増えるため、保持時間には注意が必要。
+
+**検証**：ジョブの状態遷移を統合テストで確認し、問題生成処理の成功・失敗時の分岐を単体テストで検証。
+
+**参考OSS**：River
+
+**実装**：`question_repository.go`
+
+### 5.3 APIスコープによる最小権限の認可設計
+
+**課題**：Chrome拡張機能に通常の認証情報を共有すると、ハイライト取り込みに不要な投稿・課金機能まで操作できてしまう。
+
+**設計**：拡張機能専用トークンを発行し、権限をハイライト関連の操作と自身のトークン失効に限定。APIごとにスコープを検証し、権限外の操作はHTTP 403で拒否する。
+
+**理由**：全権限を共有する方式よりも、トークン漏洩時の被害を限定できる。ただし、APIごとの権限管理が必要になる。
+
+**検証**：許可された操作は成功し、問題生成・課金操作は403で拒否されることをテスト。
+
+**参考OSS**：Karakeepの設計Issue
+
+**実装**：`scope.go`
+
+## 6. システム構成
+
+<!-- TODO: システム構成図の画像を追加 -->
+
+Web・Mobile・Chrome拡張機能からGo製APIにアクセスする構成です。
+
+- **API**：認証、ハイライト取り込み、問題・投稿管理などを担当
+- **PostgreSQL**：ユーザー、ハイライト、問題、ジョブ状態を管理
+- **Cloud Tasks**：問題生成などの非同期ジョブをキューイング
+- **Cloud Run Worker**：ジョブを処理し、LLMによる生成結果をDBへ保存
+
+バックエンドはHandler・Usecase・Domain・Infrastructureに責務を分離し、業務ロジックと外部サービスへの依存を切り分けています。
+
+## 7. テスト・品質保証
+
+- **静的テスト**：仕様の整合性・網羅性・明確性を確認
+- **テスト設計**：境界値分析、同値分割、状態遷移、デシジョンテーブルを活用
+- **リスクベーステスト**：不具合の重大度と予測可能性に応じて検証範囲を調整
+- **ブラウザテスト**：Claude in Chromeで実際に操作し、正常系・異常系・UX・回帰影響を確認
+- **自動テスト**：GitHub Actionsで単体・統合テスト、Race Detector、型チェック、脆弱性・シークレット検査を実行する構成
+
+テスト結果は実行ログや観測結果を根拠として扱い、未実施の項目を成功扱いしない方針です。
+
+- CI設定：`ci.yml`
+- E2E設定：`e2e.yml`
+
+## 8. 今後の課題・改善予定
+
+- **知識共有の強化**：同じ書籍を学ぶユーザーの解説や思考過程を蓄積し、後から学ぶ人が活用できる仕組みを改善する
+- **アウトプットの動機づけ**：知識の体系化や解説の投稿を促すため、他の学習者からの評価、貢献の可視化、フィードバックなどの仕組みを検討する
+- **学習体験の改善**：理解度や回答履歴に応じた間隔反復を導入する
+- **テストの拡充**：ハイライト取り込みから復習までのE2Eテストを強化する
+- **運用品質の向上**：監視・アラートの整備、Mobile課金への対応を進める
+
+## 9. デモ・動作確認
+
+<!-- TODO: デモ動画・スクリーンショットを追加 -->
+<!-- TODO: 公開デモ環境が準備できたらURLを追加 -->
+
+主要機能は以下の流れで確認できます。
+
+1. Webアプリにログインする
+2. Chrome拡張機能をWebアカウントと連携する
+3. Kindleのハイライトを取り込む
+4. AIで問題を生成する
+5. 問題に回答し、復習する
+6. 解説や思考過程を投稿・共有する
+
+公開デモ環境と操作動画は今後追加予定です。
+
+## 10. ローカル開発・起動方法
+
+### 必要な環境
+
+- Go 1.26.5
+- Node.js 22
+- Docker / Docker Compose
+- PostgreSQLクライアント（psql）
+- Firebase Authenticationの開発用設定
+
+### 環境変数の設定
+
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
 ```
 
-- `handler`: HTTP の入出力、認証済みユーザーの取得、リクエスト検証、DTO 変換。
-- `usecase`: 業務ルール、トランザクション方針、外部サービスを呼ぶ順序の制御。
-- `domain`: 業務上の型・定数・エラーと、永続化や外部サービスの interface。
-- `infrastructure` / `repository`: PostgreSQL、Firebase、LLM、Stripe、Cloud Tasks などの外部 I/O。
-- `di`: interface と具体的な実装の組み立て。
+各`.env`に必要な接続情報を設定してください。
 
-問題生成は、取り込んだテキストを保存し、生成ジョブを作成して Cloud Tasks から HTTP worker を呼び、生成結果を保存する流れです。API リクエストから重い LLM 処理を切り離し、ジョブ状態と予算を確認しながら処理します。
+主な設定項目：
 
-## 技術選定
+- `DATABASE_URL`：PostgreSQLの接続先
+- `FIREBASE_CREDENTIALS_PATH`：Firebase Admin SDKの認証情報
+- `CSRF_SECRET`：CSRFトークンの署名用シークレット
+- `VITE_FIREBASE_*`：WebクライアントのFirebase設定
+- `GEMINI_API_KEY`：Gemini APIの認証情報
 
-### Firebase Authentication
+### データベースの起動
 
-Firebase Auth は Web、Mobile、Extension 共通のユーザー識別基盤です。パスワード検証やトークン発行を自前で実装せず、同じ Firebase UID で複数のクライアントを紐付けます。Extension は Web で承認するペアリングを通じてユーザーに接続します。
-
-一方で、各クライアントで安全なトークンの持ち方は違います。Firebase Auth を共通基盤にすると、ログイン基盤は共通化しつつ、Web は Session Cookie + CSRF Cookie、Mobile は Bearer Token + App Check、Extension は Pairing + Scoped Token という分担にしやすくなります。
-
-- **Web**: Firebase ID Token で Web Session を作成し、HttpOnly Session Cookie と署名付き CSRF token で Cookie 認証のリクエストを保護します。Cookie と Bearer が同時にある場合も、バックエンドは Cookie を優先して CSRF を検証します。Firebase SDK のログイン状態管理と、サーバー側の Session Cookie は別の役割です。
-- **Mobile**: Bearer ID Token を使い、App Check とアプリバージョン制限を組み合わせます。トークン更新は Firebase SDK に任せます。
-- **Extension**: ペアリングフローで発行する短命の専用スコープ付きトークンを使います。これらのトークンは `highlight:write`、`highlight:check`、`extension:revoke-self` に限定され、LLM 生成、課金、アカウント更新 API には到達できません。
-
-現在のログイン画面はメールアドレスとパスワードに対応しています。Web には Google ログイン用の関数がありますが、現在の画面には入口を設けていません。Apple ログイン・MFA・メール確認の導線も、Firebase 側の機能を利用できることと、このアプリへの実装が完了していることを区別しています。
-
-### Go + Echo
-
-Go + Echo は、AI 開発アプリのバックエンドをシンプルかつ堅く作るために採用しています。Gemini API は HTTP 呼び出しであり、バックエンドの役割はルーティング、認証、DB トランザクション、ジョブキュー制御です。
-
-具体的な理由:
-
-- **`context.Context` によるキャンセル伝播**。ハイライト取り込みや LLM 問題生成は数秒かかることがあります。リクエストのタイムアウトやキャンセルを、context に対応する DB クエリや外部 API 呼び出しへ伝えられます。enqueue 済みの非同期ジョブは元のリクエストとは別の実行単位です。
-- **Echo の middleware が豊富**。認証、CSRF、CORS、rate limit、panic recovery、request logging などを共通化しやすく、エラーレベルに応じたログ出力、監視ツールへの通知、クライアントへの共通レスポンス整形も一括で扱えます。
-- **`echo.Context` は interface**。handler テストで mock context を注入し、実 HTTP サーバーなしで認証や rate-limit の分岐を検証できます。
-- **Cloud Run 上の単一バイナリ**。Dockerfile は静的バイナリを 1 つだけ作るため、イメージが小さく、起動が速く、メモリ使用量を読みやすくできます。ゼロスケール運用で重要です。
-- **`database/sql` の接続プール**。Cloud Run は一気に多数インスタンスを立ち上げることがあります。`MaxOpenConns`、`MaxIdleConns` を明示し、Neon への接続スパイクを抑えます。
-- **高速なコンパイルとビルド時エラー**。型や import の問題を早い段階で潰せます。
-
-### React + React Native + Expo
-
-Kindle は PC、スマホ、タブレットなど複数端末で使われるため、マルチデバイス対応が必須です。React / React Native の組み合わせは、ロジック層や状態管理ライブラリなどのエコシステムを共有しやすく、Flutter などの選択肢よりこのプロジェクトでは開発効率を出しやすいと判断しました。
-
-Web と Mobile は TypeScript、React の状態管理、API 設計の考え方を揃えています。ただし、現在の API クライアントや画面コードはそれぞれのディレクトリにあり、共通パッケージとして全面的に共有しているわけではありません。端末固有の共有シートや認証処理は Mobile 側で扱います。
-
-Mobile アプリでは Expo を使っています。共有シート、端末 API 連携、ビルドツールを初期段階から深いネイティブ設定なしで扱えるため、ハイライト取り込み、問題フロー、課金の検証可能な状態へ早く到達できます。
-
-
-### Cloud Run + Cloud Tasks
-
-Cloud Run はアイドル時にゼロスケールできるため、ユーザー数が少ない段階でもコストを低く保てます。負荷が増えた場合も手動のキャパシティ計画なしで自動スケールします。
-
-Cloud Run は HTTP worker を直接呼べるため、通常 API と近い設計で非同期処理を実装できます。Cloud Tasks では送出レート (`max-dispatches-per-second`) と同時実行数を制御し、LLM への負荷を調整します。task 数と LLM 呼び出し数は再試行などで一致するとは限らないため、流量制御とは別に API 呼び出し前の予算確認も行います。
-
-Global LLM Budget は PostgreSQL の日次カウンタです。キューが高速に空になっても、各 LLM 呼び出し前の予算チェックにより、ジョブ急増時のコスト超過を防ぎます。
-
-### PostgreSQL + Neon
-
-PostgreSQL は、問題生成 job やハイライト状態のような状態遷移を transaction と DB 制約で守りたいので採用しています。データに明確なリレーションがあり、強い整合性が必要です。
-
-- ジョブ状態遷移 (queued → processing → completed/failed) は atomic である必要があります。ジョブの取りこぼしや二重処理はユーザーに見える不具合です。
-- **partial unique index** により、同じユーザー・同じ本に対する active な生成ジョブの重複を防ぎます。
-  ```sql
-  CREATE UNIQUE INDEX uq_question_generation_jobs_active
-    ON question_generation_jobs (user_id, book_key)
-    WHERE status IN ('queued', 'processing', 'enqueue_failed');
-  ```
-  この制約はアプリケーションコードだけでなく DB レベルで保証されます。
-- ジョブの取得では、更新条件に現在の状態を含めることで、同じジョブを複数の worker が同時に処理開始することを防ぎます。
-- UUID 型、配列、JSONB など型の選択肢が多く、ハイライト metadata や token scope を自然に表現できます。
-
-Neon は PostgreSQL を Cloud Run と組み合わせて軽く運用できる managed PostgreSQL です。Cloud Run の水平スケールによる接続スパイクを connection pooler で吸収しやすく、branch 機能により本番データのコピーに対して staging や実験的な schema 変更を試せます。
-
-### database/sql + sqlc
-
-SQL を明示しながら型安全に扱える構成として、`database/sql` + sqlc を採用しています。DB 設計やクエリ性能を意識しやすく、生の SQL が持つ表現力と Go コンパイラが持つ強力な型安全を組み合わせられる点が利点です。
-
-標準的な CRUD クエリは `backend/db/sqlc/` の SQL ソースから sqlc で生成します。生成コードは型安全で、元 SQL も読みやすく保てます。
-
-複雑なクエリ、たとえば複数テーブル CTE、動的フィルタ、admin analytics は `repository/postgres/` と `infrastructure/persistence/` で `database/sql` を直接使って書いています。この分担により、単純な経路は sqlc、クエリの意図を隠したくない経路は raw SQL で扱えます。
-
-### Cloudflare
-
-Web は Vite で静的ファイルへビルドし、Cloudflare Workers Static Assets で配信する構成です。`wrangler.toml` で `frontend/dist` と SPA のフォールバックを指定しています。Web の配信と Go API の実行を分け、フロントエンドの配信のために API サーバーを増やさずに済む構成を選びました。
-
-### Stripe / AdMob
-
-Web のプレミアム購読には Stripe Checkout と webhook を使います。カード情報の入力を Stripe に任せ、購読状態は署名検証済みの webhook から反映します。イベント ID の記録により重複通知を扱います。
-
-広告報酬には AdMob の Server-Side Verification を使い、署名検証と transaction ID の重複判定を行います。クライアントからの自己申告だけで報酬を付与しないための設計です。Mobile IAP / Google Play Billing は別の課題として残っています。
-
-### Secret Manager
-
-本番の接続文字列や API キーは Secret Manager から Cloud Run に注入する構成です。コード・コンテナイメージ・Web や Mobile の公開設定に backend secret を含めず、実行環境側で管理します。
-
-### GitHub Actions
-
-PR で secret scan、backend のテスト・脆弱性検査・ビルド、クライアントの型検査・依存監査・テストなどを実行します。backend では DB integration test と並行処理に関わる race test も定義しています。E2E は別 workflow で扱います。
-
-Cloud Run へのデプロイ workflow は、必要な環境変数・secret 参照を検証してからビルドとデプロイを行います。workflow の定義があることと、各環境の設定や実行結果が正常であることは別途確認が必要です。
-
-## セキュリティ要点
-
-- Web は HttpOnly Session Cookie 認証と署名付き CSRF token を使います。
-- Mobile は Firebase Bearer ID Token、App Check、アプリバージョン制限を使います。
-- Browser Extension は専用スコープ付きトークンを使います。拡張トークンはハイライトの import / check はできますが、LLM 生成 API は呼べません。
-- LLM 利用はユーザー別予算、全体の日次予算、利用ログ、キュー深度制限、非同期 worker で保護します。
-- Cloud Tasks と DB compare-and-set により、ジョブの二重処理を防ぎます。
-- Stripe webhook は署名検証と event 冪等性を使います。
-- AdMob reward は SSV 署名検証と transaction id 冪等性を使います。
-- Admin API は Web Session 認証、role check、CSRF、危険操作の recent auth、audit log を必須にします。
-- CI には secret scan とセキュリティ観点のテストを含めています。
-
-## デモ手順
-
-ステージングまたはローカルのデモアカウントとダミーハイライトデータを使います。
-
-1. Web アプリにログインする。
-2. Chrome 拡張機能を開き、ペアリングを開始する。
-3. `/extension/connect` で拡張機能コードを承認する。
-4. サンプル Kindle Notebook ハイライトを取り込む。
-5. 取り込んだハイライトから問題を生成する。
-6. 問題に答え、間違えた問題 / 保存済み問題を復習する。
-7. 実課金なしで premium / reward-token の制限を説明する。
-8. `/admin` を開き、運用 overview、job state、LLM budget、audit log を見せる。
-
-デモでは、実メールアドレス、secret、生 token、cookie、webhook payload、SSV query string、prompt、ハイライト本文を表示しないでください。
-
-
-データベース:
-
-- backend の DB 接続には `DATABASE_URL` を使います。
-- migration は `backend/db/migrations/` から適用します。
-- `.env` ファイルや service account key は commit しないでください。
-
-初回起動には PostgreSQL、Firebase の開発用設定、各クライアントの API 接続先が必要です。`backend/.env.example`、`frontend/.env.example`、`mobile/.env.example` を参照し、実値は Git 管理外の環境変数やローカル設定に置いてください。Go は `backend/go.mod` に従う toolchain、Node.js は現在の CI に合わせて 22 系を使います。
-
-Cloud Tasks を使う非同期生成は、キュー・worker の URL・呼び出し認証の設定が必要です。アプリを起動しただけで、本番サービスとの連携まで完了するわけではありません。
-
-物理端末の Mobile では、`EXPO_PUBLIC_API_BASE_URL` に Mac の LAN アドレスを設定し、base path として `/api/v1` を含めて
+```bash
+docker compose up -d postgres
+make migrate
 ```
 
-## 制限事項 / 今後の作業
+> [!NOTE]
+> `make migrate`はSQLエラーを出力上で無視する場合があるため、実行後に必要なテーブル・インデックスが作成されたことを確認してください。
 
-- Mobile IAP / Google Play Billing は未完了です。
-- Google ログインの画面導線、Apple ログイン、MFA、メール確認フローは追加対応が必要です。
-- Kindle note field 対応は今後の拡張です。
-- 本番 Cloud Armor と監視の例は、実環境への適用がまだ必要です。
-- Chrome Web Store の最終スクリーンショット、store copy、review assets がまだ必要です。
-- 実運用の alert routing、dashboard、on-call process は環境ごとの設定が必要です。
-- Spaced repetition は現在の復習フローからさらに改善できます。
+### バックエンドの起動
+
+```bash
+make backend
+```
+
+API：http://localhost:8080
+
+### フロントエンドの起動
+
+別ターミナルで以下を実行します。
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Web：http://localhost:3000
+
+### ローカル実行時の注意点
+
+- Firebase Authenticationの設定がなければ、ログイン機能は利用できません。
+- `USE_GEMINI_MOCK=true`で、外部LLMを呼ばないダミー問題生成に切り替えられます。
+- ただし、現在の非同期ジョブ構成では、Cloud Tasksなどのジョブ実行環境を設定しないと、問題生成の一連の処理は完了しません。
+- Chrome拡張機能やMobileアプリの実行には、それぞれ追加のビルド・接続設定が必要です。
+- APIキーや認証情報などの秘密情報はGitにコミットしないでください。
+
+ローカルでのAPI・Web起動と、外部サービスを含む主要機能の動作確認は区別しています。
