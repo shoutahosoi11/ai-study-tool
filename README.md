@@ -165,10 +165,12 @@ Kindle NotebookのハイライトをChrome拡張機能から取り込めます�
 
 ### システム構成
 
+
 <img width="928" height="582" alt="スクリーンショット 2026-10-23 19 09 31" src="https://github.com/user-attachments/assets/5e930d16-c8ad-46f1-a7f3-23cdb291991b" />
 
 
 バックエンドはHandler・Usecase・Domain・Infrastructureに責務を分離し、業務ロジックと外部サービスへの依存を切り分けています。
+
 
 ### 使用技術
 
