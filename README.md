@@ -1,3 +1,5 @@
+<img width="922" height="575" alt="スクリーンショット 2026-10-23 19 09 51" src="https://github.com/user-attachments/assets/d2d8f171-ecec-461a-b2ff-080002a9428e" />
+<img width="928" height="582" alt="スクリーンショット 2026-10-23 19 09 31" src="https://github.com/user-attachments/assets/5e930d16-c8ad-46f1-a7f3-23cdb291991b" />
 # AI Study Tool
 
 ## 1. アプリ概要・スクショ・デモ
