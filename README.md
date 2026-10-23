@@ -165,14 +165,8 @@ Kindle NotebookのハイライトをChrome拡張機能から取り込めます�
 
 ### システム構成
 
-後日、システム構成図を載せる
+![システム構成図](docs/images/system-overview.png)
 
-Web・Mobile・Chrome拡張機能からGo製APIにアクセスする構成です。
-
-- **API**：認証、ハイライト取り込み、問題・投稿管理などを担当
-- **PostgreSQL**：ユーザー、ハイライト、問題、ジョブ状態を管理
-- **Cloud Tasks**：問題生成などの非同期ジョブをキューイング
-- **Cloud Run Worker**：ジョブを処理し、LLMによる生成結果をDBへ保存
 
 バックエンドはHandler・Usecase・Domain・Infrastructureに責務を分離し、業務ロジックと外部サービスへの依存を切り分けています。
 
